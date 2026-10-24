@@ -264,6 +264,9 @@ func TestSendAndPage(t *testing.T) {
 		{"parts": []map[string]any{{"kind": "text", "data": map[string]string{"text": ""}}}},
 		{"parts": []map[string]any{{"kind": "text", "data": "hi"}}},
 		{"parts": []map[string]any{{"kind": "blink", "data": map[string]string{}}}},
+		{"parts": []map[string]any{{"kind": "tool-call", "data": map[string]string{"status": "done"}}}},
+		{"parts": []map[string]any{{"kind": "tool-call", "data": map[string]string{"name": "x", "status": "maybe"}}}},
+		{"parts": []map[string]any{{"kind": "tool-call", "data": map[string]any{"name": 3, "status": "done"}}}},
 		{"parts": textMsg("x")["parts"], "caused_by": "nope"},
 	}
 	for _, body := range invalid {

@@ -1,10 +1,13 @@
 package agents
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,7 +43,7 @@ func (w *worker) reply(ctx context.Context, room core.Room, trigger core.Event, 
 	mctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	out := &output{w: w, room: room.ID, trigger: trigger, cancel: cancel}
-	req.OnText = func(text string) { out.show(ctx, text, false) }
+	req.OnText = func(text string) { out.show(ctx, text) }
 	var tools *toolbox
 	var toolErr error
 	if len(w.cfg.MCPServers) > 0 {
@@ -70,11 +73,12 @@ func (w *worker) reply(ctx context.Context, room core.Room, trigger core.Event, 
 			abort()
 			return
 		}
-		out.next(resp.Text)
+		out.next(ctx, resp.Text, resp.ToolCalls)
 		req.Messages = append(req.Messages, llm.Message{Role: "assistant", Text: resp.Text, ToolCalls: resp.ToolCalls})
 		results := make([]llm.ToolResult, len(resp.ToolCalls))
 		for i, c := range resp.ToolCalls {
 			results[i] = tools.call(ctx, c)
+			out.called(ctx, results[i])
 			slog.Info("built-in agent called a tool", "agent", w.me.DisplayName, "tool", c.Name, "failed", results[i].IsError)
 		}
 		req.Messages = append(req.Messages, llm.Message{Role: "user", ToolResults: results})
@@ -102,36 +106,87 @@ var streamEvery = 250 * time.Millisecond
 var errTaken = errors.New("another node is writing this reply")
 
 // output writes one reply. Its message starts streaming with the first
-// text, so an answer that turns out empty sends nothing, and the text of
-// every round of tool calls stays in it.
+// text or tool call, so an answer that turns out empty sends nothing. The
+// text of every round stays in it, followed by the tools that round called.
 type output struct {
 	w       *worker
 	room    string
 	trigger core.Event
 	cancel  context.CancelFunc
 
-	done    string // the text of finished rounds
-	id      string // the message, once started
-	written string
+	done    []core.Part // the parts of finished rounds
+	text    string      // the current round's text so far
+	id      string      // the message, once started
+	written []core.Part
 	at      time.Time
 	err     error // why the reply cannot be written
 }
 
+// maxToolParts bounds the tool calls shown in one reply, which leaves
+// room in a message for the text of every round. Later calls still run.
+const maxToolParts = 20
+
 // show writes text, the current round's so far, unless it was written
-// less than streamEvery ago and force is false.
-func (o *output) show(ctx context.Context, text string, force bool) {
-	text = strings.TrimSpace(joinText(o.done, text))
-	if o.err != nil || text == o.written || !force && time.Since(o.at) < streamEvery {
+// less than streamEvery ago.
+func (o *output) show(ctx context.Context, text string) {
+	o.text = text
+	if time.Since(o.at) >= streamEvery {
+		o.write(ctx)
+	}
+}
+
+// next ends a round that called tools, and shows them running.
+func (o *output) next(ctx context.Context, text string, calls []llm.ToolCall) {
+	o.done, o.text = o.parts(text), ""
+	shown := 0
+	for _, p := range o.done {
+		if p.Kind == core.PartToolCall {
+			shown++
+		}
+	}
+	for _, c := range calls[:min(len(calls), max(0, maxToolParts-shown))] {
+		o.done = append(o.done, core.ToolCall{ID: c.ID, Name: c.Name, Input: toolInput(c.Input), Status: core.ToolRunning}.Part())
+	}
+	o.write(ctx)
+}
+
+// called shows how the tool call r answers went.
+func (o *output) called(ctx context.Context, r llm.ToolResult) {
+	for i, p := range o.done {
+		var c core.ToolCall
+		if p.Kind != core.PartToolCall || json.Unmarshal(p.Data, &c) != nil || c.ID != r.CallID || c.Status != core.ToolRunning {
+			continue
+		}
+		c.Status = core.ToolDone
+		if r.IsError {
+			c.Status, c.Error = core.ToolFailed, cut(r.Content, maxToolError)
+		}
+		o.done[i] = c.Part()
+		o.write(ctx)
+		return
+	}
+}
+
+// parts is the message with text as the current round's.
+func (o *output) parts(text string) []core.Part {
+	parts := slices.Clone(o.done)
+	if text = strings.TrimSpace(text); text != "" {
+		parts = append(parts, core.TextPart(text))
+	}
+	return parts
+}
+
+// write writes the message as it is now.
+func (o *output) write(ctx context.Context) {
+	parts := o.parts(o.text)
+	if o.err != nil || len(parts) == 0 || samePartsAs(parts, o.written) {
 		return
 	}
 	if o.id == "" {
-		if text == "" {
-			return
-		}
 		// The key makes the reply to a message unique, so two nodes that
 		// both think they hold the agent during a lease handover send it
 		// once.
-		e, created, err := o.w.c.Chat.SendText(ctx, o.w.me, o.room, text, o.trigger.ID, "builtin:"+o.trigger.ID, true)
+		e, created, err := o.w.c.Chat.SendParts(ctx, o.w.me, o.room, parts, o.trigger.ID, "builtin:"+o.trigger.ID, true)
 		if err == nil && !created {
 			err = errTaken
 		}
@@ -140,16 +195,11 @@ func (o *output) show(ctx context.Context, text string, force bool) {
 			return
 		}
 		o.id = e.ID
-	} else if err := o.w.c.Chat.StreamText(ctx, o.w.me, o.room, o.id, text); err != nil {
+	} else if err := o.w.c.Chat.StreamParts(ctx, o.w.me, o.room, o.id, parts); err != nil {
 		o.stop(err)
 		return
 	}
-	o.written, o.at = text, time.Now()
-}
-
-// next starts a new round after one that ended in tool calls.
-func (o *output) next(text string) {
-	o.done = strings.TrimSpace(joinText(o.done, text))
+	o.written, o.at = parts, time.Now()
 }
 
 // end finishes the message with the last round's text; on a failure, with
@@ -158,22 +208,22 @@ func (o *output) end(ctx context.Context, text string) {
 	if o.err != nil {
 		return
 	}
-	text = strings.TrimSpace(joinText(o.done, text))
+	parts := o.parts(text)
 	if o.id == "" {
-		if text == "" {
+		if len(parts) == 0 {
 			return
 		}
-		e, created, err := o.w.c.Chat.SendText(ctx, o.w.me, o.room, text, o.trigger.ID, "builtin:"+o.trigger.ID, false)
+		e, created, err := o.w.c.Chat.SendParts(ctx, o.w.me, o.room, parts, o.trigger.ID, "builtin:"+o.trigger.ID, false)
 		if err == nil && !created && e.Stream == core.StreamStreaming {
 			err = errTaken
 		}
 		o.err = err
 		return
 	}
-	if text == o.written {
-		text = ""
+	if text == "" || samePartsAs(parts, o.written) {
+		parts = nil
 	}
-	o.err = o.w.c.Chat.EndText(ctx, o.w.me, o.room, o.id, text)
+	o.err = o.w.c.Chat.EndParts(ctx, o.w.me, o.room, o.id, parts)
 }
 
 func (o *output) stop(err error) {
@@ -190,11 +240,35 @@ func (o *output) report(ctx context.Context) bool {
 	return o.err != nil
 }
 
-func joinText(a, b string) string {
-	if a == "" || b == "" {
-		return a + b
+func samePartsAs(a, b []core.Part) bool {
+	return slices.EqualFunc(a, b, func(x, y core.Part) bool { return x.Kind == y.Kind && bytes.Equal(x.Data, y.Data) })
+}
+
+// maxToolInput and maxToolError bound what a reply shows of a tool call.
+const (
+	maxToolInput = 4 << 10
+	maxToolError = 500
+)
+
+// toolInput is a call's arguments as shown in the room: a JSON object of
+// at most maxToolInput bytes, or nothing.
+func toolInput(in json.RawMessage) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if len(in) > maxToolInput || json.Unmarshal(in, &obj) != nil || obj == nil {
+		return nil
 	}
-	return a + "\n\n" + b
+	var b bytes.Buffer
+	if json.Compact(&b, in) != nil {
+		return nil
+	}
+	return b.Bytes()
+}
+
+func cut(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + "…"
 }
 
 // complete makes one model call within the daily budget and records its
@@ -242,7 +316,12 @@ func (w *worker) request(ctx context.Context, room core.Room, through int64) (ll
 		if e.Type != core.EventMessage {
 			continue
 		}
-		m := llm.Message{Role: "assistant", Text: e.Text()}
+		// The agent's own messages leave out its tool calls: shown as
+		// [used name], they would teach a model to write calls out.
+		m := llm.Message{Role: "assistant", Text: e.Prose()}
+		if e.SenderID == w.me.ID && m.Text == "" {
+			continue
+		}
 		if e.SenderID != w.me.ID {
 			name, err := w.name(ctx, e.SenderID)
 			if err != nil {
@@ -302,9 +381,7 @@ func (w *worker) fail(ctx context.Context, err error) {
 	msg := ""
 	if err != nil {
 		msg = err.Error()
-		if len(msg) > maxErrLen {
-			msg = msg[:maxErrLen] + "…"
-		}
+		msg = cut(msg, maxErrLen)
 		slog.Warn("built-in agent could not reply", "agent", w.me.DisplayName, "id", w.me.ID, "err", err)
 	}
 	if msg == w.lastErr {

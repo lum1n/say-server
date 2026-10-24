@@ -101,10 +101,6 @@ type wireEvent struct {
 }
 
 func toEvent(e core.Event) wireEvent {
-	parts := make([]wirePart, len(e.Parts))
-	for i, p := range e.Parts {
-		parts[i] = wirePart{Kind: p.Kind, Data: p.Data}
-	}
 	return wireEvent{
 		ID:        e.ID,
 		RoomID:    e.RoomID,
@@ -112,7 +108,7 @@ func toEvent(e core.Event) wireEvent {
 		Type:      e.Type,
 		SenderID:  e.SenderID,
 		Causation: wireCausation{CausedBy: e.Causation.CausedBy, HopCount: e.Causation.HopCount},
-		Parts:     parts,
+		Parts:     toWireParts(e.Parts),
 		Stream:    e.Stream,
 		Edits:     e.Edits,
 		EditedAt:  optTime(e.EditedAt),
@@ -164,9 +160,11 @@ var partKinds = map[core.PartKind]bool{
 	core.PartToolResult: true, core.PartCard: true,
 }
 
+var toolStatuses = map[core.ToolStatus]bool{core.ToolRunning: true, core.ToolDone: true, core.ToolFailed: true}
+
 // toParts validates the parts of a message. Every part's data is a JSON
-// object; a text part has a non-empty "text" string. Only a streaming
-// message may have no parts yet.
+// object; a text part has a non-empty "text" string, and a tool-call part
+// a name and a status. Only a streaming message may have no parts yet.
 func toParts(in []wirePart, streaming bool) ([]core.Part, error) {
 	if len(in) == 0 && !streaming {
 		return nil, errors.New("a message needs at least one part")
@@ -190,6 +188,12 @@ func toParts(in []wirePart, streaming bool) ([]core.Part, error) {
 			var text string
 			if json.Unmarshal(obj["text"], &text) != nil || text == "" {
 				return nil, fmt.Errorf("part %d: a text part needs a non-empty \"text\" string", i)
+			}
+		}
+		if p.Kind == core.PartToolCall {
+			var c core.ToolCall
+			if json.Unmarshal(p.Data, &c) != nil || c.Name == "" || !toolStatuses[c.Status] {
+				return nil, fmt.Errorf("part %d: a tool-call part needs a \"name\" and a \"status\" of running, done or failed", i)
 			}
 		}
 		parts[i] = core.Part{Kind: p.Kind, Data: p.Data}

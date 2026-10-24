@@ -13,6 +13,7 @@ import {
   type Room,
   SayError,
   sendMessage,
+  type ToolCallPartData,
   updateMember,
   updateRoom,
 } from "@say/sdk";
@@ -151,6 +152,8 @@ function Message({ event, sender, grouped }: { event: Event; sender?: Principal;
           <p key={i} className="text">
             {String(p.data.text)}
           </p>
+        ) : p.kind === "tool-call" ? (
+          <ToolCall key={i} call={p.data as ToolCallPartData} />
         ) : (
           <p key={i} className="muted">
             [{p.kind}]
@@ -163,6 +166,24 @@ function Message({ event, sender, grouped }: { event: Event; sender?: Principal;
         </span>
       )}
     </article>
+  );
+}
+
+// ToolCall shows a tool the sender used, with its arguments and error a
+// click away.
+function ToolCall({ call }: { call: ToolCallPartData }) {
+  const label =
+    call.status === "running" ? `Using ${call.name}…` : call.status === "failed" ? `${call.name} failed` : `Used ${call.name}`;
+  const input = call.input && Object.keys(call.input).length > 0 ? JSON.stringify(call.input, null, 2) : "";
+  if (!input && !call.error) {
+    return <div className={`tool ${call.status}`}>{label}</div>;
+  }
+  return (
+    <details className={`tool ${call.status}`}>
+      <summary>{label}</summary>
+      {call.error && <div className="tool-error">{call.error}</div>}
+      {input && <pre>{input}</pre>}
+    </details>
   );
 }
 

@@ -66,7 +66,8 @@
 : An agent principal the server runs itself by calling a model provider
   (Anthropic, or OpenAI-compatible). It answers DMs and `@name` mentions,
   and every message in rooms where it is a responder. It may call tools
-  from the MCP servers its admin gave it.
+  from the MCP servers its admin gave it; each call shows in its reply as a
+  `tool-call` part, without the tool's result.
 
 **Responder**
 : An agent whose membership in a room has the `responder` scope. A

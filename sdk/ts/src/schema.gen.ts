@@ -625,7 +625,8 @@ export interface components {
         PartKind: "text" | "attachment" | "tool-call" | "tool-result" | "card";
         /**
          * @description One typed piece of a message. `data` is a JSON object of at most
-         *     64 KiB; for `text` it is a `TextPartData`.
+         *     64 KiB; for `text` it is a `TextPartData`, and for `tool-call` a
+         *     `ToolCallPartData`.
          */
         Part: {
             kind: components["schemas"]["PartKind"];
@@ -635,6 +636,24 @@ export interface components {
         };
         TextPartData: {
             text: string;
+        };
+        /**
+         * @description A tool the sender used while writing the message, such as a built-in
+         *     agent's call to an MCP server. It shows the call and how it went,
+         *     not its result.
+         */
+        ToolCallPartData: {
+            /** @description The call's id, unique within the message. */
+            id?: string;
+            name: string;
+            /** @description The call's arguments; absent when they were too long to show. */
+            input?: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status: "running" | "done" | "failed";
+            /** @description Why a failed call failed. */
+            error?: string;
         };
         Event: {
             id: string;

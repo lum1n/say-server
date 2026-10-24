@@ -11,8 +11,10 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -24,14 +26,14 @@ import (
 
 // Chat is how a built-in agent takes part, the same way as any client.
 type Chat interface {
-	// SendText sends a text message from me in reply to causedBy. A
-	// repeated idempotencyKey returns the earlier message, with created
-	// false. A streaming message may start without text; StreamText
-	// replaces its text and EndText makes it final, with text or, when
-	// that is empty, with what it streamed.
-	SendText(ctx context.Context, me core.Principal, roomID, text, causedBy, idempotencyKey string, streaming bool) (e core.Event, created bool, err error)
-	StreamText(ctx context.Context, me core.Principal, roomID, eventID, text string) error
-	EndText(ctx context.Context, me core.Principal, roomID, eventID, text string) error
+	// SendParts sends a message from me in reply to causedBy. A repeated
+	// idempotencyKey returns the earlier message, with created false. A
+	// streaming message may start without parts; StreamParts replaces its
+	// parts and EndParts makes it final, with parts or, when they are nil,
+	// with what it streamed.
+	SendParts(ctx context.Context, me core.Principal, roomID string, parts []core.Part, causedBy, idempotencyKey string, streaming bool) (e core.Event, created bool, err error)
+	StreamParts(ctx context.Context, me core.Principal, roomID, eventID string, parts []core.Part) error
+	EndParts(ctx context.Context, me core.Principal, roomID, eventID string, parts []core.Part) error
 	// AgentPolicy is the agent policy in effect in room.
 	AgentPolicy(room core.Room) core.AgentPolicy
 }
@@ -253,7 +255,8 @@ func (w *worker) run(ctx context.Context) {
 }
 
 // endStreams ends the agent's replies that a node stopped writing, by
-// crashing or losing the agent's lease, with the text they have.
+// crashing or losing the agent's lease, with what they have. Tool calls
+// still running then never finished.
 func (w *worker) endStreams(ctx context.Context) {
 	streaming, err := w.c.Store.StreamingFrom(ctx, w.me.ID)
 	if err != nil {
@@ -261,7 +264,19 @@ func (w *worker) endStreams(ctx context.Context) {
 		return
 	}
 	for _, e := range streaming {
-		if err := w.c.Chat.EndText(ctx, w.me, e.RoomID, e.ID, ""); err != nil {
+		var parts []core.Part
+		for i, p := range e.Parts {
+			var c core.ToolCall
+			if p.Kind != core.PartToolCall || json.Unmarshal(p.Data, &c) != nil || c.Status != core.ToolRunning {
+				continue
+			}
+			if parts == nil {
+				parts = slices.Clone(e.Parts)
+			}
+			c.Status, c.Error = core.ToolFailed, "the reply was cut off"
+			parts[i] = c.Part()
+		}
+		if err := w.c.Chat.EndParts(ctx, w.me, e.RoomID, e.ID, parts); err != nil {
 			w.warn(ctx, "end a stream", err)
 		}
 	}

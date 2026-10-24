@@ -86,6 +86,33 @@ func TestToolCalls(t *testing.T) {
 			t.Errorf("reply %q lacks %q", got, want)
 		}
 	}
+	// The reply shows the first round's text, its calls and how they went,
+	// then the answer.
+	var shown []string
+	for _, p := range evs[1].Parts {
+		if p.Kind != core.PartToolCall {
+			shown = append(shown, string(p.Kind))
+			continue
+		}
+		var c core.ToolCall
+		if err := json.Unmarshal(p.Data, &c); err != nil {
+			t.Fatal(err)
+		}
+		shown = append(shown, fmt.Sprintf("%s %s %s %s", c.ID, c.Name, string(c.Input), c.Status))
+		if (c.Status == core.ToolFailed) != (c.Error != "") {
+			t.Errorf("call %s: status %s, error %q", c.ID, c.Status, c.Error)
+		}
+	}
+	if want := []string{
+		"text",
+		`c1 wx__forecast {"city":"Oslo"} done`,
+		"c2 wx__forecast  failed",
+		"c3 nope__x  failed",
+		"c4 wx__forecast  failed",
+		"text",
+	}; strings.Join(shown, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("parts:\n%s\nwant:\n%s", strings.Join(shown, "\n"), strings.Join(want, "\n"))
+	}
 	if e.llm.count() != 2 {
 		t.Fatalf("model calls = %d, want 2", e.llm.count())
 	}
@@ -137,7 +164,8 @@ func TestToolServerDown(t *testing.T) {
 	}
 }
 
-// A model that keeps calling tools gets cut off without a reply.
+// A model that keeps calling tools gets cut off without an answer; the
+// reply shows only the calls it made.
 func TestToolRoundLimit(t *testing.T) {
 	defer func(n int) { maxToolRounds = n }(maxToolRounds)
 	maxToolRounds = 3
@@ -152,8 +180,9 @@ func TestToolRoundLimit(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	e.say(r, "@Bot loop")
-	if evs := e.quiet(r); len(evs) != 1 {
-		t.Fatalf("the agent replied: %s", dump(evs))
+	evs := e.quiet(r)
+	if len(evs) != 2 || evs[1].Text() != "[used wx__forecast]\n[used wx__forecast]" {
+		t.Fatalf("events: %s", dump(evs))
 	}
 	if n := e.llm.count(); n != 3 {
 		t.Fatalf("model calls = %d, want 3", n)

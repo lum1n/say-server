@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -29,44 +28,68 @@ const (
 	maxMCPServers     = 8
 )
 
-// SendText is how built-in agents write: the same send path as REST, the
+// SendParts is how built-in agents write: the same send path as REST, the
 // WebSocket and MCP, so every room limit applies. A streaming message is
-// then changed with StreamText and ended with EndText. created is false
+// then changed with StreamParts and ended with EndParts. created is false
 // when idempotencyKey returned an earlier message.
-func (s *Server) SendText(ctx context.Context, me core.Principal, roomID, text, causedBy, idempotencyKey string, streaming bool) (e core.Event, created bool, err error) {
-	msg := sendMessage{Parts: textParts(text), CausedBy: causedBy, Stream: core.StreamFinal}
+func (s *Server) SendParts(ctx context.Context, me core.Principal, roomID string, parts []core.Part, causedBy, idempotencyKey string, streaming bool) (e core.Event, created bool, err error) {
+	msg := sendMessage{Parts: toWireParts(parts), CausedBy: causedBy, Stream: core.StreamFinal}
 	if streaming {
 		msg.Stream = core.StreamStreaming
 	}
 	return s.send(ctx, me, roomID, msg, idempotencyKey)
 }
 
-// StreamText replaces the text of me's streaming message eventID.
-func (s *Server) StreamText(ctx context.Context, me core.Principal, roomID, eventID, text string) error {
-	parts := textParts(text)
-	_, err := s.edit(ctx, me, roomID, eventID, editMessage{Parts: &parts, Stream: core.StreamStreaming})
+// StreamParts replaces the parts of me's streaming message eventID.
+func (s *Server) StreamParts(ctx context.Context, me core.Principal, roomID, eventID string, parts []core.Part) error {
+	wire := toWireParts(parts)
+	_, err := s.edit(ctx, me, roomID, eventID, editMessage{Parts: &wire, Stream: core.StreamStreaming})
 	return err
 }
 
-// EndText ends the stream of me's message eventID with text, or with what
-// it streamed when text is empty.
-func (s *Server) EndText(ctx context.Context, me core.Principal, roomID, eventID, text string) error {
+// EndParts ends the stream of me's message eventID with parts, or with
+// what it streamed when parts is nil.
+func (s *Server) EndParts(ctx context.Context, me core.Principal, roomID, eventID string, parts []core.Part) error {
 	body := editMessage{Stream: core.StreamFinal}
-	if text != "" {
-		parts := textParts(text)
-		body.Parts = &parts
+	if parts != nil {
+		wire := toWireParts(parts)
+		body.Parts = &wire
 	}
 	_, err := s.edit(ctx, me, roomID, eventID, body)
 	return err
 }
 
-// textParts is a message of one text part, or none for empty text.
-func textParts(text string) []wirePart {
-	if text == "" {
-		return []wirePart{}
+// SendText, StreamText and EndText are SendParts, StreamParts and EndParts
+// for a message of one text part, or none for empty text.
+func (s *Server) SendText(ctx context.Context, me core.Principal, roomID, text, causedBy, idempotencyKey string, streaming bool) (core.Event, bool, error) {
+	return s.SendParts(ctx, me, roomID, textParts(text), causedBy, idempotencyKey, streaming)
+}
+
+func (s *Server) StreamText(ctx context.Context, me core.Principal, roomID, eventID, text string) error {
+	return s.StreamParts(ctx, me, roomID, eventID, textParts(text))
+}
+
+func (s *Server) EndText(ctx context.Context, me core.Principal, roomID, eventID, text string) error {
+	var parts []core.Part
+	if text != "" {
+		parts = textParts(text)
 	}
-	data, _ := json.Marshal(map[string]string{"text": text})
-	return []wirePart{{Kind: core.PartText, Data: data}}
+	return s.EndParts(ctx, me, roomID, eventID, parts)
+}
+
+func textParts(text string) []core.Part {
+	if text == "" {
+		return []core.Part{}
+	}
+	return []core.Part{core.TextPart(text)}
+}
+
+func toWireParts(parts []core.Part) []wirePart {
+	out := make([]wirePart, len(parts))
+	for i, p := range parts {
+		out[i] = wirePart{Kind: p.Kind, Data: p.Data}
+	}
+	return out
 }
 
 type wireBuiltinAgent struct {

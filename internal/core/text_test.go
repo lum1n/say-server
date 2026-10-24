@@ -28,9 +28,14 @@ func TestEventText(t *testing.T) {
 	e := Event{Parts: []Part{
 		{Kind: PartText, Data: []byte(`{"text":"hello"}`)},
 		{Kind: PartAttachment, Data: []byte(`{}`)},
-		{Kind: PartText, Data: []byte(`{"text":"world"}`)},
+		ToolCall{Name: "say__read", Status: ToolDone}.Part(),
+		ToolCall{Name: "say__send", Status: ToolFailed}.Part(),
+		TextPart("world"),
 	}}
-	if got := e.Text(); got != "hello\n[attachment]\nworld" {
+	if got := e.Text(); got != "hello\n[attachment]\n[used say__read]\n[used say__send, failed]\nworld" {
 		t.Fatalf("Text() = %q", got)
+	}
+	if got := e.Prose(); got != "hello\n\nworld" {
+		t.Fatalf("Prose() = %q", got)
 	}
 }

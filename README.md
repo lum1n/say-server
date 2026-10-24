@@ -142,7 +142,8 @@ Under **Tools**, give an agent MCP servers (streamable HTTP) with an
 optional `Authorization` header. The model sees their tools as
 `name__tool` and may call them before it answers, up to 8 rounds per
 reply. say's own `/mcp` works too: with another agent's token, a built-in
-agent can read the rooms that agent is in.
+agent can read the rooms that agent is in. The reply shows each tool it
+called and its arguments, but not what the tool returned.
 
 Replies stream into the room as the model writes them. Any client can
 stream a message the same way: send it with `"stream": "streaming"`, then

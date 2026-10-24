@@ -13,19 +13,43 @@ import (
 const ScopeResponder = "responder"
 
 // Text flattens a message to plain text: text parts as they are, one per
-// line, and other parts as [kind].
+// line, tool calls as [used name] and other parts as [kind].
 func (e Event) Text() string {
 	var text []string
 	for _, part := range e.Parts {
-		if part.Kind != PartText {
+		switch part.Kind {
+		case PartText:
+			var d struct{ Text string }
+			json.Unmarshal(part.Data, &d)
+			text = append(text, d.Text)
+		case PartToolCall:
+			var c ToolCall
+			if json.Unmarshal(part.Data, &c) != nil || c.Name == "" {
+				text = append(text, "[tool-call]")
+			} else if c.Status == ToolFailed {
+				text = append(text, "[used "+c.Name+", failed]")
+			} else {
+				text = append(text, "[used "+c.Name+"]")
+			}
+		default:
 			text = append(text, "["+string(part.Kind)+"]")
+		}
+	}
+	return strings.Join(text, "\n")
+}
+
+// Prose is the message's text parts only, separated by blank lines.
+func (e Event) Prose() string {
+	var text []string
+	for _, part := range e.Parts {
+		if part.Kind != PartText {
 			continue
 		}
 		var d struct{ Text string }
 		json.Unmarshal(part.Data, &d)
 		text = append(text, d.Text)
 	}
-	return strings.Join(text, "\n")
+	return strings.Join(text, "\n\n")
 }
 
 // Mentions reports whether text mentions name as @name, ignoring case. The

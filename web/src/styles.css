@@ -200,8 +200,9 @@ a {
   overflow-wrap: anywhere;
 }
 
-/* A reply still being written ends in a blinking caret. */
-.msg.streaming p:last-of-type::after {
+/* A reply still being written ends in a blinking caret, unless it is
+   waiting on a tool. */
+.msg.streaming > p:last-child::after {
   content: "▍";
   margin-left: 1px;
   color: var(--muted);
@@ -215,9 +216,45 @@ a {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .msg.streaming p:last-of-type::after {
+  .msg.streaming > p:last-child::after {
     animation: none;
   }
+}
+
+/* Tools an agent used, between the text of its rounds. */
+.msg .tool {
+  margin: 2px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.msg .tool::before {
+  content: "⚙ ";
+}
+
+.msg details.tool::before {
+  content: none;
+}
+
+.msg .tool summary {
+  cursor: pointer;
+}
+
+.msg .tool.failed,
+.msg .tool-error {
+  color: crimson;
+}
+
+.msg .tool-error,
+.msg .tool pre {
+  margin: 4px 0 4px 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg .tool pre {
+  font-size: 12px;
+  color: var(--text);
 }
 
 .msg .edited {

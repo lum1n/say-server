@@ -501,14 +501,20 @@ func TestEndsStreamsLeftBehind(t *testing.T) {
 	bot := e.agent("Bot", 0)
 	r := e.room(core.RoomGroup, bot)
 	// A node wrote part of a reply and died.
-	msg, _, err := e.srv.SendText(context.Background(), bot, r.ID, "half a", "", "", true)
+	parts := []core.Part{
+		core.TextPart("half a"),
+		core.ToolCall{ID: "c1", Name: "wx__forecast", Status: core.ToolDone}.Part(),
+		core.ToolCall{ID: "c2", Name: "wx__forecast", Status: core.ToolRunning}.Part(),
+	}
+	msg, _, err := e.srv.SendParts(context.Background(), bot, r.ID, parts, "", "", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.runner("node-a")
 	evs := e.waitFor(r, "the stream to end", func(evs []core.Event) bool { return len(evs) == 1 })
-	if evs[0].ID != msg.ID || evs[0].Text() != "half a" {
-		t.Fatalf("message = %+v", evs[0])
+	// The call that was running never finished.
+	if evs[0].ID != msg.ID || evs[0].Text() != "half a\n[used wx__forecast]\n[used wx__forecast, failed]" {
+		t.Fatalf("message: %s", dump(evs))
 	}
 	if e.llm.count() != 0 {
 		t.Fatal("ending a stream called the model")

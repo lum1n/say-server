@@ -66,6 +66,18 @@ binary must stay free of cgo.
   answers without it, and the error is stored for the admin. The header is
   write-only like the API key, and it is kept on an update only while the
   server's name and URL stay the same, so it is never sent to a new URL.
+- **Tool use shows in the reply.** Each round's text is a text part,
+  followed by a `tool-call` part for each tool it called (`id`, `name`,
+  `input`, `status` running/done/failed, `error`). A call shows as running
+  while it runs, and the message starts streaming with the first text or
+  call. Only the outcome goes into the room, never the result: a tool may
+  read what the room's members cannot see, such as another room through
+  say's own `/mcp`. Inputs over 4 KiB or not a JSON object are left out,
+  errors are cut at 500 bytes, and one reply shows at most 20 calls. A model
+  stopped at the round limit leaves a reply with only its calls. A node
+  that ends another's leftover reply marks its running calls failed. In
+  the model's history the agent's own messages are their text only, so it
+  does not learn to write calls out.
 - Usage is counted per agent per UTC day (`agent_usage`). The latest failure
   (provider error, refusal, spent budget, or a room refusing the send) is
   stored on the agent and shown to admins until the next success.
@@ -87,7 +99,9 @@ binary must stay free of cgo.
   message. Tools with side effects should be idempotent.
 - Opening the servers for every reply costs a handshake per server per
   reply, but no MCP session outlives the reply or the node.
-- Tool calls and results are not shown in the room; only the answer is.
-- Not yet built: tools from say itself (without a token over `/mcp`),
-  showing tool use in the room, cost budgets in money, and per-agent reply rules beyond mention, DM and
+- People see which tools an agent called and with what arguments, but not
+  what the tools returned. Arguments may still carry something private the
+  model chose to pass on.
+- Not yet built: tools from say itself (without a token over `/mcp`), cost
+  budgets in money, and per-agent reply rules beyond mention, DM and
   responder.
