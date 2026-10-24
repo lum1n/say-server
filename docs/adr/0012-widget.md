@@ -46,7 +46,17 @@ read another visitor's chat.
   unique per widget and `sub`, so a signed-in user has one thread on every
   device. A token from an anonymous session, or one for another `sub`, is
   never reused for a verified visitor, and the embed page drops a verified
-  token when the host stops giving an identity. JWTs are checked by hand
+  token when the host stops giving an identity.
+- **Signing in keeps the chat.** An anonymous visitor whose token comes
+  with an identity, for a `sub` that has no visitor yet, *becomes* that
+  verified visitor: the same guest and thread get the `sub`, the guest
+  takes the identity's `name` and the thread is renamed to match. The
+  anonymous tokens are revoked and a new one is issued, so the old token
+  can't read what the visitor writes later on other devices. Nothing is
+  copied between rooms. If the `sub` already has a thread (they signed in
+  before, maybe elsewhere), the visitor gets that thread and the
+  anonymous one stays with the team as it is: merging two logs would
+  replay messages to the agent and reorder both histories. JWTs are checked by hand
   (about 50 lines) and only HS256 is accepted, so `alg: none` and
   algorithm confusion can't happen.
 - **Handoff uses the responder scope.** The agent answers every message
@@ -69,6 +79,10 @@ read another visitor's chat.
 - A visitor who clears storage, or opens the site in another browser,
   becomes a new anonymous visitor. Signing in to the host site is the way
   to keep one thread across devices.
+- On a shared browser, an anonymous chat goes to whoever signs in there
+  next, as with any site that keeps a guest's cart on sign-in. The host
+  site can avoid it by clearing the widget (or not embedding it) before
+  sign-in.
 - Session creation and guest messages are not rate-limited yet. Before a
   widget goes on a busy public site, they need per-IP limits, like
   sign-in.

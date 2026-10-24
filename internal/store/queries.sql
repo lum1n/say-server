@@ -236,6 +236,19 @@ SELECT * FROM widget_visitors WHERE principal_id = $1;
 -- name: VisitorBySubject :one
 SELECT * FROM widget_visitors WHERE widget_id = $1 AND subject = $2;
 
+-- name: VerifyVisitor :execrows
+-- Gives anonymous visitor $1 subject $2, unless its widget already has a
+-- visitor with that subject.
+UPDATE widget_visitors SET subject = $2
+WHERE widget_visitors.principal_id = $1 AND widget_visitors.subject = ''
+  AND NOT EXISTS (
+    SELECT 1 FROM widget_visitors o
+    WHERE o.widget_id = widget_visitors.widget_id AND o.subject = $2
+  );
+
+-- name: RenameRoom :execrows
+UPDATE rooms SET name = $2 WHERE id = $1;
+
 -- name: DeleteTokensNamed :exec
 DELETE FROM tokens WHERE principal_id = $1 AND name = $2;
 

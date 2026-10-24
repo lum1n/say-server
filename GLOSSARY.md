@@ -179,7 +179,8 @@
 
 **Visitor**
 : A guest principal that chats through a widget, with its own widget
-  thread. Anonymous, or verified by an identity token.
+  thread. Anonymous, or verified by an identity token; an anonymous
+  visitor who signs in becomes verified and keeps its thread.
 
 **Widget thread**
 : A `widget-thread` room with one visitor, the widget's team and its agent.

@@ -257,10 +257,12 @@ func (s *Server) embedConfig(w http.ResponseWriter, r *http.Request) {
 
 // embedSession signs a visitor in to the widget and returns its thread.
 // A token from an earlier session of the same visitor is returned as is;
-// a valid identity token finds or creates the verified visitor with that
-// subject; otherwise a new anonymous visitor is created. The embed page
-// calls it only when it has a token or an identity, or on the first
-// message, so page views alone create nothing.
+// a valid identity token finds the verified visitor with that subject,
+// else makes the anonymous visitor of the request's token that visitor (so
+// it keeps its thread), else creates one; otherwise a new anonymous
+// visitor is created. The embed page calls it only when it has a token or
+// an identity, or on the first message, so page views alone create
+// nothing.
 func (s *Server) embedSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var body struct {
@@ -286,13 +288,17 @@ func (s *Server) embedSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The same visitor again.
+	// The same visitor again, or an anonymous one who has signed in.
+	var anon core.Principal
 	if token := requestToken(r); token != "" {
 		if p, err := s.store.PrincipalByToken(ctx, token); err == nil && p.Kind == core.PrincipalGuest {
 			v, err := s.store.VisitorByPrincipal(ctx, p.ID)
 			if err == nil && v.WidgetID == wg.ID && v.Subject == id.Subject {
 				s.writeSession(w, ctx, http.StatusOK, p, v, token)
 				return
+			}
+			if err == nil && v.WidgetID == wg.ID && v.Subject == "" {
+				anon = p
 			}
 		}
 	}
@@ -301,6 +307,9 @@ func (s *Server) embedSession(w http.ResponseWriter, r *http.Request) {
 	var v store.Visitor
 	if id.Subject != "" {
 		v, err = s.store.VisitorBySubject(ctx, wg.ID, id.Subject)
+	}
+	if anon.ID != "" && errors.Is(err, store.ErrNotFound) {
+		v, err = s.verifyVisitor(ctx, wg, anon, id)
 	}
 	if id.Subject == "" || errors.Is(err, store.ErrNotFound) {
 		v, err = s.newVisitor(ctx, wg, id)
@@ -362,6 +371,47 @@ func (s *Server) newVisitor(ctx context.Context, wg store.Widget, id identity) (
 	}
 	for _, m := range members[1:] {
 		s.notifyRooms(ctx, m.PrincipalID)
+	}
+	return v, nil
+}
+
+// verifyVisitor makes anonymous visitor anon the verified visitor id,
+// when the widget has none yet, so a visitor who signs in on the host site
+// keeps the thread they started. The guest takes the identity's name, and
+// its anonymous tokens stop working: the thread now holds what the
+// verified visitor writes on any device.
+func (s *Server) verifyVisitor(ctx context.Context, wg store.Widget, anon core.Principal, id identity) (store.Visitor, error) {
+	old, err := s.store.VisitorByPrincipal(ctx, anon.ID)
+	if err != nil {
+		return store.Visitor{}, err
+	}
+	room, err := s.store.GetRoom(ctx, old.RoomID)
+	if err != nil {
+		return store.Visitor{}, err
+	}
+	roomName := ""
+	if prefix, ok := strings.CutSuffix(room.Name, " · "+anon.DisplayName); ok && id.Name != "" {
+		roomName = prefix + " · " + id.Name
+	}
+	v, err := s.store.VerifyVisitor(ctx, anon.ID, id.Subject, id.Name, roomName)
+	if errors.Is(err, store.ErrVisitorExists) {
+		// A concurrent first visit by the same verified visitor won; the
+		// anonymous thread stays as it is.
+		return s.store.VisitorBySubject(ctx, wg.ID, id.Subject)
+	}
+	if err != nil {
+		return store.Visitor{}, err
+	}
+	if err := s.store.RevokeTokensNamed(ctx, anon.ID, "widget"); err != nil {
+		return store.Visitor{}, err
+	}
+	if id.Name != "" {
+		// The team's room lists and member panels show the new name.
+		if ms, err := s.store.Members(ctx, v.RoomID); err == nil {
+			for _, m := range ms {
+				s.notifyRooms(ctx, m.PrincipalID)
+			}
+		}
 	}
 	return v, nil
 }

@@ -207,6 +207,36 @@ func (s *sqlStore) VisitorBySubject(ctx context.Context, widgetID, subject strin
 	return visitor(row), nil
 }
 
+func (s *sqlStore) VerifyVisitor(ctx context.Context, principalID, subject, displayName, roomName string) (Visitor, error) {
+	var v Visitor
+	err := s.tx(ctx, func(q *db.Queries) error {
+		n, err := q.VerifyVisitor(ctx, db.VerifyVisitorParams{PrincipalID: principalID, Subject: subject})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrVisitorExists
+		}
+		row, err := q.VisitorByPrincipal(ctx, principalID)
+		if err != nil {
+			return err
+		}
+		v = visitor(row)
+		if displayName != "" {
+			if _, err := q.RenamePrincipal(ctx, db.RenamePrincipalParams{ID: principalID, DisplayName: displayName}); err != nil {
+				return err
+			}
+		}
+		if roomName != "" {
+			if _, err := q.RenameRoom(ctx, db.RenameRoomParams{ID: v.RoomID, Name: roomName}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return v, err
+}
+
 func visitor(row db.WidgetVisitor) Visitor {
 	return Visitor{
 		PrincipalID: row.PrincipalID,
