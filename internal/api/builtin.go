@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -26,7 +27,14 @@ const (
 	maxSystemPrompt   = 20000
 	maxAgentFieldSize = 2000
 	maxMCPServers     = 8
+	// In dollars: per million tokens, and per day.
+	maxPrice      = 10_000
+	maxCostBudget = 1_000_000
 )
+
+// Money is stored in micro-dollars and sent as dollars.
+func dollars(micros int64) float64 { return float64(micros) / 1e6 }
+func micros(dollars float64) int64 { return int64(math.Round(dollars * 1e6)) }
 
 // SendParts is how built-in agents write: the same send path as REST, the
 // WebSocket and MCP, so every room limit applies. A streaming message is
@@ -102,6 +110,10 @@ type wireBuiltinAgent struct {
 	MaxTokens        int             `json:"max_tokens"`
 	DailyTokenBudget int64           `json:"daily_token_budget"`
 	TokensToday      int64           `json:"tokens_today"`
+	InputPrice       float64         `json:"input_price"`
+	OutputPrice      float64         `json:"output_price"`
+	DailyCostBudget  float64         `json:"daily_cost_budget"`
+	CostToday        float64         `json:"cost_today"`
 	Enabled          bool            `json:"enabled"`
 	MCPServers       []wireMCPServer `json:"mcp_servers"`
 	LastError        string          `json:"last_error,omitempty"`
@@ -135,6 +147,10 @@ func (s *Server) toBuiltinAgent(ctx context.Context, a store.BuiltinAgent) (wire
 		MaxTokens:        a.MaxTokens,
 		DailyTokenBudget: a.DailyTokenBudget,
 		TokensToday:      used.Total(),
+		InputPrice:       dollars(a.InputPrice),
+		OutputPrice:      dollars(a.OutputPrice),
+		DailyCostBudget:  dollars(a.DailyCostBudget),
+		CostToday:        dollars(used.Cost),
 		Enabled:          a.Enabled,
 		MCPServers:       []wireMCPServer{},
 		LastError:        a.LastError,
@@ -179,7 +195,7 @@ func (s *Server) listBuiltinAgents(w http.ResponseWriter, r *http.Request, me co
 // builtinAgentPatch is the body of POST and PATCH /builtin-agents. On PATCH
 // absent fields stay as they are.
 type builtinAgentPatch struct {
-	DisplayName      *string `json:"display_name"` // POST only
+	DisplayName      *string `json:"display_name"`
 	Provider         *string `json:"provider"`
 	BaseURL          *string `json:"base_url"`
 	Model            *string `json:"model"`
@@ -187,7 +203,11 @@ type builtinAgentPatch struct {
 	SystemPrompt     *string `json:"system_prompt"`
 	MaxTokens        *int    `json:"max_tokens"`
 	DailyTokenBudget *int64  `json:"daily_token_budget"`
-	Enabled          *bool   `json:"enabled"`
+	// In dollars, per million tokens and per UTC day.
+	InputPrice      *float64 `json:"input_price"`
+	OutputPrice     *float64 `json:"output_price"`
+	DailyCostBudget *float64 `json:"daily_cost_budget"`
+	Enabled         *bool    `json:"enabled"`
 	// MCPServers replaces the agent's list. A server that leaves out
 	// authorization keeps the one it had, if its name and URL are the same.
 	MCPServers *[]mcpServerPatch `json:"mcp_servers"`
@@ -291,6 +311,29 @@ func (p builtinAgentPatch) apply(a store.BuiltinAgent) (store.BuiltinAgent, erro
 		}
 		a.DailyTokenBudget = *p.DailyTokenBudget
 	}
+	for _, f := range []struct {
+		dst  *int64
+		v    *float64
+		name string
+		max  float64
+	}{
+		{&a.InputPrice, p.InputPrice, "input_price", maxPrice},
+		{&a.OutputPrice, p.OutputPrice, "output_price", maxPrice},
+		{&a.DailyCostBudget, p.DailyCostBudget, "daily_cost_budget", maxCostBudget},
+	} {
+		if f.v == nil {
+			continue
+		}
+		if *f.v < 0 || *f.v > f.max {
+			return a, errorf(http.StatusUnprocessableEntity, "invalid", "%s must be from 0 to %g dollars", f.name, f.max)
+		}
+		*f.dst = micros(*f.v)
+	}
+	// Without prices every call costs nothing, so the budget would never
+	// stop the agent.
+	if a.DailyCostBudget > 0 && a.InputPrice == 0 && a.OutputPrice == 0 {
+		return a, errorf(http.StatusUnprocessableEntity, "invalid", "a daily_cost_budget needs input_price or output_price")
+	}
 	if p.Enabled != nil {
 		a.Enabled = *p.Enabled
 	}
@@ -352,9 +395,14 @@ func (s *Server) updateBuiltinAgent(w http.ResponseWriter, r *http.Request, me c
 		writeError(w, err)
 		return
 	}
+	var rename string
 	if body.DisplayName != nil {
-		writeError(w, errorf(http.StatusUnprocessableEntity, "invalid", "display_name cannot be changed yet"))
-		return
+		p, err := newPrincipal(core.PrincipalAgent, *body.DisplayName, "")
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		rename = p.DisplayName
 	}
 	a, err := s.store.GetBuiltinAgent(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
@@ -375,7 +423,8 @@ func (s *Server) updateBuiltinAgent(w http.ResponseWriter, r *http.Request, me c
 		now = a.UpdatedAt.Add(time.Millisecond)
 	}
 	a.UpdatedAt = now
-	if err := s.store.UpdateBuiltinAgent(r.Context(), a); err != nil {
+	// A rename restarts the agent too, so it answers to its new @name.
+	if err := s.store.UpdateBuiltinAgent(r.Context(), a, rename); err != nil {
 		writeError(w, err)
 		return
 	}

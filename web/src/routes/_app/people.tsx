@@ -11,7 +11,7 @@ import {
   type MCPServerSettings,
   updateBuiltinAgent,
 } from "@say/sdk";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { keys, Online, useDirectory } from "../../chat";
 import { Field, FormError } from "../../components/form";
 
@@ -134,6 +134,7 @@ const providers: { value: LLMProvider; label: string; model: string }[] = [
 ];
 
 const count = new Intl.NumberFormat();
+const money = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 4 });
 
 // BuiltinAgents lists the agents the server runs by calling a model, and
 // adds and edits them.
@@ -159,10 +160,12 @@ function useSaveAgent(id: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: BuiltinAgentSettings) => updateBuiltinAgent(id, body),
-    onSuccess: (a) =>
+    onSuccess: (a, body) => {
       queryClient.setQueryData<BuiltinAgent[]>(keys.builtinAgents, (list) =>
         list?.map((x) => (x.principal.id === a.principal.id ? a : x)),
-      ),
+      );
+      if (body.display_name !== undefined) queryClient.invalidateQueries({ queryKey: keys.principals });
+    },
   });
 }
 
@@ -176,7 +179,10 @@ function BuiltinAgentRow({ agent: a }: { agent: BuiltinAgent }) {
         {!a.enabled && <span className="badge">off</span>}{" "}
         <span className="muted">
           · {count.format(a.tokens_today)}
-          {a.daily_token_budget > 0 && ` of ${count.format(a.daily_token_budget)}`} tokens today
+          {a.daily_token_budget > 0 && ` of ${count.format(a.daily_token_budget)}`} tokens
+          {(a.input_price > 0 || a.output_price > 0) &&
+            ` · ${money.format(a.cost_today)}${a.daily_cost_budget > 0 ? ` of ${money.format(a.daily_cost_budget)}` : ""}`}{" "}
+          today
           {a.mcp_servers.length > 0 && ` · tools from ${a.mcp_servers.map((m) => m.name).join(", ")}`}
         </span>{" "}
         <button type="button" className="link" disabled={save.isPending} onClick={() => save.mutate({ enabled: !a.enabled })}>
@@ -207,13 +213,11 @@ function BuiltinAgentRow({ agent: a }: { agent: BuiltinAgent }) {
 
 function AddBuiltinAgent() {
   const queryClient = useQueryClient();
-  const [name, setName] = useState("");
   const [formKey, setFormKey] = useState(0);
   const add = useMutation({
     mutationFn: (body: BuiltinAgentSettings) =>
-      createBuiltinAgent({ ...body, display_name: name, provider: body.provider ?? "anthropic" }),
+      createBuiltinAgent({ ...body, display_name: body.display_name ?? "", provider: body.provider ?? "anthropic" }),
     onSuccess: () => {
-      setName("");
       setFormKey((k) => k + 1);
       queryClient.invalidateQueries({ queryKey: keys.builtinAgents });
       queryClient.invalidateQueries({ queryKey: keys.principals });
@@ -228,33 +232,29 @@ function AddBuiltinAgent() {
         pending={add.isPending}
         error={add.error}
         onSubmit={(body) => add.mutate(body)}
-      >
-        <Field label="Name" hint="People mention it as @name">
-          <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} autoComplete="off" />
-        </Field>
-      </AgentSettingsForm>
+      />
       {add.isSuccess && <p role="status">Added {add.data.principal.display_name}. Add it to a room to talk to it.</p>}
     </div>
   );
 }
 
-// AgentSettingsForm edits a built-in agent's model settings. Only fields
-// the admin changed are sent, so a stored API key stays unless replaced.
+// AgentSettingsForm edits a built-in agent's name and model settings. A
+// stored API key stays unless replaced, and the name is sent only when it
+// changed.
 function AgentSettingsForm({
   agent,
   submitLabel,
   pending,
   error,
   onSubmit,
-  children,
 }: {
-  children?: ReactNode;
   agent?: BuiltinAgent;
   submitLabel: string;
   pending: boolean;
   error: Error | null;
   onSubmit: (body: BuiltinAgentSettings) => void;
 }) {
+  const [name, setName] = useState(agent?.principal.display_name ?? "");
   const [provider, setProvider] = useState<LLMProvider>(agent?.provider ?? "anthropic");
   const [model, setModel] = useState(agent?.model ?? "");
   const [baseUrl, setBaseUrl] = useState(agent?.base_url ?? "");
@@ -262,6 +262,9 @@ function AgentSettingsForm({
   const [prompt, setPrompt] = useState(agent?.system_prompt ?? "");
   const [maxTokens, setMaxTokens] = useState(String(agent?.max_tokens ?? 1024));
   const [budget, setBudget] = useState(String(agent?.daily_token_budget ?? 0));
+  const [inputPrice, setInputPrice] = useState(String(agent?.input_price ?? 0));
+  const [outputPrice, setOutputPrice] = useState(String(agent?.output_price ?? 0));
+  const [costBudget, setCostBudget] = useState(String(agent?.daily_cost_budget ?? 0));
   const [servers, setServers] = useState<ServerRow[]>(
     () => agent?.mcp_servers.map((m) => ({ key: nextRow++, name: m.name, url: m.url, auth: "", keep: m.has_authorization })) ?? [],
   );
@@ -274,6 +277,9 @@ function AgentSettingsForm({
       system_prompt: prompt,
       max_tokens: Number(maxTokens),
       daily_token_budget: Number(budget),
+      input_price: Number(inputPrice),
+      output_price: Number(outputPrice),
+      daily_cost_budget: Number(costBudget),
       mcp_servers: servers.map((r): MCPServerSettings => {
         const m: MCPServerSettings = { name: r.name, url: r.url };
         // Left out, the server keeps a stored header for the same name and URL.
@@ -282,12 +288,15 @@ function AgentSettingsForm({
       }),
     };
     if (apiKey) body.api_key = apiKey;
+    if (name !== agent?.principal.display_name) body.display_name = name;
     onSubmit(body);
   };
   const env = provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
   return (
     <form onSubmit={submit} className="agent-settings">
-      {children}
+      <Field label="Name" hint="People mention it as @name">
+        <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} autoComplete="off" />
+      </Field>
       <Field label="Provider">
         <select value={provider} onChange={(e) => setProvider(e.target.value as LLMProvider)}>
           {providers.map((p) => (
@@ -329,6 +338,42 @@ function AgentSettingsForm({
       <Field label="Tokens per day" hint="Input and output together, per UTC day; 0 is no limit">
         <input type="number" min={0} required value={budget} onChange={(e) => setBudget(e.target.value)} />
       </Field>
+      <fieldset className="agent-prices">
+        <legend>Spending</legend>
+        <p className="muted">The model's list prices, so the server can count what the agent spends.</p>
+        <Field label="Input, $ per million tokens">
+          <input
+            type="number"
+            min={0}
+            max={10000}
+            step="any"
+            required
+            value={inputPrice}
+            onChange={(e) => setInputPrice(e.target.value)}
+          />
+        </Field>
+        <Field label="Output, $ per million tokens">
+          <input
+            type="number"
+            min={0}
+            max={10000}
+            step="any"
+            required
+            value={outputPrice}
+            onChange={(e) => setOutputPrice(e.target.value)}
+          />
+        </Field>
+        <Field label="Dollars per day" hint="Per UTC day at these prices; 0 is no limit">
+          <input
+            type="number"
+            min={0}
+            step="any"
+            required
+            value={costBudget}
+            onChange={(e) => setCostBudget(e.target.value)}
+          />
+        </Field>
+      </fieldset>
       <MCPServers rows={servers} onChange={setServers} />
       <FormError error={error} />
       <button type="submit" disabled={pending}>

@@ -43,11 +43,12 @@ func (q *Queries) AcquireLease(ctx context.Context, arg AcquireLeaseParams) (int
 }
 
 const addAgentUsage = `-- name: AddAgentUsage :exec
-INSERT INTO agent_usage (principal_id, day, input_tokens, output_tokens)
-VALUES ($1, $2, $3, $4)
+INSERT INTO agent_usage (principal_id, day, input_tokens, output_tokens, cost)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (principal_id, day) DO UPDATE
 SET input_tokens = agent_usage.input_tokens + excluded.input_tokens,
-    output_tokens = agent_usage.output_tokens + excluded.output_tokens
+    output_tokens = agent_usage.output_tokens + excluded.output_tokens,
+    cost = agent_usage.cost + excluded.cost
 `
 
 type AddAgentUsageParams struct {
@@ -55,6 +56,7 @@ type AddAgentUsageParams struct {
 	Day          string
 	InputTokens  int64
 	OutputTokens int64
+	Cost         int64
 }
 
 func (q *Queries) AddAgentUsage(ctx context.Context, arg AddAgentUsageParams) error {
@@ -63,6 +65,7 @@ func (q *Queries) AddAgentUsage(ctx context.Context, arg AddAgentUsageParams) er
 		arg.Day,
 		arg.InputTokens,
 		arg.OutputTokens,
+		arg.Cost,
 	)
 	return err
 }
@@ -106,7 +109,7 @@ func (q *Queries) AgentCursor(ctx context.Context, arg AgentCursorParams) (int64
 }
 
 const agentUsage = `-- name: AgentUsage :one
-SELECT input_tokens, output_tokens FROM agent_usage
+SELECT input_tokens, output_tokens, cost FROM agent_usage
 WHERE principal_id = $1 AND day = $2
 `
 
@@ -118,12 +121,13 @@ type AgentUsageParams struct {
 type AgentUsageRow struct {
 	InputTokens  int64
 	OutputTokens int64
+	Cost         int64
 }
 
 func (q *Queries) AgentUsage(ctx context.Context, arg AgentUsageParams) (AgentUsageRow, error) {
 	row := q.db.QueryRowContext(ctx, agentUsage, arg.PrincipalID, arg.Day)
 	var i AgentUsageRow
-	err := row.Scan(&i.InputTokens, &i.OutputTokens)
+	err := row.Scan(&i.InputTokens, &i.OutputTokens, &i.Cost)
 	return i, err
 }
 
@@ -232,8 +236,9 @@ func (q *Queries) ConnectorSessions(ctx context.Context, seenAt int64) ([]Connec
 const createBuiltinAgent = `-- name: CreateBuiltinAgent :exec
 INSERT INTO builtin_agents (principal_id, provider, base_url, model, api_key,
                             system_prompt, max_tokens, daily_token_budget,
-                            enabled, updated_at, created_at, mcp_servers)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                            enabled, updated_at, created_at, mcp_servers,
+                            input_price, output_price, daily_cost_budget)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 `
 
 type CreateBuiltinAgentParams struct {
@@ -249,6 +254,9 @@ type CreateBuiltinAgentParams struct {
 	UpdatedAt        int64
 	CreatedAt        int64
 	McpServers       string
+	InputPrice       int64
+	OutputPrice      int64
+	DailyCostBudget  int64
 }
 
 func (q *Queries) CreateBuiltinAgent(ctx context.Context, arg CreateBuiltinAgentParams) error {
@@ -265,6 +273,9 @@ func (q *Queries) CreateBuiltinAgent(ctx context.Context, arg CreateBuiltinAgent
 		arg.UpdatedAt,
 		arg.CreatedAt,
 		arg.McpServers,
+		arg.InputPrice,
+		arg.OutputPrice,
+		arg.DailyCostBudget,
 	)
 	return err
 }
@@ -532,7 +543,7 @@ func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]E
 }
 
 const getBuiltinAgent = `-- name: GetBuiltinAgent :one
-SELECT principal_id, provider, base_url, model, api_key, system_prompt, max_tokens, daily_token_budget, enabled, last_error, last_error_at, updated_at, created_at, mcp_servers FROM builtin_agents WHERE principal_id = $1
+SELECT principal_id, provider, base_url, model, api_key, system_prompt, max_tokens, daily_token_budget, enabled, last_error, last_error_at, updated_at, created_at, mcp_servers, input_price, output_price, daily_cost_budget FROM builtin_agents WHERE principal_id = $1
 `
 
 func (q *Queries) GetBuiltinAgent(ctx context.Context, principalID string) (BuiltinAgent, error) {
@@ -553,6 +564,9 @@ func (q *Queries) GetBuiltinAgent(ctx context.Context, principalID string) (Buil
 		&i.UpdatedAt,
 		&i.CreatedAt,
 		&i.McpServers,
+		&i.InputPrice,
+		&i.OutputPrice,
+		&i.DailyCostBudget,
 	)
 	return i, err
 }
@@ -707,7 +721,7 @@ func (q *Queries) InsertOutbox(ctx context.Context, arg InsertOutboxParams) erro
 }
 
 const listBuiltinAgents = `-- name: ListBuiltinAgents :many
-SELECT principal_id, provider, base_url, model, api_key, system_prompt, max_tokens, daily_token_budget, enabled, last_error, last_error_at, updated_at, created_at, mcp_servers FROM builtin_agents ORDER BY created_at, principal_id
+SELECT principal_id, provider, base_url, model, api_key, system_prompt, max_tokens, daily_token_budget, enabled, last_error, last_error_at, updated_at, created_at, mcp_servers, input_price, output_price, daily_cost_budget FROM builtin_agents ORDER BY created_at, principal_id
 `
 
 func (q *Queries) ListBuiltinAgents(ctx context.Context) ([]BuiltinAgent, error) {
@@ -734,6 +748,9 @@ func (q *Queries) ListBuiltinAgents(ctx context.Context) ([]BuiltinAgent, error)
 			&i.UpdatedAt,
 			&i.CreatedAt,
 			&i.McpServers,
+			&i.InputPrice,
+			&i.OutputPrice,
+			&i.DailyCostBudget,
 		); err != nil {
 			return nil, err
 		}
@@ -905,6 +922,23 @@ type ReleaseLeaseParams struct {
 func (q *Queries) ReleaseLease(ctx context.Context, arg ReleaseLeaseParams) error {
 	_, err := q.db.ExecContext(ctx, releaseLease, arg.Name, arg.Holder)
 	return err
+}
+
+const renamePrincipal = `-- name: RenamePrincipal :execrows
+UPDATE principals SET display_name = $2 WHERE id = $1
+`
+
+type RenamePrincipalParams struct {
+	ID          string
+	DisplayName string
+}
+
+func (q *Queries) RenamePrincipal(ctx context.Context, arg RenamePrincipalParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, renamePrincipal, arg.ID, arg.DisplayName)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const replaceMessage = `-- name: ReplaceMessage :exec
@@ -1139,7 +1173,8 @@ const updateBuiltinAgent = `-- name: UpdateBuiltinAgent :execrows
 UPDATE builtin_agents
 SET provider = $2, base_url = $3, model = $4, api_key = $5, system_prompt = $6,
     max_tokens = $7, daily_token_budget = $8, enabled = $9, updated_at = $10,
-    mcp_servers = $11
+    mcp_servers = $11, input_price = $12, output_price = $13,
+    daily_cost_budget = $14
 WHERE principal_id = $1
 `
 
@@ -1155,6 +1190,9 @@ type UpdateBuiltinAgentParams struct {
 	Enabled          int32
 	UpdatedAt        int64
 	McpServers       string
+	InputPrice       int64
+	OutputPrice      int64
+	DailyCostBudget  int64
 }
 
 func (q *Queries) UpdateBuiltinAgent(ctx context.Context, arg UpdateBuiltinAgentParams) (int64, error) {
@@ -1170,6 +1208,9 @@ func (q *Queries) UpdateBuiltinAgent(ctx context.Context, arg UpdateBuiltinAgent
 		arg.Enabled,
 		arg.UpdatedAt,
 		arg.McpServers,
+		arg.InputPrice,
+		arg.OutputPrice,
+		arg.DailyCostBudget,
 	)
 	if err != nil {
 		return 0, err

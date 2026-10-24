@@ -15,6 +15,7 @@ type AgentUsage struct {
 	Day          string
 	InputTokens  int64
 	OutputTokens int64
+	Cost         int64
 }
 
 type BuiltinAgent struct {
@@ -32,6 +33,9 @@ type BuiltinAgent struct {
 	UpdatedAt        int64
 	CreatedAt        int64
 	McpServers       string
+	InputPrice       int64
+	OutputPrice      int64
+	DailyCostBudget  int64
 }
 
 type ConnectorSession struct {

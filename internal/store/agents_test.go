@@ -15,7 +15,7 @@ import (
 func TestBuiltinAgents(t *testing.T) {
 	eachEngine(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
-		_, r := seed(t, s)
+		ada, r := seed(t, s)
 		p := core.Principal{ID: core.NewID(), Kind: core.PrincipalAgent, DisplayName: "Bot"}
 		a := BuiltinAgent{
 			Provider: "anthropic", Model: "m", APIKey: "secret",
@@ -39,32 +39,45 @@ func TestBuiltinAgents(t *testing.T) {
 		got.Model = "m2"
 		servers := []MCPServer{{Name: "wx", URL: "https://wx.example/mcp", Authorization: "Bearer t"}, {Name: "kb", URL: "http://kb/mcp"}}
 		got.MCPServers = servers
-		if err := s.UpdateBuiltinAgent(ctx, got); err != nil {
+		got.InputPrice, got.OutputPrice, got.DailyCostBudget = 3_000_000, 15_000_000, 5_000_000
+		if err := s.UpdateBuiltinAgent(ctx, got, "Bot 2"); err != nil {
 			t.Fatal(err)
+		}
+		if got, err := s.GetPrincipal(ctx, p.ID); err != nil || got.DisplayName != "Bot 2" {
+			t.Fatalf("renamed principal = %+v, %v", got, err)
 		}
 		if err := s.SetBuiltinAgentError(ctx, p.ID, "boom"); err != nil {
 			t.Fatal(err)
 		}
 		all, err := s.BuiltinAgents(ctx)
 		if err != nil || len(all) != 1 || all[0].Model != "m2" || all[0].Enabled || all[0].LastError != "boom" || all[0].LastErrorAt.IsZero() ||
-			!reflect.DeepEqual(all[0].MCPServers, servers) {
+			!reflect.DeepEqual(all[0].MCPServers, servers) || all[0].InputPrice != 3_000_000 || all[0].OutputPrice != 15_000_000 || all[0].DailyCostBudget != 5_000_000 {
 			t.Fatalf("BuiltinAgents = %+v, %v", all, err)
 		}
 		if _, err := s.GetBuiltinAgent(ctx, "nope"); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("missing agent: %v", err)
 		}
-		if err := s.UpdateBuiltinAgent(ctx, BuiltinAgent{PrincipalID: "nope"}); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("update missing agent: %v", err)
+		for _, name := range []string{"", "Ghost"} {
+			if err := s.UpdateBuiltinAgent(ctx, BuiltinAgent{PrincipalID: "nope"}, name); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("update missing agent (rename %q): %v", name, err)
+			}
+		}
+		// Someone who isn't a built-in agent isn't renamed by one's update.
+		if err := s.UpdateBuiltinAgent(ctx, BuiltinAgent{PrincipalID: ada.ID}, "Ghost"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("update a human: %v", err)
+		}
+		if got, err := s.GetPrincipal(ctx, ada.ID); err != nil || got.DisplayName != "Ada" {
+			t.Fatalf("human after a failed update = %+v, %v", got, err)
 		}
 
 		// Usage adds up per UTC day.
 		day := time.Date(2026, 10, 24, 23, 0, 0, 0, time.UTC)
 		for range 2 {
-			if err := s.AddAgentUsage(ctx, p.ID, day, Usage{InputTokens: 10, OutputTokens: 3}); err != nil {
+			if err := s.AddAgentUsage(ctx, p.ID, day, Usage{InputTokens: 10, OutputTokens: 3, Cost: 7}); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if u, err := s.AgentUsage(ctx, p.ID, day); err != nil || u != (Usage{20, 6}) || u.Total() != 26 {
+		if u, err := s.AgentUsage(ctx, p.ID, day); err != nil || u != (Usage{20, 6, 14}) || u.Total() != 26 {
 			t.Fatalf("AgentUsage = %+v, %v", u, err)
 		}
 		if u, err := s.AgentUsage(ctx, p.ID, day.Add(2*time.Hour)); err != nil || u.Total() != 0 {

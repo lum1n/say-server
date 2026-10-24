@@ -152,8 +152,11 @@ run it with `SAY_TOKEN=say_… pnpm --filter @say/echo-bot start`.
 Admins add built-in agents on the People page: a name, a provider
 (Anthropic, or OpenAI and anything that speaks its API, such as Ollama at
 `http://localhost:11434/v1`), a model, instructions, the longest reply and
-a daily token budget. Leave the API key empty to use the server's
-`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
+daily budgets. A token budget counts input and output tokens. For a budget
+in dollars, enter the model's prices per million tokens under **Spending**
+and a limit per day; the People page then shows what each agent spent
+today. Leave the API key empty to use the server's `ANTHROPIC_API_KEY` or
+`OPENAI_API_KEY`. **Edit** changes any of it, the name included.
 
 Add the agent to a room like anyone else. It answers direct messages and
 messages that mention it as `@name`. Tick **answers everything** next to it

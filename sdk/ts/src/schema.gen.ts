@@ -573,6 +573,8 @@ export interface components {
         LLMProvider: "anthropic" | "openai";
         /** @description Absent fields stay as they are. */
         BuiltinAgentSettings: {
+            /** @description The agent's name, which people @mention it by. A rename takes effect at once. */
+            display_name?: string;
             provider?: components["schemas"]["LLMProvider"];
             /** @description An OpenAI-compatible endpoint, e.g. http://localhost:11434/v1. Empty is the provider's own API. */
             base_url?: string;
@@ -589,6 +591,16 @@ export interface components {
              * @description Input plus output tokens per UTC day; 0 is no limit.
              */
             daily_token_budget?: number;
+            /** @description Dollars per million input tokens, used to count spending against daily_cost_budget. */
+            input_price?: number;
+            /** @description Dollars per million output tokens. */
+            output_price?: number;
+            /**
+             * @description Dollars per UTC day at the agent's prices; 0 is no limit. Needs
+             *     input_price or output_price. Each call's cost is counted at the
+             *     prices set when it was made, rounded up to a micro-dollar.
+             */
+            daily_cost_budget?: number;
             enabled?: boolean;
             /**
              * @description Replaces the MCP servers whose tools the agent may call. A server
@@ -628,6 +640,14 @@ export interface components {
              * @description Tokens used so far today (UTC).
              */
             tokens_today: number;
+            /** @description Dollars per million input tokens. */
+            input_price: number;
+            /** @description Dollars per million output tokens. */
+            output_price: number;
+            /** @description Dollars per UTC day; 0 is no limit. */
+            daily_cost_budget: number;
+            /** @description Dollars spent so far today (UTC). */
+            cost_today: number;
             enabled: boolean;
             mcp_servers: components["schemas"]["MCPServer"][];
             /** @description Why the agent last failed to reply, until it next succeeds. */

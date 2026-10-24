@@ -349,6 +349,65 @@ func TestPausedRoomAndTokenBudget(t *testing.T) {
 	}
 }
 
+// update changes a built-in agent's settings, and renames it unless
+// rename is empty, the way the API does.
+func (e *env) update(id, rename string, change func(*store.BuiltinAgent)) {
+	e.t.Helper()
+	ctx := context.Background()
+	a, err := e.store.GetBuiltinAgent(ctx, id)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	change(&a)
+	a.UpdatedAt = a.UpdatedAt.Add(time.Millisecond)
+	if err := e.store.UpdateBuiltinAgent(ctx, a, rename); err != nil {
+		e.t.Fatal(err)
+	}
+	e.bus.Publish(ctx, bus.BuiltinAgentsSubject, nil)
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestCostBudget(t *testing.T) {
+	e := newEnv(t)
+	e.runner("node-a")
+	bot := e.agent("Bot", 0)
+	r := e.room(core.RoomGroup, bot)
+	// One call is 10 input and 5 output tokens: 30 + 75 micro-dollars.
+	e.update(bot.ID, "", func(a *store.BuiltinAgent) {
+		a.InputPrice, a.OutputPrice, a.DailyCostBudget = 3_000_000, 15_000_000, 105
+	})
+
+	e.say(r, "@Bot now?")
+	e.waitFor(r, "a reply", func(evs []core.Event) bool { return len(evs) == 2 })
+	e.say(r, "@Bot again?")
+	if evs := e.quiet(r); len(evs) != 3 || e.llm.count() != 1 {
+		t.Fatalf("the cost budget did not stop the agent: %d calls %s", e.llm.count(), dump(evs))
+	}
+	a, err := e.store.GetBuiltinAgent(context.Background(), bot.ID)
+	if err != nil || !strings.Contains(a.LastError, "daily budget of $0.000105 is spent") {
+		t.Fatalf("last error = %q, %v", a.LastError, err)
+	}
+	if u, _ := e.store.AgentUsage(context.Background(), bot.ID, time.Now()); u.Cost != 105 {
+		t.Fatalf("usage = %+v", u)
+	}
+}
+
+func TestRenamedAgentAnswersToItsNewName(t *testing.T) {
+	e := newEnv(t)
+	e.runner("node-a")
+	bot := e.agent("Bot", 0)
+	r := e.room(core.RoomGroup, bot)
+	time.Sleep(200 * time.Millisecond)
+	e.update(bot.ID, "Sage", func(*store.BuiltinAgent) {})
+
+	e.say(r, "@Bot are you there?")
+	if evs := e.quiet(r); len(evs) != 1 {
+		t.Fatalf("the old name got a reply: %s", dump(evs))
+	}
+	e.say(r, "@Sage are you there?")
+	e.waitFor(r, "a reply to the new name", func(evs []core.Event) bool { return len(evs) == 3 && evs[2].SenderID == bot.ID })
+}
+
 // Two nodes: one holds the agent and replies once; when it stops, the
 // other takes over.
 func TestLeaseFailover(t *testing.T) {
@@ -383,7 +442,7 @@ func TestDisabledAgentStops(t *testing.T) {
 	a, _ := e.store.GetBuiltinAgent(context.Background(), bot.ID)
 	a.Enabled = false
 	a.UpdatedAt = time.Now()
-	if err := e.store.UpdateBuiltinAgent(context.Background(), a); err != nil {
+	if err := e.store.UpdateBuiltinAgent(context.Background(), a, ""); err != nil {
 		t.Fatal(err)
 	}
 	e.bus.Publish(context.Background(), bus.BuiltinAgentsSubject, nil)

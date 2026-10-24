@@ -414,14 +414,16 @@ a {
   resize: vertical;
 }
 
-.mcp-servers {
+.mcp-servers,
+.agent-prices {
   border: 1px solid var(--line);
   border-radius: 6px;
   margin: 0 0 12px;
   padding: 8px 12px 12px;
 }
 
-.mcp-servers p {
+.mcp-servers p,
+.agent-prices p {
   font-size: 13px;
   margin: 0 0 8px;
 }

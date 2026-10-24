@@ -12,6 +12,9 @@ SELECT * FROM principals WHERE id = $1;
 -- name: ListPrincipals :many
 SELECT * FROM principals ORDER BY created_at, id;
 
+-- name: RenamePrincipal :execrows
+UPDATE principals SET display_name = $2 WHERE id = $1;
+
 -- name: CreateRoom :exec
 INSERT INTO rooms (id, kind, name, created_at)
 VALUES ($1, $2, $3, $4);
@@ -137,14 +140,16 @@ UPDATE memberships SET scopes = $3 WHERE room_id = $1 AND principal_id = $2;
 -- name: CreateBuiltinAgent :exec
 INSERT INTO builtin_agents (principal_id, provider, base_url, model, api_key,
                             system_prompt, max_tokens, daily_token_budget,
-                            enabled, updated_at, created_at, mcp_servers)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
+                            enabled, updated_at, created_at, mcp_servers,
+                            input_price, output_price, daily_cost_budget)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15);
 
 -- name: UpdateBuiltinAgent :execrows
 UPDATE builtin_agents
 SET provider = $2, base_url = $3, model = $4, api_key = $5, system_prompt = $6,
     max_tokens = $7, daily_token_budget = $8, enabled = $9, updated_at = $10,
-    mcp_servers = $11
+    mcp_servers = $11, input_price = $12, output_price = $13,
+    daily_cost_budget = $14
 WHERE principal_id = $1;
 
 -- name: GetBuiltinAgent :one
@@ -158,14 +163,15 @@ UPDATE builtin_agents SET last_error = $2, last_error_at = $3
 WHERE principal_id = $1;
 
 -- name: AddAgentUsage :exec
-INSERT INTO agent_usage (principal_id, day, input_tokens, output_tokens)
-VALUES ($1, $2, $3, $4)
+INSERT INTO agent_usage (principal_id, day, input_tokens, output_tokens, cost)
+VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (principal_id, day) DO UPDATE
 SET input_tokens = agent_usage.input_tokens + excluded.input_tokens,
-    output_tokens = agent_usage.output_tokens + excluded.output_tokens;
+    output_tokens = agent_usage.output_tokens + excluded.output_tokens,
+    cost = agent_usage.cost + excluded.cost;
 
 -- name: AgentUsage :one
-SELECT input_tokens, output_tokens FROM agent_usage
+SELECT input_tokens, output_tokens, cost FROM agent_usage
 WHERE principal_id = $1 AND day = $2;
 
 -- name: AgentCursor :one

@@ -154,17 +154,18 @@ type Store interface {
 
 	// CreateBuiltinAgent writes agent principal p and its settings in one
 	// transaction; a.PrincipalID is ignored. UpdateBuiltinAgent replaces
-	// the settings, apart from the last error and the creation time.
+	// the settings, apart from the last error and the creation time, and
+	// renames the agent to displayName unless it is empty.
 	CreateBuiltinAgent(ctx context.Context, p core.Principal, a BuiltinAgent) error
-	UpdateBuiltinAgent(ctx context.Context, a BuiltinAgent) error
+	UpdateBuiltinAgent(ctx context.Context, a BuiltinAgent, displayName string) error
 	GetBuiltinAgent(ctx context.Context, principalID string) (BuiltinAgent, error)
 	// BuiltinAgents returns every built-in agent, oldest first.
 	BuiltinAgents(ctx context.Context) ([]BuiltinAgent, error)
 	// SetBuiltinAgentError records the agent's latest failure; an empty msg
 	// clears it.
 	SetBuiltinAgentError(ctx context.Context, principalID, msg string) error
-	// AddAgentUsage adds to the tokens the agent used on the UTC day of at,
-	// and AgentUsage reads them back.
+	// AddAgentUsage adds to the tokens and cost the agent used on the UTC
+	// day of at, and AgentUsage reads them back.
 	AddAgentUsage(ctx context.Context, principalID string, at time.Time, u Usage) error
 	AgentUsage(ctx context.Context, principalID string, at time.Time) (Usage, error)
 	// AgentCursor returns ErrNotFound when the agent has not read the room.

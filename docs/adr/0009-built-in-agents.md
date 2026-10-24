@@ -14,9 +14,10 @@ binary must stay free of cgo.
 
 - A built-in agent is an ordinary agent principal plus a `builtin_agents`
   row: provider, base URL, model, API key, system prompt, longest reply
-  (`max_tokens`), a daily token budget and an on/off switch. Instance admins
-  manage them at `/api/v1/builtin-agents` and on the People page. The API
-  key is write-only. An empty key uses the server's `ANTHROPIC_API_KEY` or
+  (`max_tokens`), daily budgets in tokens and in dollars, and an on/off
+  switch. Instance admins manage them at `/api/v1/builtin-agents` and on the
+  People page, and may rename them there; a rename restarts the agent, so it
+  answers to its new `@name` at once. The API key is write-only. An empty key uses the server's `ANTHROPIC_API_KEY` or
   `OPENAI_API_KEY`.
 - Providers: **Anthropic** through the official Go SDK
   (`github.com/anthropics/anthropic-sdk-go`), and **OpenAI or any
@@ -34,7 +35,7 @@ binary must stay free of cgo.
 - **Replies go through the same send path** as REST, WebSocket and MCP.
   Pause, hop limit, turn budget and rate limit all apply. The core sets
   `caused_by` to the trigger, so hops are always counted. The runner checks
-  the pause switch, the hop limit and the daily token budget before it calls
+  the pause switch, the hop limit and the daily budgets before it calls
   the model, so a reply the room would refuse costs nothing.
 - **What the model sees:** the server's short instructions (who it is, which
   room, how mentions look) plus the admin's prompt, then the last 40
@@ -59,7 +60,7 @@ binary must stay free of cgo.
   which the model sees as `name__tool`. It then calls the model, runs the
   tools it asks for one by one, and sends the results back, up to 8 rounds.
   The reply is the model's first turn without tool calls. Every round
-  checks the daily token budget and records usage, and after tools ran it
+  checks the daily budgets and records usage, and after tools ran it
   rereads the room, so a pause stops the loop. A tool that fails, a tool
   that does not exist, or arguments that are not JSON go back to the model
   as error results. A server that cannot be reached is left out, the agent
@@ -78,7 +79,14 @@ binary must stay free of cgo.
   that ends another's leftover reply marks its running calls failed. In
   the model's history the agent's own messages are their text only, so it
   does not learn to write calls out.
-- Usage is counted per agent per UTC day (`agent_usage`). The latest failure
+- Usage is counted per agent per UTC day (`agent_usage`): input and output
+  tokens, and their cost. **Cost budgets** come from prices the admin sets
+  on the agent, in dollars per million input and output tokens, because
+  provider usage reports carry no prices and a local model costs nothing.
+  Money is stored as integer micro-dollars. Each call's cost is added at
+  the prices set when it was made, rounded up, so changing a price never
+  rewrites what was spent. A cost budget without a price is refused, since
+  it would never stop the agent. The latest failure
   (provider error, refusal, spent budget, or a room refusing the send) is
   stored on the agent and shown to admins until the next success.
 
@@ -102,6 +110,10 @@ binary must stay free of cgo.
 - People see which tools an agent called and with what arguments, but not
   what the tools returned. Arguments may still carry something private the
   model chose to pass on.
-- Not yet built: tools from say itself (without a token over `/mcp`), cost
-  budgets in money, and per-agent reply rules beyond mention, DM and
-  responder.
+- Budgets are checked before each model call, so the call that crosses one
+  still completes: a day can end over budget by one call's usage.
+- Prices are typed in by hand and go stale when a provider changes them;
+  the budget is only as accurate as they are. Cached and reasoning tokens
+  are counted at the plain input and output prices.
+- Not yet built: tools from say itself (without a token over `/mcp`), and
+  per-agent reply rules beyond mention, DM and responder.

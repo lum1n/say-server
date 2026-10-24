@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -271,17 +272,21 @@ func cut(s string, n int) string {
 	return strings.ToValidUTF8(s[:n], "") + "…"
 }
 
-// complete makes one model call within the daily budget and records its
+// complete makes one model call within the daily budgets and records its
 // usage. It reports false, having recorded why, when there is no answer.
 func (w *worker) complete(ctx context.Context, req llm.Request) (llm.Response, bool) {
-	if budget := w.cfg.DailyTokenBudget; budget > 0 {
+	if tokens, cost := w.cfg.DailyTokenBudget, w.cfg.DailyCostBudget; tokens > 0 || cost > 0 {
 		used, err := w.c.Store.AgentUsage(ctx, w.me.ID, time.Now())
 		if err != nil {
 			w.warn(ctx, "read usage", err)
 			return llm.Response{}, false
 		}
-		if used.Total() >= budget {
-			w.fail(ctx, fmt.Errorf("the daily budget of %d tokens is spent", budget))
+		if tokens > 0 && used.Total() >= tokens {
+			w.fail(ctx, fmt.Errorf("the daily budget of %d tokens is spent", tokens))
+			return llm.Response{}, false
+		}
+		if cost > 0 && used.Cost >= cost {
+			w.fail(ctx, fmt.Errorf("the daily budget of $%s is spent", strconv.FormatFloat(float64(cost)/1e6, 'f', -1, 64)))
 			return llm.Response{}, false
 		}
 	}
@@ -289,7 +294,11 @@ func (w *worker) complete(ctx context.Context, req llm.Request) (llm.Response, b
 	resp, err := w.llm.Complete(cctx, req)
 	cancel()
 	if resp.InputTokens+resp.OutputTokens > 0 {
-		u := store.Usage{InputTokens: resp.InputTokens, OutputTokens: resp.OutputTokens}
+		u := store.Usage{
+			InputTokens:  resp.InputTokens,
+			OutputTokens: resp.OutputTokens,
+			Cost:         w.cfg.Cost(resp.InputTokens, resp.OutputTokens),
+		}
 		if err := w.c.Store.AddAgentUsage(context.WithoutCancel(ctx), w.me.ID, time.Now(), u); err != nil {
 			w.warn(ctx, "record usage", err)
 		}

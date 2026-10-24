@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/vegard/say-v2/internal/core"
+	"github.com/vegard/say-v2/internal/store"
 )
 
 func (e *env) admin(name string) (core.Principal, string) {
@@ -64,7 +65,10 @@ func TestBuiltinAgentsAPI(t *testing.T) {
 	}
 
 	var list struct{ Agents []wireBuiltinAgent }
-	if code := e.do("GET", "/builtin-agents", admin, nil, &list); code != 200 || len(list.Agents) != 2 || list.Agents[0].Principal.ID != id {
+	// Both were created in the same millisecond, so their order is the
+	// ids' order, which UUIDv7 leaves random within a millisecond.
+	if code := e.do("GET", "/builtin-agents", admin, nil, &list); code != 200 || len(list.Agents) != 2 ||
+		!slices.ContainsFunc(list.Agents, func(a wireBuiltinAgent) bool { return a.Principal.ID == id }) {
 		t.Fatalf("list = %d %+v", code, list)
 	}
 
@@ -77,6 +81,9 @@ func TestBuiltinAgentsAPI(t *testing.T) {
 		{"bad url", map[string]any{"display_name": "X", "provider": "openai", "base_url": "file:///etc/passwd"}},
 		{"bad max tokens", map[string]any{"display_name": "X", "provider": "openai", "max_tokens": -1}},
 		{"bad budget", map[string]any{"display_name": "X", "provider": "openai", "daily_token_budget": -1}},
+		{"bad price", map[string]any{"display_name": "X", "provider": "openai", "input_price": -1}},
+		{"huge price", map[string]any{"display_name": "X", "provider": "openai", "output_price": 1e9}},
+		{"cost budget without prices", map[string]any{"display_name": "X", "provider": "openai", "daily_cost_budget": 5}},
 	} {
 		var ae apiError
 		if code := e.do("POST", "/builtin-agents", admin, c.body, &ae); code != 422 {
@@ -95,6 +102,51 @@ func TestBuiltinAgentsAPI(t *testing.T) {
 		if code := e.do(c.method, c.path, bob, map[string]any{"display_name": "X", "provider": "openai"}, &ae); code != 403 {
 			t.Errorf("%s %s as non-admin = %d", c.method, c.path, code)
 		}
+	}
+}
+
+func TestBuiltinAgentCostAndRename(t *testing.T) {
+	e := newEnv(t)
+	_, admin := e.admin("Root")
+	var a wireBuiltinAgent
+	code := e.do("POST", "/builtin-agents", admin, map[string]any{
+		"display_name": "Helper", "provider": "anthropic",
+		"input_price": 3, "output_price": 15, "daily_cost_budget": 2.5,
+	}, &a)
+	if code != 201 || a.InputPrice != 3 || a.OutputPrice != 15 || a.DailyCostBudget != 2.5 || a.CostToday != 0 {
+		t.Fatalf("create = %d %+v", code, a)
+	}
+	id := a.Principal.ID
+	stored, _ := e.store.GetBuiltinAgent(context.Background(), id)
+	if stored.InputPrice != 3_000_000 || stored.OutputPrice != 15_000_000 || stored.DailyCostBudget != 2_500_000 {
+		t.Fatalf("stored = %+v", stored)
+	}
+	if err := e.store.AddAgentUsage(context.Background(), id, time.Now(), store.Usage{InputTokens: 1000, OutputTokens: 100, Cost: stored.Cost(1000, 100)}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A rename keeps the settings and moves updated_at, so the runner
+	// restarts the agent under its new name.
+	code = e.do("PATCH", "/builtin-agents/"+id, admin, map[string]any{"display_name": "  Sage "}, &a)
+	if code != 200 || a.Principal.DisplayName != "Sage" || a.InputPrice != 3 || a.CostToday != 0.0045 || a.TokensToday != 1100 {
+		t.Fatalf("rename = %d %+v", code, a)
+	}
+	if p, _ := e.store.GetPrincipal(context.Background(), id); p.DisplayName != "Sage" {
+		t.Fatalf("principal = %+v", p)
+	}
+	if after, _ := e.store.GetBuiltinAgent(context.Background(), id); !after.UpdatedAt.After(stored.UpdatedAt) {
+		t.Fatalf("updated_at did not move: %v → %v", stored.UpdatedAt, after.UpdatedAt)
+	}
+	var ae apiError
+	if code := e.do("PATCH", "/builtin-agents/"+id, admin, map[string]any{"display_name": " "}, &ae); code != 422 {
+		t.Errorf("empty name = %d", code)
+	}
+	// Dropping the prices while a cost budget is set would lift the budget.
+	if code := e.do("PATCH", "/builtin-agents/"+id, admin, map[string]any{"input_price": 0, "output_price": 0}, &ae); code != 422 {
+		t.Errorf("budget without prices = %d", code)
+	}
+	if code := e.do("PATCH", "/builtin-agents/"+id, admin, map[string]any{"input_price": 0, "output_price": 0, "daily_cost_budget": 0}, &a); code != 200 || a.DailyCostBudget != 0 {
+		t.Errorf("clear prices and budget = %d %+v", code, a)
 	}
 }
 

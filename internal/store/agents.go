@@ -27,7 +27,12 @@ type BuiltinAgent struct {
 	// DailyTokenBudget caps input plus output tokens per UTC day; zero is
 	// no cap.
 	DailyTokenBudget int64
-	Enabled          bool
+	// InputPrice and OutputPrice are what a million tokens cost, in
+	// micro-dollars. DailyCostBudget caps what the agent spends per UTC day
+	// at those prices; zero is no cap.
+	InputPrice, OutputPrice int64
+	DailyCostBudget         int64
+	Enabled                 bool
 	// MCPServers are the servers whose tools the agent may call.
 	MCPServers []MCPServer
 	// LastError is the latest failure to reply, for the admin to see.
@@ -46,12 +51,21 @@ type MCPServer struct {
 	Authorization string `json:"authorization,omitempty"`
 }
 
-// Usage is the tokens an agent used on one day.
+// Usage is the tokens an agent used on one day, and what they cost in
+// micro-dollars.
 type Usage struct {
 	InputTokens, OutputTokens int64
+	Cost                      int64
 }
 
 func (u Usage) Total() int64 { return u.InputTokens + u.OutputTokens }
+
+// Cost is what input and output tokens cost at a's prices, in
+// micro-dollars, rounded up so many small calls don't round to nothing.
+func (a BuiltinAgent) Cost(input, output int64) int64 {
+	n := input*a.InputPrice + output*a.OutputPrice
+	return (n + 999_999) / 1_000_000
+}
 
 func (s *sqlStore) SetMemberScopes(ctx context.Context, roomID, principalID string, scopes []string) error {
 	b, err := json.Marshal(nonNil(scopes))
@@ -99,6 +113,9 @@ func createBuiltinAgent(ctx context.Context, q *db.Queries, a BuiltinAgent) erro
 		UpdatedAt:        millis(a.UpdatedAt),
 		CreatedAt:        millis(a.CreatedAt),
 		McpServers:       string(servers),
+		InputPrice:       a.InputPrice,
+		OutputPrice:      a.OutputPrice,
+		DailyCostBudget:  a.DailyCostBudget,
 	})
 }
 
@@ -109,12 +126,27 @@ func nonNilServers(s []MCPServer) []MCPServer {
 	return s
 }
 
-func (s *sqlStore) UpdateBuiltinAgent(ctx context.Context, a BuiltinAgent) error {
+func (s *sqlStore) UpdateBuiltinAgent(ctx context.Context, a BuiltinAgent, displayName string) error {
 	servers, err := json.Marshal(nonNilServers(a.MCPServers))
 	if err != nil {
 		return err
 	}
-	n, err := s.q().UpdateBuiltinAgent(ctx, db.UpdateBuiltinAgentParams{
+	return s.tx(ctx, func(q *db.Queries) error {
+		if displayName != "" {
+			n, err := q.RenamePrincipal(ctx, db.RenamePrincipalParams{ID: a.PrincipalID, DisplayName: displayName})
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				return ErrNotFound
+			}
+		}
+		return updateBuiltinAgent(ctx, q, a, string(servers))
+	})
+}
+
+func updateBuiltinAgent(ctx context.Context, q *db.Queries, a BuiltinAgent, servers string) error {
+	n, err := q.UpdateBuiltinAgent(ctx, db.UpdateBuiltinAgentParams{
 		PrincipalID:      a.PrincipalID,
 		Provider:         a.Provider,
 		BaseUrl:          a.BaseURL,
@@ -125,7 +157,10 @@ func (s *sqlStore) UpdateBuiltinAgent(ctx context.Context, a BuiltinAgent) error
 		DailyTokenBudget: a.DailyTokenBudget,
 		Enabled:          flag(a.Enabled),
 		UpdatedAt:        millis(a.UpdatedAt),
-		McpServers:       string(servers),
+		McpServers:       servers,
+		InputPrice:       a.InputPrice,
+		OutputPrice:      a.OutputPrice,
+		DailyCostBudget:  a.DailyCostBudget,
 	})
 	if err != nil {
 		return err
@@ -168,6 +203,9 @@ func builtinAgent(row db.BuiltinAgent) (BuiltinAgent, error) {
 		SystemPrompt:     row.SystemPrompt,
 		MaxTokens:        int(row.MaxTokens),
 		DailyTokenBudget: row.DailyTokenBudget,
+		InputPrice:       row.InputPrice,
+		OutputPrice:      row.OutputPrice,
+		DailyCostBudget:  row.DailyCostBudget,
 		Enabled:          row.Enabled != 0,
 		LastError:        row.LastError,
 		UpdatedAt:        time.UnixMilli(row.UpdatedAt),
@@ -199,6 +237,7 @@ func (s *sqlStore) AddAgentUsage(ctx context.Context, principalID string, at tim
 		Day:          usageDay(at),
 		InputTokens:  u.InputTokens,
 		OutputTokens: u.OutputTokens,
+		Cost:         u.Cost,
 	})
 }
 
@@ -210,7 +249,7 @@ func (s *sqlStore) AgentUsage(ctx context.Context, principalID string, at time.T
 	if err != nil {
 		return Usage{}, err
 	}
-	return Usage{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens}, nil
+	return Usage{InputTokens: row.InputTokens, OutputTokens: row.OutputTokens, Cost: row.Cost}, nil
 }
 
 func (s *sqlStore) AgentCursor(ctx context.Context, principalID, roomID string) (int64, error) {

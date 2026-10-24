@@ -983,6 +983,10 @@ components:
       description: Absent fields stay as they are.
       additionalProperties: false
       properties:
+        display_name:
+          type: string
+          description: The agent's name, which people @mention it by. A rename takes effect at once.
+          maxLength: 100
         provider:
           $ref: "#/components/schemas/LLMProvider"
         base_url:
@@ -1011,6 +1015,24 @@ components:
           format: int64
           description: Input plus output tokens per UTC day; 0 is no limit.
           minimum: 0
+        input_price:
+          type: number
+          description: Dollars per million input tokens, used to count spending against daily_cost_budget.
+          minimum: 0
+          maximum: 10000
+        output_price:
+          type: number
+          description: Dollars per million output tokens.
+          minimum: 0
+          maximum: 10000
+        daily_cost_budget:
+          type: number
+          description: |
+            Dollars per UTC day at the agent's prices; 0 is no limit. Needs
+            input_price or output_price. Each call's cost is counted at the
+            prices set when it was made, rounded up to a micro-dollar.
+          minimum: 0
+          maximum: 1000000
         enabled:
           type: boolean
         mcp_servers:
@@ -1060,7 +1082,7 @@ components:
               maxLength: 100
     BuiltinAgent:
       type: object
-      required: [principal, provider, base_url, model, has_api_key, system_prompt, max_tokens, daily_token_budget, tokens_today, enabled, mcp_servers]
+      required: [principal, provider, base_url, model, has_api_key, system_prompt, max_tokens, daily_token_budget, tokens_today, input_price, output_price, daily_cost_budget, cost_today, enabled, mcp_servers]
       properties:
         principal:
           $ref: "#/components/schemas/Principal"
@@ -1083,6 +1105,18 @@ components:
           type: integer
           format: int64
           description: Tokens used so far today (UTC).
+        input_price:
+          type: number
+          description: Dollars per million input tokens.
+        output_price:
+          type: number
+          description: Dollars per million output tokens.
+        daily_cost_budget:
+          type: number
+          description: Dollars per UTC day; 0 is no limit.
+        cost_today:
+          type: number
+          description: Dollars spent so far today (UTC).
         enabled:
           type: boolean
         mcp_servers:
