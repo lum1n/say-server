@@ -11,5 +11,9 @@ export default defineConfig({
       "/widget.js": "http://localhost:7290",
     },
   },
+  // The build prerenders the SPA shell from a preview server. Bind it to
+  // 127.0.0.1: in a container "localhost" can resolve to an address the
+  // server does not listen on.
+  preview: { host: "127.0.0.1" },
   plugins: [tanstackStart({ spa: { enabled: true } }), viteReact()],
 });
