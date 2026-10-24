@@ -94,7 +94,8 @@ export interface paths {
         /**
          * Every principal on the instance, oldest first
          * @description The directory clients resolve sender and member names from. People
-         *     and agents may read it; guests and ghosts get 403.
+         *     and agents may read it; guests and ghosts get 403. An agent with an
+         *     open bot session on /ws carries `connector`.
          */
         get: operations["listPrincipals"];
         put?: never;
@@ -338,7 +339,24 @@ export interface paths {
          *       cursor.
          *     - `unsubscribe`: `WsUnsubscribe`.
          *     - `send`: `WsSend`; the reply payload is the `Event`.
+         *     - `edit`: `WsEdit`; the reply payload is the message as it now is.
          *     - `ping`: no payload.
+         *     - `hello`: `WsHello`; opens a bot session (below). The reply
+         *       payload is `WsHelloReply`.
+         *     - `ack`: `WsAck`; bot sessions only.
+         *
+         *     **Bot sessions.** An agent's socket that says `hello` follows
+         *     every room the agent is in, and rooms it is added to later, by
+         *     itself; `subscribe` and `unsubscribe` are refused with 409. Each
+         *     room starts at the agent's stored cursor, which `ack` moves
+         *     forward; a room it never acked starts 20 events back. Delivery is
+         *     at least once: events not acked come again after a reconnect, so
+         *     reply with an idempotency key derived from the message. An event
+         *     push that asks the bot for an answer has `trigger` (`Trigger`) on
+         *     its envelope. For an `edit` event that ends a stream, the trigger
+         *     is for the message it completes (`edits`), whose content is the
+         *     edit's parts. The agent shows as online (`Principal.connector`)
+         *     while the socket is open. Event pushes start after the hello reply.
          *
          *     Events arrive as pushes `{id: <event id>, type: "event", payload:
          *     Event}` without a status. A streaming message's changes arrive as
@@ -438,8 +456,20 @@ export interface components {
             display_name: string;
             /** @description Present and true for instance admins. */
             admin?: boolean;
+            connector?: components["schemas"]["Connector"];
             /** Format: date-time */
             created_at: string;
+        };
+        /**
+         * @description An agent's open bot session: the bot is online. Only
+         *     `GET /principals` shows it.
+         */
+        Connector: {
+            name: string;
+            version: string;
+            capabilities: string[];
+            /** Format: date-time */
+            connected_at: string;
         };
         SetupStatus: {
             needed: boolean;
@@ -720,6 +750,40 @@ export interface components {
             caused_by?: string;
             stream?: components["schemas"]["StreamState"];
         };
+        /** @description The same as PATCH /rooms/{id}/messages/{event_id}. */
+        WsEdit: {
+            room_id: string;
+            event_id: string;
+            parts?: components["schemas"]["Part"][];
+            stream?: components["schemas"]["StreamState"];
+        };
+        /** @description Opens a bot session. Agent tokens only. */
+        WsHello: {
+            name?: string;
+            version?: string;
+            capabilities?: string[];
+        };
+        WsHelloReply: {
+            principal: components["schemas"]["Principal"];
+            session_id: string;
+        };
+        /**
+         * @description The bot has handled the room's events through seq. Cursors only
+         *     move forward.
+         */
+        WsAck: {
+            room_id: string;
+            /** Format: int64 */
+            seq: number;
+        };
+        /**
+         * @description Why a message asks a bot for an answer: it is in a DM, the bot is
+         *     a designated responder in the room, or the message @mentions the
+         *     bot. Only recent (5 min) messages from others trigger, never in a
+         *     room where the bot observes.
+         * @enum {string}
+         */
+        Trigger: "dm" | "responder" | "mention";
         WsError: {
             code: string;
             message: string;

@@ -8,6 +8,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY web/package.json web/
 COPY widget/package.json widget/
 COPY sdk/ts/package.json sdk/ts/
+COPY examples/echo-bot/package.json examples/echo-bot/
 RUN pnpm install --frozen-lockfile
 COPY Makefile ./
 COPY web web

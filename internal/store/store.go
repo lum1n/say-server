@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -167,8 +168,17 @@ type Store interface {
 	AddAgentUsage(ctx context.Context, principalID string, at time.Time, u Usage) error
 	AgentUsage(ctx context.Context, principalID string, at time.Time) (Usage, error)
 	// AgentCursor returns ErrNotFound when the agent has not read the room.
+	// SetAgentCursor only moves a cursor forward.
 	AgentCursor(ctx context.Context, principalID, roomID string) (int64, error)
 	SetAgentCursor(ctx context.Context, principalID, roomID string, seq int64) error
+
+	// SaveConnectorSession records a bot session, or renews its SeenAt
+	// when it exists, and prunes sessions not seen for an hour.
+	SaveConnectorSession(ctx context.Context, cs ConnectorSession) error
+	DeleteConnectorSession(ctx context.Context, id string) error
+	// ConnectorSessions returns the sessions seen since seenSince, oldest
+	// first.
+	ConnectorSessions(ctx context.Context, seenSince time.Time) ([]ConnectorSession, error)
 
 	// AcquireLease takes or renews the named lease for holder until ttl
 	// from now. ok is false while another holder's lease is unexpired.
@@ -201,4 +211,41 @@ func Open(ctx context.Context, dsn string) (Store, error) {
 // IsPostgres reports whether Open would pick Postgres for dsn.
 func IsPostgres(dsn string) bool {
 	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
+}
+
+// CompleteMessage returns the complete message e brings: e itself when it
+// is a final message, or the message whose stream e ended. A streaming
+// message waits for its end, and other edits bring nothing. Reading both a
+// message that is already final and the edit that ended it gives the
+// message twice; the edit commits with the message's last change, so a
+// reader that sees both sees them in one pass.
+func CompleteMessage(ctx context.Context, s Store, e core.Event) (core.Event, bool, error) {
+	switch {
+	case e.Type == core.EventMessage:
+		return e, e.Stream != core.StreamStreaming, nil
+	case e.Type == core.EventEdit && e.Stream == core.StreamFinal:
+		msg, err := s.GetEvent(ctx, e.Edits)
+		if errors.Is(err, ErrNotFound) {
+			return core.Event{}, false, nil
+		}
+		return msg, err == nil, err
+	}
+	return core.Event{}, false, nil
+}
+
+// StartAgentCursor returns principalID's cursor in room. A room it has
+// never read gets a cursor core.LookBack events back, which is stored.
+func StartAgentCursor(ctx context.Context, s Store, principalID, roomID string) (int64, error) {
+	seq, err := s.AgentCursor(ctx, principalID, roomID)
+	if !errors.Is(err, ErrNotFound) {
+		return seq, err
+	}
+	last, err := s.EventsBefore(ctx, roomID, math.MaxInt64, 1)
+	if err != nil {
+		return 0, err
+	}
+	if len(last) > 0 {
+		seq = max(0, last[0].Seq-core.LookBack)
+	}
+	return seq, s.SetAgentCursor(ctx, principalID, roomID, seq)
 }

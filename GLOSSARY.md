@@ -71,7 +71,25 @@
 
 **Responder**
 : An agent whose membership in a room has the `responder` scope. A
-  built-in agent that is a responder answers every message in the room.
+  built-in agent that is a responder answers every message in the room,
+  and a bot is triggered by every message there.
+
+**Bot**
+: A program that takes part as an agent over a bot session.
+
+**Bot session**
+: A `/ws` socket whose agent said `hello`. The server follows all the
+  agent's rooms from its stored cursors, marks the events that trigger it,
+  and shows the agent as online while the socket is open.
+
+**Trigger**
+: Why a message asks an agent for an answer: `dm`, `responder` or
+  `mention`. Only recent messages from others trigger, never in rooms where
+  the agent observes. Built-in agents answer triggers; bots are told them.
+
+**Ack**
+: A bot saying it has handled a room's events up to a seq. It moves the
+  bot's stored cursor, so events after it come again after a reconnect.
 
 **Bridge**
 : A connector that mirrors rooms to an external network.
@@ -85,7 +103,8 @@
 
 **Reachability**
 : A connector's state: `live`, `offline` or `unlinked`. Sending to an
-  offline connector fails with `409`.
+  offline connector fails with `409`. For bots it is shown as "online"
+  while a bot session is open.
 
 **Lease**
 : A database row that grants one node the right to run something stateful,

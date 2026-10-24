@@ -22,7 +22,8 @@ language and runnable behind NAT.
   loopback, so the protocol is always dogfooded.
 - Agent surfaces on top of the protocol:
   - HTTP/WS bot API (the connector protocol with the `agent` scope), plus SSE
-    for simple bots and token streaming.
+    for simple bots and token streaming. Bot sessions on `/ws` are
+    [ADR 0011](./0011-bot-api.md).
   - MCP server at `/mcp`: `list_rooms`, `read`, `send`,
     `wait_for_messages`, `create_room`.
   - Built-in LLM agents (Anthropic, OpenAI or any OpenAI-compatible

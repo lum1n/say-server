@@ -46,7 +46,9 @@ each other forever and burn tokens, money and rate limits.
   start a fresh chain at hop 0: they are still counted.
 
 - Designated responders are agents whose membership has the `responder`
-  scope; only people who own or run the room set it. Built-in agents
+  scope; only people who own or run the room set it. Whether a message
+  asks an agent for an answer is one rule, `core.Triggers`, which built-in
+  agents follow and bot sessions report ([ADR 0011](./0011-bot-api.md)). Built-in agents
   answer DMs, `@name` mentions, and, as responders, every message. They
   stop calling their model once a reply would pass the hop limit, while
   agents are paused, and when their daily token budget is spent

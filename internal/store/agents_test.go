@@ -75,13 +75,13 @@ func TestBuiltinAgents(t *testing.T) {
 		if _, err := s.AgentCursor(ctx, p.ID, r.ID); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("unread room: %v", err)
 		}
-		for _, seq := range []int64{4, 9} {
+		for _, seq := range []int64{4, 9, 6} {
 			if err := s.SetAgentCursor(ctx, p.ID, r.ID, seq); err != nil {
 				t.Fatal(err)
 			}
 		}
 		if seq, err := s.AgentCursor(ctx, p.ID, r.ID); err != nil || seq != 9 {
-			t.Fatalf("AgentCursor = %d, %v", seq, err)
+			t.Fatalf("AgentCursor = %d, %v (cursors only move forward)", seq, err)
 		}
 
 		// Responder scope.
@@ -156,6 +156,48 @@ func TestLeases(t *testing.T) {
 		wg.Wait()
 		if winners != 1 {
 			t.Fatalf("%d nodes hold the lease", winners)
+		}
+	})
+}
+
+func TestConnectorSessions(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		p, _ := seed(t, s)
+		now := time.Now().Truncate(time.Millisecond)
+		a := ConnectorSession{ID: core.NewID(), PrincipalID: p.ID, Name: "echo", Version: "1.0",
+			Capabilities: []string{"streaming"}, ConnectedAt: now.Add(-time.Minute), SeenAt: now.Add(-time.Minute)}
+		b := ConnectorSession{ID: core.NewID(), PrincipalID: p.ID, Name: "other", ConnectedAt: now, SeenAt: now}
+		stale := ConnectorSession{ID: core.NewID(), PrincipalID: p.ID, Name: "dead",
+			ConnectedAt: now.Add(-3 * time.Hour), SeenAt: now.Add(-2 * time.Hour)}
+		for _, cs := range []ConnectorSession{stale, a, b} {
+			if err := s.SaveConnectorSession(ctx, cs); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Renewing a keeps its other fields.
+		renewed := a
+		renewed.Name, renewed.SeenAt = "ignored", now
+		if err := s.SaveConnectorSession(ctx, renewed); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.ConnectorSessions(ctx, now.Add(-30*time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.SeenAt = now
+		b.Capabilities = []string{}
+		if want := []ConnectorSession{a, b}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("live sessions:\n got %+v\nwant %+v", got, want)
+		}
+		if all, err := s.ConnectorSessions(ctx, time.Time{}); err != nil || len(all) != 2 {
+			t.Fatalf("stale session not pruned: %+v, %v", all, err)
+		}
+		if err := s.DeleteConnectorSession(ctx, b.ID); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.ConnectorSessions(ctx, time.Time{}); err != nil || len(got) != 1 || got[0].ID != a.ID {
+			t.Fatalf("after delete: %+v, %v", got, err)
 		}
 	})
 }

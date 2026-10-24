@@ -187,7 +187,8 @@ func secure(r *http.Request) bool {
 }
 
 // listPrincipals is the instance directory that clients resolve sender and
-// member names from. Humans and agents see it; guests and bridged ghosts do
+// member names from. Agents with an open bot session carry it as
+// connector. Humans and agents see it; guests and bridged ghosts do
 // not.
 func (s *Server) listPrincipals(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	if me.Kind != core.PrincipalHuman && me.Kind != core.PrincipalAgent {
@@ -199,9 +200,17 @@ func (s *Server) listPrincipals(w http.ResponseWriter, r *http.Request, me core.
 		writeError(w, err)
 		return
 	}
+	live, err := s.liveSessions(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	out := make([]wirePrincipal, len(ps))
 	for i, p := range ps {
 		out[i] = toPrincipal(p)
+		if cs, ok := live[p.ID]; ok {
+			out[i].Connector = toConnector(cs)
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"principals": out})
 }

@@ -79,9 +79,29 @@ export function useRealtime() {
   return useContext(RealtimeContext);
 }
 
-/** useDirectory maps principal ids to principals. */
+/**
+ * useDirectory maps principal ids to principals. It is refetched every
+ * 30 s, because whether a bot is online is not pushed.
+ */
 export function useDirectory() {
-  const q = useQuery({ queryKey: keys.principals, queryFn: () => listPrincipals(), staleTime: 60_000 });
+  const q = useQuery({
+    queryKey: keys.principals,
+    queryFn: () => listPrincipals(),
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+  });
   const byId = new Map<string, Principal>((q.data ?? []).map((p) => [p.id, p]));
   return { byId, list: q.data ?? [], refetch: q.refetch, isFetching: q.isFetching };
+}
+
+/** Online marks an agent whose bot is connected. */
+export function Online({ principal: p }: { principal?: Principal }) {
+  const c = p?.connector;
+  if (!c) return null;
+  const what = [c.name, c.version].filter(Boolean).join(" ");
+  return (
+    <span className="online" title={what ? `Connected: ${what}` : "Connected"}>
+      online
+    </span>
+  );
 }

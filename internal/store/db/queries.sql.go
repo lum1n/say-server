@@ -192,6 +192,43 @@ func (q *Queries) ClaimSetup(ctx context.Context, value string) (int64, error) {
 	return result.RowsAffected()
 }
 
+const connectorSessions = `-- name: ConnectorSessions :many
+SELECT id, principal_id, name, version, capabilities, connected_at, seen_at
+FROM connector_sessions WHERE seen_at >= $1
+ORDER BY connected_at, id
+`
+
+func (q *Queries) ConnectorSessions(ctx context.Context, seenAt int64) ([]ConnectorSession, error) {
+	rows, err := q.db.QueryContext(ctx, connectorSessions, seenAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ConnectorSession
+	for rows.Next() {
+		var i ConnectorSession
+		if err := rows.Scan(
+			&i.ID,
+			&i.PrincipalID,
+			&i.Name,
+			&i.Version,
+			&i.Capabilities,
+			&i.ConnectedAt,
+			&i.SeenAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createBuiltinAgent = `-- name: CreateBuiltinAgent :exec
 INSERT INTO builtin_agents (principal_id, provider, base_url, model, api_key,
                             system_prompt, max_tokens, daily_token_budget,
@@ -329,6 +366,15 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) error 
 		arg.ExpiresAt,
 		arg.CreatedAt,
 	)
+	return err
+}
+
+const deleteConnectorSession = `-- name: DeleteConnectorSession :exec
+DELETE FROM connector_sessions WHERE id = $1
+`
+
+func (q *Queries) DeleteConnectorSession(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteConnectorSession, id)
 	return err
 }
 
@@ -838,6 +884,15 @@ func (q *Queries) PrincipalByToken(ctx context.Context, arg PrincipalByTokenPara
 	return i, err
 }
 
+const pruneConnectorSessions = `-- name: PruneConnectorSessions :exec
+DELETE FROM connector_sessions WHERE seen_at < $1
+`
+
+func (q *Queries) PruneConnectorSessions(ctx context.Context, seenAt int64) error {
+	_, err := q.db.ExecContext(ctx, pruneConnectorSessions, seenAt)
+	return err
+}
+
 const releaseLease = `-- name: ReleaseLease :exec
 DELETE FROM leases WHERE name = $1 AND holder = $2
 `
@@ -914,9 +969,39 @@ func (q *Queries) RoomsFor(ctx context.Context, principalID string) ([]Room, err
 	return items, nil
 }
 
+const saveConnectorSession = `-- name: SaveConnectorSession :exec
+INSERT INTO connector_sessions (id, principal_id, name, version, capabilities, connected_at, seen_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (id) DO UPDATE SET seen_at = excluded.seen_at
+`
+
+type SaveConnectorSessionParams struct {
+	ID           string
+	PrincipalID  string
+	Name         string
+	Version      string
+	Capabilities string
+	ConnectedAt  int64
+	SeenAt       int64
+}
+
+func (q *Queries) SaveConnectorSession(ctx context.Context, arg SaveConnectorSessionParams) error {
+	_, err := q.db.ExecContext(ctx, saveConnectorSession,
+		arg.ID,
+		arg.PrincipalID,
+		arg.Name,
+		arg.Version,
+		arg.Capabilities,
+		arg.ConnectedAt,
+		arg.SeenAt,
+	)
+	return err
+}
+
 const setAgentCursor = `-- name: SetAgentCursor :exec
 INSERT INTO agent_cursors (principal_id, room_id, seq) VALUES ($1, $2, $3)
 ON CONFLICT (principal_id, room_id) DO UPDATE SET seq = excluded.seq
+WHERE excluded.seq > agent_cursors.seq
 `
 
 type SetAgentCursorParams struct {
@@ -925,6 +1010,7 @@ type SetAgentCursorParams struct {
 	Seq         int64
 }
 
+// Cursors only move forward.
 func (q *Queries) SetAgentCursor(ctx context.Context, arg SetAgentCursorParams) error {
 	_, err := q.db.ExecContext(ctx, setAgentCursor, arg.PrincipalID, arg.RoomID, arg.Seq)
 	return err

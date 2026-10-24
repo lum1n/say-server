@@ -1,7 +1,11 @@
 import createClient from "openapi-fetch";
-import type { components, paths } from "./schema.gen";
+import type { components, paths } from "./schema.gen.ts";
 
-export { Realtime, type RealtimeOptions, type RealtimeStatus } from "./realtime";
+import { SayError } from "./error.ts";
+
+export { Bot, type BotContext, type BotMessage, type BotOptions, type BotStream } from "./bot.ts";
+export { SayError } from "./error.ts";
+export { Realtime, type RealtimeOptions, type RealtimeStatus } from "./realtime.ts";
 
 type Schemas = components["schemas"];
 export type Health = Schemas["Health"];
@@ -38,9 +42,19 @@ export type WsSubscribe = Schemas["WsSubscribe"];
 export type WsUnsubscribe = Schemas["WsUnsubscribe"];
 export type WsSend = Schemas["WsSend"];
 export type WsError = Schemas["WsError"];
+export type WsEdit = Schemas["WsEdit"];
+export type WsHello = Schemas["WsHello"];
+export type WsHelloReply = Schemas["WsHelloReply"];
+export type WsAck = Schemas["WsAck"];
+export type Trigger = Schemas["Trigger"];
+export type Connector = Schemas["Connector"];
 
-export function createSayClient(baseUrl = "/api/v1") {
-  return createClient<paths>({ baseUrl });
+/**
+ * createSayClient makes a REST client. In the browser the session cookie
+ * authenticates it; elsewhere pass an access token.
+ */
+export function createSayClient(baseUrl = "/api/v1", token?: string) {
+  return createClient<paths>({ baseUrl, headers: token ? { Authorization: `Bearer ${token}` } : undefined });
 }
 
 const defaultClient = createSayClient();
@@ -49,18 +63,6 @@ export async function getHealth(client = defaultClient): Promise<Health> {
   const { data, error } = await client.GET("/health");
   if (error || !data) throw new Error("health check failed");
   return data;
-}
-
-/** SayError carries the API's error code, e.g. "invalid_credentials". */
-export class SayError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message);
-    this.name = "SayError";
-  }
 }
 
 function fail(res: Response, error: ApiError | undefined): never {

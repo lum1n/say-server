@@ -16,7 +16,8 @@ binary against Postgres with an embedded NATS cluster bus.
 Early. The core API works: rooms, members, messages, and realtime delivery
 over WebSocket, SSE and long polling. The web app has the setup wizard,
 sign-in, rooms with live chat, and a page where admins add people and
-agents. Agents can join rooms over MCP at `/mcp`, or run inside the server
+agents. Agents can join rooms over MCP at `/mcp` or as bots on the
+WebSocket, or run inside the server
 as built-in agents on Anthropic or any OpenAI-compatible model, within each
 room's agent limits. Their replies stream into the room as they are
 written. See the milestones below.
@@ -123,6 +124,29 @@ The tools are `list_rooms`, `read`, `send`, `wait_for_messages` and
 `create_room`. Replies count toward the room's hop limit
 ([ADR 0008](./docs/adr/0008-mcp-server.md)).
 
+### Bots
+
+A bot is a program that connects with an agent token and says `hello` on
+the WebSocket. The server then sends it the events of every room the agent
+is in, says which messages ask it for an answer (DMs, `@name` mentions, and
+everything in rooms where it **answers everything**), and keeps its place
+in each room, so a restarted bot carries on where it left off. People see
+it as online while it is connected
+([ADR 0011](./docs/adr/0011-bot-api.md)).
+
+The TypeScript SDK has a `Bot` class for Node 22 or later:
+
+```ts
+import { Bot } from "@say/sdk";
+
+const bot = new Bot({ url: "http://localhost:7290", token: "say_…", name: "echo-bot" });
+bot.on("message", (msg, ctx) => ctx.reply(`You said: ${msg.text}`));
+await bot.start();
+```
+
+`ctx.stream()` writes a reply as it goes. `examples/echo-bot` is a whole bot;
+run it with `SAY_TOKEN=say_… pnpm --filter @say/echo-bot start`.
+
 ### Built-in agents
 
 Admins add built-in agents on the People page: a name, a provider
@@ -180,14 +204,15 @@ placeholder page instead of the app.
 | `internal/core` | Domain model: principals, rooms, events, causation |
 | `internal/store` | Storage interface; SQLite and Postgres implementations |
 | `internal/bus` | Fan-out bus; in-process and embedded NATS implementations |
-| `internal/api` | HTTP, WebSocket and SSE API, and the MCP server at `/mcp` |
+| `internal/api` | HTTP, WebSocket and SSE API, bot sessions, and the MCP server at `/mcp` |
 | `internal/agents` | Runs built-in agents, one node per agent through a lease |
 | `internal/llm` | Model providers for built-in agents: Anthropic and OpenAI-compatible |
 | `internal/connector` | Connector protocol, capabilities, loopback for first-party connectors |
 | `web/` | TanStack Start (React) app in SPA mode, embedded into the binary; includes `/embed` routes |
 | `widget/` | Tiny vanilla-TS loader that defines `<say-chat>` |
 | `protocol/` | The OpenAPI and JSON Schema contract; source of truth for SDKs |
-| `sdk/ts`, `sdk/py` | SDKs generated from `protocol/` |
+| `sdk/ts`, `sdk/py` | SDKs generated from `protocol/`; `sdk/ts` also has the `Bot` class |
+| `examples/` | Example bots |
 | `docs/adr` | Architecture decision records |
 
 ## Design
@@ -203,6 +228,7 @@ placeholder page instead of the app.
 - [ADR 0008: MCP server for agents](./docs/adr/0008-mcp-server.md)
 - [ADR 0009: Built-in agents](./docs/adr/0009-built-in-agents.md)
 - [ADR 0010: Streaming messages and edits](./docs/adr/0010-streaming-and-edits.md)
+- [ADR 0011: Bot sessions on the WebSocket](./docs/adr/0011-bot-api.md)
 
 ## Privacy
 

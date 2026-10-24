@@ -12,7 +12,7 @@ import {
   updateBuiltinAgent,
 } from "@say/sdk";
 import { type FormEvent, type ReactNode, useState } from "react";
-import { keys, useDirectory } from "../../chat";
+import { keys, Online, useDirectory } from "../../chat";
 import { Field, FormError } from "../../components/form";
 
 // People is where instance admins add people (who sign in with a password),
@@ -32,6 +32,7 @@ function People() {
           <li key={p.id}>
             {p.display_name} <span className="muted">{p.kind}</span>
             {p.admin && <span className="badge">admin</span>}
+            <Online principal={p} />
           </li>
         ))}
       </ul>

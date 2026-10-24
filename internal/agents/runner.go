@@ -59,9 +59,6 @@ var (
 	// resync is how often an agent rereads its rooms without a bus
 	// notification.
 	resync = 30 * time.Second
-	// maxAge is the oldest message an agent still answers, so an agent
-	// that was down or just joined does not answer stale questions.
-	maxAge = 5 * time.Minute
 	// replyTimeout bounds one model call.
 	replyTimeout = 2 * time.Minute
 )
@@ -307,7 +304,7 @@ func (w *worker) syncRooms(ctx context.Context) {
 		if _, ok := w.rooms[room.ID]; ok {
 			continue
 		}
-		if err := w.startCursor(ctx, room.ID); err != nil {
+		if _, err := store.StartAgentCursor(ctx, w.c.Store, w.me.ID, room.ID); err != nil {
 			w.warn(ctx, "read room", err)
 			continue
 		}
@@ -329,28 +326,6 @@ func (w *worker) syncRooms(ctx context.Context) {
 		}
 	}
 }
-
-// startCursor gives a room the agent has never read a cursor a little way
-// back, so a question asked just before the agent was added still gets an
-// answer; maxAge keeps it from answering old ones.
-func (w *worker) startCursor(ctx context.Context, roomID string) error {
-	_, err := w.c.Store.AgentCursor(ctx, w.me.ID, roomID)
-	if !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	last, err := w.c.Store.EventsBefore(ctx, roomID, 1<<62, 1)
-	if err != nil {
-		return err
-	}
-	var seq int64
-	if len(last) > 0 {
-		seq = max(0, last[0].Seq-lookBack)
-	}
-	return w.c.Store.SetAgentCursor(ctx, w.me.ID, roomID, seq)
-}
-
-// lookBack is how many events before joining a new agent reads.
-const lookBack = 20
 
 // process reads a room past the agent's cursor and answers the latest
 // message that calls for an answer. Several such messages arriving
@@ -383,12 +358,12 @@ func (w *worker) process(ctx context.Context, roomID string) {
 			return
 		}
 		for _, e := range events {
-			msg, ok, err := w.message(ctx, e)
+			msg, ok, err := store.CompleteMessage(ctx, w.c.Store, e)
 			if err != nil {
 				w.warn(ctx, "read message", err)
 				return
 			}
-			if ok && w.calls(room, m, msg, e.CreatedAt) {
+			if ok && core.Triggers(w.me, room, m, msg, e.CreatedAt, time.Now()) != "" {
 				trigger, through = &msg, e.Seq
 			}
 			cursor = e.Seq
@@ -404,45 +379,4 @@ func (w *worker) process(ctx context.Context, roomID string) {
 	if trigger != nil {
 		w.reply(ctx, room, *trigger, through)
 	}
-}
-
-// message returns the complete message e brings: e itself when it is a
-// final message, or the message whose stream e ended. A streaming message
-// waits for its end, and other edits bring nothing to answer. Reading
-// both a message that is already final and the edit that ended it is
-// harmless: the edit commits with the message's last change, so both are
-// in the same pass and the agent answers once.
-func (w *worker) message(ctx context.Context, e core.Event) (core.Event, bool, error) {
-	switch {
-	case e.Type == core.EventMessage:
-		return e, e.Stream != core.StreamStreaming, nil
-	case e.Type == core.EventEdit && e.Stream == core.StreamFinal:
-		msg, err := w.c.Store.GetEvent(ctx, e.Edits)
-		if errors.Is(err, store.ErrNotFound) {
-			return core.Event{}, false, nil
-		}
-		return msg, err == nil, err
-	}
-	return core.Event{}, false, nil
-}
-
-// calls reports whether msg, complete at at, asks the agent for an answer:
-// it is a recent message from someone else, and it is in a DM, the agent
-// is a designated responder in the room, or it mentions the agent.
-func (w *worker) calls(room core.Room, m core.Membership, msg core.Event, at time.Time) bool {
-	if msg.SenderID == w.me.ID || time.Since(at) > maxAge {
-		return false
-	}
-	if m.Role == core.RoleObserver {
-		return false
-	}
-	if room.Kind == core.RoomDM {
-		return true
-	}
-	for _, s := range m.Scopes {
-		if s == core.ScopeResponder {
-			return true
-		}
-	}
-	return core.Mentions(msg.Text(), w.me.DisplayName)
 }

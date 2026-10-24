@@ -216,6 +216,9 @@ type envelope struct {
 	Type    string          `json:"type"`
 	Status  string          `json:"status,omitempty"`
 	Payload json.RawMessage `json:"payload,omitempty"`
+	// Trigger, on an event pushed to a bot session, says why the message
+	// asks the bot for an answer.
+	Trigger core.Trigger `json:"trigger,omitempty"`
 }
 
 // outboundBuffer is how many frames a WebSocket may fall behind before it
@@ -257,6 +260,12 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	// room list on each push and after every reconnect.
 	unsubscribe, err := s.bus.Subscribe(bus.RoomsSubject(me.ID), func(string, []byte) {
 		c.push(envelope{ID: core.NewID(), Type: "rooms"})
+		c.mu.Lock()
+		bot := c.bot
+		c.mu.Unlock()
+		if bot != nil {
+			bot.poke()
+		}
 	})
 	if err != nil {
 		slog.Error("websocket rooms subscription failed", "err", err)
@@ -287,8 +296,13 @@ type wsConn struct {
 	out    chan envelope
 	cancel context.CancelFunc
 
+	// afterReply, set by a request's handler, runs once its reply is
+	// queued; only the read loop uses it.
+	afterReply func()
+
 	mu   sync.Mutex
 	subs map[string]context.CancelFunc // room id -> stop following
+	bot  *botSession                   // set by hello
 	err  error                         // why the connection is closing
 }
 
@@ -389,6 +403,10 @@ func (c *wsConn) readLoop(ctx context.Context) error {
 			reply.Status, reply.Payload = "error", errPayload(err)
 		}
 		c.push(reply)
+		if f := c.afterReply; f != nil {
+			c.afterReply = nil
+			f()
+		}
 	}
 }
 
@@ -413,6 +431,10 @@ func (c *wsConn) handle(ctx context.Context, req envelope) (json.RawMessage, err
 			return nil, err
 		}
 		c.mu.Lock()
+		if c.bot != nil {
+			c.mu.Unlock()
+			return nil, errBotFollows
+		}
 		if stop, ok := c.subs[p.RoomID]; ok {
 			stop()
 			delete(c.subs, p.RoomID)
@@ -433,6 +455,24 @@ func (c *wsConn) handle(ctx context.Context, req envelope) (json.RawMessage, err
 			return nil, err
 		}
 		return json.Marshal(toEvent(e))
+	case "edit":
+		var p struct {
+			RoomID  string `json:"room_id"`
+			EventID string `json:"event_id"`
+			editMessage
+		}
+		if err := decodePayload(req.Payload, &p); err != nil {
+			return nil, err
+		}
+		e, err := c.s.edit(ctx, c.me, p.RoomID, p.EventID, p.editMessage)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(toEvent(e))
+	case "hello":
+		return c.hello(ctx, req.Payload)
+	case "ack":
+		return nil, c.ack(ctx, req.Payload)
 	default:
 		return nil, errorf(http.StatusBadRequest, "bad_request", "unknown type %q", req.Type)
 	}
@@ -449,6 +489,19 @@ func (c *wsConn) subscribe(ctx context.Context, roomID string, cursor int64) err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.bot != nil {
+		return errBotFollows
+	}
+	return c.followRoom(ctx, roomID, cursor, false)
+}
+
+// errBotFollows refuses subscription changes on a bot session, which
+// follows all of the agent's rooms itself.
+var errBotFollows = errorf(http.StatusConflict, "conflict", "a bot session follows all its rooms")
+
+// followRoom starts pushing room's events after cursor, with triggers on
+// a bot session; c.mu is held.
+func (c *wsConn) followRoom(ctx context.Context, roomID string, cursor int64, bot bool) error {
 	if stop, ok := c.subs[roomID]; ok {
 		stop()
 	} else if len(c.subs) >= maxSubscriptions {
@@ -467,12 +520,17 @@ func (c *wsConn) subscribe(ctx context.Context, roomID string, cursor int64) err
 	c.subs[roomID] = stop
 	go func() {
 		defer unsubscribe()
+		triggered := map[string]bool{}
 		err := c.s.follow(sctx, roomID, cursor, func(e core.Event) error {
 			data, err := json.Marshal(toEvent(e))
 			if err != nil {
 				return err
 			}
-			return c.push(envelope{ID: e.ID, Type: "event", Payload: data})
+			env := envelope{ID: e.ID, Type: "event", Payload: data}
+			if bot {
+				env.Trigger = c.trigger(sctx, e, triggered)
+			}
+			return c.push(env)
 		})
 		if err != nil && sctx.Err() == nil && !errors.Is(err, errTooSlow) {
 			slog.Error("websocket follow failed", "room", roomID, "err", err)

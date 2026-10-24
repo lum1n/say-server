@@ -171,9 +171,11 @@ WHERE principal_id = $1 AND day = $2;
 -- name: AgentCursor :one
 SELECT seq FROM agent_cursors WHERE principal_id = $1 AND room_id = $2;
 
+-- Cursors only move forward.
 -- name: SetAgentCursor :exec
 INSERT INTO agent_cursors (principal_id, room_id, seq) VALUES ($1, $2, $3)
-ON CONFLICT (principal_id, room_id) DO UPDATE SET seq = excluded.seq;
+ON CONFLICT (principal_id, room_id) DO UPDATE SET seq = excluded.seq
+WHERE excluded.seq > agent_cursors.seq;
 
 -- Takes the lease for holder when it is free, expired or already holder's,
 -- and returns its generation; no row means someone else holds it.
@@ -190,3 +192,19 @@ RETURNING generation;
 
 -- name: ReleaseLease :exec
 DELETE FROM leases WHERE name = $1 AND holder = $2;
+
+-- name: SaveConnectorSession :exec
+INSERT INTO connector_sessions (id, principal_id, name, version, capabilities, connected_at, seen_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (id) DO UPDATE SET seen_at = excluded.seen_at;
+
+-- name: PruneConnectorSessions :exec
+DELETE FROM connector_sessions WHERE seen_at < $1;
+
+-- name: DeleteConnectorSession :exec
+DELETE FROM connector_sessions WHERE id = $1;
+
+-- name: ConnectorSessions :many
+SELECT id, principal_id, name, version, capabilities, connected_at, seen_at
+FROM connector_sessions WHERE seen_at >= $1
+ORDER BY connected_at, id;

@@ -64,6 +64,17 @@ a {
   color: var(--muted);
 }
 
+.online {
+  font-size: 11px;
+  margin-left: 6px;
+  color: light-dark(#17803d, #4ade80);
+}
+
+.online::before {
+  content: "●";
+  margin-right: 3px;
+}
+
 .badge {
   font-size: 11px;
   border: 1px solid var(--line);

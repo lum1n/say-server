@@ -1,4 +1,4 @@
-import type { components } from "./schema.gen";
+import type { components } from "./schema.gen.ts";
 
 type Event = components["schemas"]["Event"];
 
@@ -42,7 +42,10 @@ export class Realtime {
   private closed = false;
   private opened = false;
 
-  constructor(private readonly opts: RealtimeOptions) {
+  private readonly opts: RealtimeOptions;
+
+  constructor(opts: RealtimeOptions) {
+    this.opts = opts;
     this.connect();
   }
 

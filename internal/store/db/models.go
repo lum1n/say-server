@@ -34,6 +34,16 @@ type BuiltinAgent struct {
 	McpServers       string
 }
 
+type ConnectorSession struct {
+	ID           string
+	PrincipalID  string
+	Name         string
+	Version      string
+	Capabilities string
+	ConnectedAt  int64
+	SeenAt       int64
+}
+
 type Event struct {
 	ID             string
 	RoomID         string

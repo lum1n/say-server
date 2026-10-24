@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/vegard/say-v2/internal/core"
+	"github.com/vegard/say-v2/internal/store"
 )
 
 // The JSON shapes of protocol/openapi.yaml. Keep the two in step.
@@ -20,7 +21,25 @@ type wirePrincipal struct {
 	Kind        core.PrincipalKind `json:"kind"`
 	DisplayName string             `json:"display_name"`
 	Admin       bool               `json:"admin,omitempty"`
-	CreatedAt   time.Time          `json:"created_at"`
+	// Connector is the agent's open bot session, if it has one.
+	Connector *wireConnector `json:"connector,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
+// wireConnector shows that a bot is online and what it said in hello.
+type wireConnector struct {
+	Name         string    `json:"name"`
+	Version      string    `json:"version"`
+	Capabilities []string  `json:"capabilities"`
+	ConnectedAt  time.Time `json:"connected_at"`
+}
+
+func toConnector(cs store.ConnectorSession) *wireConnector {
+	caps := cs.Capabilities
+	if caps == nil {
+		caps = []string{}
+	}
+	return &wireConnector{Name: cs.Name, Version: cs.Version, Capabilities: caps, ConnectedAt: cs.ConnectedAt.UTC()}
 }
 
 func toPrincipal(p core.Principal) wirePrincipal {

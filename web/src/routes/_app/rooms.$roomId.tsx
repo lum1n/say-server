@@ -18,7 +18,7 @@ import {
   updateRoom,
 } from "@say/sdk";
 import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { keys, mergeEvents, useDirectory, useRealtime } from "../../chat";
+import { keys, mergeEvents, Online, useDirectory, useRealtime } from "../../chat";
 import { FormError } from "../../components/form";
 
 export const Route = createFileRoute("/_app/rooms/$roomId")({
@@ -416,10 +416,11 @@ function Members({ roomId, room }: { roomId: string; room?: Room }) {
             <li key={m.principal_id}>
               {p?.display_name ?? "…"}
               {p?.kind === "agent" && <span className="badge">agent</span>}
+              <Online principal={p} />
               {m.role !== "member" && <span className="muted"> {m.role}</span>}
               {p?.kind === "agent" &&
                 (canEditAgents ? (
-                  <label className="responder" title="A built-in agent answers every message here, not only @mentions">
+                  <label className="responder" title="The agent answers every message here, not only @mentions">
                     <input
                       type="checkbox"
                       checked={responder}
