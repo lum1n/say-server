@@ -1,0 +1,6 @@
+packages:
+  - web
+  - widget
+  - sdk/ts
+allowBuilds:
+  esbuild: true

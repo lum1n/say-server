@@ -1,0 +1,56 @@
+openapi: 3.1.0
+info:
+  title: say API
+  version: 0.0.0
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  description: |
+    HTTP API of the say core. Realtime traffic (WebSocket, SSE) uses the
+    envelope defined in envelope.schema.json. This file is the source of
+    truth for sdk/ts and sdk/py.
+servers:
+  - url: /api/v1
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness and version
+      responses:
+        "200":
+          description: The server is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+components:
+  schemas:
+    Health:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          enum: [ok]
+        version:
+          type: string
+    PrincipalKind:
+      type: string
+      enum: [human, agent, guest, ghost, system]
+    RoomKind:
+      type: string
+      enum: [dm, group, channel, widget-thread]
+    Reachability:
+      type: string
+      enum: [live, offline, unlinked]
+    Causation:
+      type: object
+      required: [hop_count]
+      properties:
+        caused_by:
+          type: string
+          description: Id of the event that triggered this one.
+        hop_count:
+          type: integer
+          minimum: 0
+          description: Automated hops since the last human event.

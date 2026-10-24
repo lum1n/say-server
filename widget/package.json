@@ -1,0 +1,14 @@
+{
+  "name": "@say/widget",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/widget.ts --bundle --minify --format=iife --target=es2020 --outfile=dist/widget.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@say/sdk": "workspace:*",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

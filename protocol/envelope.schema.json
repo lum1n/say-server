@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://say.invalid/protocol/envelope.schema.json",
+  "title": "Envelope",
+  "description": "One frame on the client and connector WebSocket. Requests carry a client id; the response echoes it with a status. Server pushes have no status.",
+  "type": "object",
+  "required": ["id", "type"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "minLength": 1 },
+    "status": { "type": "string", "enum": ["ok", "error", "unknown"] },
+    "payload": {}
+  },
+  "additionalProperties": false
+}

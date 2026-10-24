@@ -1,0 +1,109 @@
+// Package core holds the domain model: principals, rooms, memberships and
+// events. Every sender, human or not, goes through the same types.
+package core
+
+import "time"
+
+// PrincipalKind says what sort of participant a principal is.
+type PrincipalKind string
+
+const (
+	PrincipalHuman  PrincipalKind = "human"
+	PrincipalAgent  PrincipalKind = "agent"
+	PrincipalGuest  PrincipalKind = "guest"
+	PrincipalGhost  PrincipalKind = "ghost" // a remote user seen through a bridge
+	PrincipalSystem PrincipalKind = "system"
+)
+
+// Automated reports whether events from this kind count as an automated hop
+// in the causation chain.
+func (k PrincipalKind) Automated() bool {
+	return k == PrincipalAgent || k == PrincipalSystem
+}
+
+type Principal struct {
+	ID          string
+	Kind        PrincipalKind
+	DisplayName string
+	CreatedAt   time.Time
+}
+
+type RoomKind string
+
+const (
+	RoomDM           RoomKind = "dm"
+	RoomGroup        RoomKind = "group"
+	RoomChannel      RoomKind = "channel"
+	RoomWidgetThread RoomKind = "widget-thread"
+)
+
+type Room struct {
+	ID        string
+	Kind      RoomKind
+	Name      string
+	CreatedAt time.Time
+}
+
+type Role string
+
+const (
+	RoleOwner    Role = "owner"
+	RoleAdmin    Role = "admin"
+	RoleMember   Role = "member"
+	RoleObserver Role = "observer"
+)
+
+type Membership struct {
+	RoomID      string
+	PrincipalID string
+	Role        Role
+	Scopes      []string
+}
+
+type EventType string
+
+const (
+	EventMessage  EventType = "message"
+	EventEdit     EventType = "edit"
+	EventReaction EventType = "reaction"
+	EventTyping   EventType = "typing"
+	EventReceipt  EventType = "receipt"
+)
+
+// Event is one entry in a room's log. Seq is allocated by the store and
+// increases monotonically per room; (RoomID, Seq) identifies the event.
+type Event struct {
+	ID        string
+	RoomID    string
+	Seq       int64
+	Type      EventType
+	SenderID  string
+	Causation Causation
+	Parts     []Part      // for EventMessage
+	Stream    StreamState // for EventMessage
+	CreatedAt time.Time
+}
+
+type StreamState string
+
+const (
+	StreamStreaming StreamState = "streaming"
+	StreamFinal     StreamState = "final"
+)
+
+type PartKind string
+
+const (
+	PartText       PartKind = "text"
+	PartAttachment PartKind = "attachment"
+	PartToolCall   PartKind = "tool-call"
+	PartToolResult PartKind = "tool-result"
+	PartCard       PartKind = "card"
+)
+
+// Part is one typed piece of a message. Data holds the kind-specific JSON
+// body as defined in protocol/.
+type Part struct {
+	Kind PartKind
+	Data []byte
+}

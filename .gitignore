@@ -1,0 +1,9 @@
+/bin/
+node_modules/
+.tanstack/
+web/.output/
+web/dist/
+widget/dist/
+internal/api/static/*
+!internal/api/static/README.md
+/data/
