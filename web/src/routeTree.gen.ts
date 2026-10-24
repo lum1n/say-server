@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppPeopleRouteImport } from './routes/_app/people'
+import { Route as AppWidgetsRouteImport } from './routes/_app/widgets'
 import { Route as EmbedWidgetIdRouteImport } from './routes/embed/$widgetId'
 import { Route as AppRoomsRoomIdRouteImport } from './routes/_app/rooms.$roomId'
 
@@ -41,6 +42,11 @@ const AppPeopleRoute = AppPeopleRouteImport.update({
   path: '/people',
   getParentRoute: () => AppRoute,
 } as any)
+const AppWidgetsRoute = AppWidgetsRouteImport.update({
+  id: '/widgets',
+  path: '/widgets',
+  getParentRoute: () => AppRoute,
+} as any)
 const EmbedWidgetIdRoute = EmbedWidgetIdRouteImport.update({
   id: '/embed/$widgetId',
   path: '/embed/$widgetId',
@@ -57,6 +63,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/people': typeof AppPeopleRoute
+  '/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
   '/rooms/$roomId': typeof AppRoomsRoomIdRoute
 }
@@ -64,6 +71,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/people': typeof AppPeopleRoute
+  '/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
   '/': typeof AppIndexRoute
   '/rooms/$roomId': typeof AppRoomsRoomIdRoute
@@ -74,6 +82,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/_app/people': typeof AppPeopleRoute
+  '/_app/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
   '/_app/': typeof AppIndexRoute
   '/_app/rooms/$roomId': typeof AppRoomsRoomIdRoute
@@ -85,6 +94,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/people'
+    | '/widgets'
     | '/embed/$widgetId'
     | '/rooms/$roomId'
   fileRoutesByTo: FileRoutesByTo
@@ -92,6 +102,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/people'
+    | '/widgets'
     | '/embed/$widgetId'
     | '/'
     | '/rooms/$roomId'
@@ -101,6 +112,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/_app/people'
+    | '/_app/widgets'
     | '/embed/$widgetId'
     | '/_app/'
     | '/_app/rooms/$roomId'
@@ -150,6 +162,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPeopleRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/widgets': {
+      id: '/_app/widgets'
+      path: '/widgets'
+      fullPath: '/widgets'
+      preLoaderRoute: typeof AppWidgetsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/embed/$widgetId': {
       id: '/embed/$widgetId'
       path: '/embed/$widgetId'
@@ -169,12 +188,14 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppPeopleRoute: typeof AppPeopleRoute
+  AppWidgetsRoute: typeof AppWidgetsRoute
   AppIndexRoute: typeof AppIndexRoute
   AppRoomsRoomIdRoute: typeof AppRoomsRoomIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppPeopleRoute: AppPeopleRoute,
+  AppWidgetsRoute: AppWidgetsRoute,
   AppIndexRoute: AppIndexRoute,
   AppRoomsRoomIdRoute: AppRoomsRoomIdRoute,
 }

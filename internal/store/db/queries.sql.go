@@ -380,6 +380,69 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) error 
 	return err
 }
 
+const createVisitor = `-- name: CreateVisitor :execrows
+INSERT INTO widget_visitors (principal_id, widget_id, subject, room_id, created_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT DO NOTHING
+`
+
+type CreateVisitorParams struct {
+	PrincipalID string
+	WidgetID    string
+	Subject     string
+	RoomID      string
+	CreatedAt   int64
+}
+
+func (q *Queries) CreateVisitor(ctx context.Context, arg CreateVisitorParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createVisitor,
+		arg.PrincipalID,
+		arg.WidgetID,
+		arg.Subject,
+		arg.RoomID,
+		arg.CreatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const createWidget = `-- name: CreateWidget :exec
+INSERT INTO widgets (id, name, public_key, secret, origins, agent_id, team,
+                     greeting, updated_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+`
+
+type CreateWidgetParams struct {
+	ID        string
+	Name      string
+	PublicKey string
+	Secret    string
+	Origins   string
+	AgentID   string
+	Team      string
+	Greeting  string
+	UpdatedAt int64
+	CreatedAt int64
+}
+
+func (q *Queries) CreateWidget(ctx context.Context, arg CreateWidgetParams) error {
+	_, err := q.db.ExecContext(ctx, createWidget,
+		arg.ID,
+		arg.Name,
+		arg.PublicKey,
+		arg.Secret,
+		arg.Origins,
+		arg.AgentID,
+		arg.Team,
+		arg.Greeting,
+		arg.UpdatedAt,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const deleteConnectorSession = `-- name: DeleteConnectorSession :exec
 DELETE FROM connector_sessions WHERE id = $1
 `
@@ -657,6 +720,28 @@ func (q *Queries) GetRoom(ctx context.Context, id string) (Room, error) {
 	return i, err
 }
 
+const getWidget = `-- name: GetWidget :one
+SELECT id, name, public_key, secret, origins, agent_id, team, greeting, updated_at, created_at FROM widgets WHERE id = $1
+`
+
+func (q *Queries) GetWidget(ctx context.Context, id string) (Widget, error) {
+	row := q.db.QueryRowContext(ctx, getWidget, id)
+	var i Widget
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.PublicKey,
+		&i.Secret,
+		&i.Origins,
+		&i.AgentID,
+		&i.Team,
+		&i.Greeting,
+		&i.UpdatedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const insertEvent = `-- name: InsertEvent :exec
 INSERT INTO events (id, room_id, seq, type, sender_id, caused_by, hop_count,
                     parts, stream, idempotency_key, automated, edits, created_at)
@@ -784,6 +869,44 @@ func (q *Queries) ListPrincipals(ctx context.Context) ([]Principal, error) {
 			&i.DisplayName,
 			&i.CreatedAt,
 			&i.Admin,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listWidgets = `-- name: ListWidgets :many
+SELECT id, name, public_key, secret, origins, agent_id, team, greeting, updated_at, created_at FROM widgets ORDER BY created_at, id
+`
+
+func (q *Queries) ListWidgets(ctx context.Context) ([]Widget, error) {
+	rows, err := q.db.QueryContext(ctx, listWidgets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Widget
+	for rows.Next() {
+		var i Widget
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.PublicKey,
+			&i.Secret,
+			&i.Origins,
+			&i.AgentID,
+			&i.Team,
+			&i.Greeting,
+			&i.UpdatedAt,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1237,4 +1360,100 @@ func (q *Queries) UpdateStreaming(ctx context.Context, arg UpdateStreamingParams
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const updateWidget = `-- name: UpdateWidget :execrows
+UPDATE widgets
+SET name = $2, secret = $3, origins = $4, agent_id = $5, team = $6,
+    greeting = $7, updated_at = $8
+WHERE id = $1
+`
+
+type UpdateWidgetParams struct {
+	ID        string
+	Name      string
+	Secret    string
+	Origins   string
+	AgentID   string
+	Team      string
+	Greeting  string
+	UpdatedAt int64
+}
+
+func (q *Queries) UpdateWidget(ctx context.Context, arg UpdateWidgetParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateWidget,
+		arg.ID,
+		arg.Name,
+		arg.Secret,
+		arg.Origins,
+		arg.AgentID,
+		arg.Team,
+		arg.Greeting,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const visitorByPrincipal = `-- name: VisitorByPrincipal :one
+SELECT principal_id, widget_id, subject, room_id, created_at FROM widget_visitors WHERE principal_id = $1
+`
+
+func (q *Queries) VisitorByPrincipal(ctx context.Context, principalID string) (WidgetVisitor, error) {
+	row := q.db.QueryRowContext(ctx, visitorByPrincipal, principalID)
+	var i WidgetVisitor
+	err := row.Scan(
+		&i.PrincipalID,
+		&i.WidgetID,
+		&i.Subject,
+		&i.RoomID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const visitorBySubject = `-- name: VisitorBySubject :one
+SELECT principal_id, widget_id, subject, room_id, created_at FROM widget_visitors WHERE widget_id = $1 AND subject = $2
+`
+
+type VisitorBySubjectParams struct {
+	WidgetID string
+	Subject  string
+}
+
+func (q *Queries) VisitorBySubject(ctx context.Context, arg VisitorBySubjectParams) (WidgetVisitor, error) {
+	row := q.db.QueryRowContext(ctx, visitorBySubject, arg.WidgetID, arg.Subject)
+	var i WidgetVisitor
+	err := row.Scan(
+		&i.PrincipalID,
+		&i.WidgetID,
+		&i.Subject,
+		&i.RoomID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const widgetByKey = `-- name: WidgetByKey :one
+SELECT id, name, public_key, secret, origins, agent_id, team, greeting, updated_at, created_at FROM widgets WHERE public_key = $1
+`
+
+func (q *Queries) WidgetByKey(ctx context.Context, publicKey string) (Widget, error) {
+	row := q.db.QueryRowContext(ctx, widgetByKey, publicKey)
+	var i Widget
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.PublicKey,
+		&i.Secret,
+		&i.Origins,
+		&i.AgentID,
+		&i.Team,
+		&i.Greeting,
+		&i.UpdatedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }

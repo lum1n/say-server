@@ -49,6 +49,10 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request, me core.Prin
 		writeError(w, err)
 		return
 	}
+	if me.Kind != core.PrincipalHuman && me.Kind != core.PrincipalAgent {
+		writeError(w, errorf(http.StatusForbidden, "forbidden", "only people and agents create rooms"))
+		return
+	}
 	room, err := s.newRoom(r.Context(), me, body.Kind, body.Name)
 	if err != nil {
 		writeError(w, err)
@@ -100,9 +104,13 @@ func (s *Server) listMembers(w http.ResponseWriter, r *http.Request, me core.Pri
 		writeError(w, err)
 		return
 	}
+	// Names come along, since guests cannot read the directory.
 	out := make([]wireMember, len(ms))
 	for i, m := range ms {
 		out[i] = toMember(m)
+		if p, err := s.store.GetPrincipal(r.Context(), m.PrincipalID); err == nil {
+			out[i].DisplayName, out[i].Kind = p.DisplayName, p.Kind
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"members": out})
 }
@@ -270,6 +278,9 @@ func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg
 	if errors.Is(err, core.ErrHopLimit) {
 		return core.Event{}, false, errorf(http.StatusUnprocessableEntity, "hop_limit", "the causation chain reached this room's limit of %d automated hops", policy.MaxHops)
 	}
+	// Before the append, so that the agent never sees the message as
+	// one it should answer.
+	s.handoffOnReply(ctx, me, room)
 	id := core.NewID()
 	e, err = s.store.AppendEvent(ctx, core.Event{
 		ID:        id,

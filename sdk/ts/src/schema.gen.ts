@@ -365,7 +365,9 @@ export interface paths {
          *     a client that falls behind, so apply them by message id and rely
          *     on the `edit` event that ends the stream. A push `{id, type: "rooms"}` without a
          *     payload says the caller's room list changed (it was added to a room
-         *     or created one); reread `GET /rooms`. Like event notifications it
+         *     or created one); reread `GET /rooms`. A client that offered the
+         *     subprotocols `say.v1` and `say.token.<token>` is answered with
+         *     `say.v1`. Like event notifications it
          *     is a hint, so also reread the list after reconnecting. A client that falls too far behind is
          *     closed with code 1008 and should reconnect and resubscribe from its
          *     cursors.
@@ -424,6 +426,118 @@ export interface paths {
         head?: never;
         /** Change a built-in agent (instance admins only) */
         patch: operations["updateBuiltinAgent"];
+        trace?: never;
+    };
+    "/rooms/{id}/handoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hand a widget thread from its agent to its people
+         * @description Agents in the thread stop being responders, so they answer only
+         *     when mentioned. The visitor or a person in the thread may call it;
+         *     a person's first message in the thread does the same.
+         */
+        post: operations["handoffRoom"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/widgets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Chat widgets (instance admins only) */
+        get: operations["listWidgets"];
+        put?: never;
+        /** Create a chat widget (instance admins only) */
+        post: operations["createWidget"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/widgets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a chat widget (instance admins only)
+         * @description Absent fields stay as they are. Existing threads keep their members.
+         */
+        patch: operations["updateWidget"];
+        trace?: never;
+    };
+    "/embed/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The widget's public key (pk_…) */
+                key: components["parameters"]["WidgetKey"];
+            };
+            cookie?: never;
+        };
+        /** A widget's public settings, for its embed page */
+        get: operations["getEmbedConfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/embed/{key}/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The widget's public key (pk_…) */
+                key: components["parameters"]["WidgetKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign a visitor in to a widget
+         * @description With a bearer token from an earlier session of the same visitor,
+         *     returns that session as is. With an identity token, finds or
+         *     creates the verified visitor it names, on any device. Otherwise
+         *     creates an anonymous visitor: a guest principal with a widget
+         *     thread, whose members are the widget's team and agent. Visitor
+         *     tokens last 90 days.
+         */
+        post: operations["createEmbedSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
 }
@@ -553,6 +667,9 @@ export interface components {
             role: components["schemas"]["Role"];
             /** @description responder marks an agent that answers every message in the room. */
             scopes: string[];
+            /** @description In member lists, so that guests, who cannot read the directory, can name senders. */
+            display_name?: string;
+            kind?: components["schemas"]["PrincipalKind"];
         };
         AddMember: {
             principal_id: string;
@@ -654,6 +771,57 @@ export interface components {
             last_error?: string;
             /** Format: date-time */
             last_error_at?: string;
+        };
+        WidgetSettings: {
+            name?: string;
+            /**
+             * @description Origins of the pages that may embed the widget, like
+             *     https://shop.example. The embed page is served with
+             *     `frame-ancestors` set to them. At least one is required.
+             */
+            origins?: string[];
+            /** @description The agent that answers visitors; "" is none. */
+            agent_id?: string;
+            /** @description People added to each new thread as admins. */
+            team?: string[];
+            greeting?: string;
+            /** @description Replace the secret; identity tokens signed with the old one stop working. */
+            rotate_secret?: boolean;
+        };
+        Widget: {
+            id: string;
+            name: string;
+            /** @description pk_…, the widget attribute of `<say-chat>`. */
+            public_key: string;
+            /** @description sk_…, signs identity tokens (HS256 JWTs) on the host site's server. Keep it there. */
+            secret: string;
+            origins: string[];
+            agent_id?: string;
+            team: string[];
+            greeting: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        EmbedConfig: {
+            name: string;
+            greeting: string;
+            origins: string[];
+        };
+        EmbedSessionRequest: {
+            /**
+             * @description An HS256 JWT signed with the widget secret. Claims: `sub` (the
+             *     host site's user id, required), `exp` (required, at most 24 h
+             *     ahead), `name` (optional), `nbf` (optional).
+             */
+            identity?: string;
+        };
+        EmbedSession: {
+            principal: components["schemas"]["Principal"];
+            room: components["schemas"]["Room"];
+            /** @description The visitor's access token. Send it as a bearer token and, on /ws, as a subprotocol. */
+            token: string;
         };
         /** @enum {string} */
         Reachability: "live" | "offline" | "unlinked";
@@ -825,6 +993,8 @@ export interface components {
         };
     };
     parameters: {
+        /** @description The widget's public key (pk_…) */
+        WidgetKey: string;
         RoomID: string;
     };
     requestBodies: never;
@@ -1499,6 +1669,175 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             422: components["responses"]["Error"];
+        };
+    };
+    handoffRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Handed over */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listWidgets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The widgets, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        widgets: components["schemas"]["Widget"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createWidget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WidgetSettings"];
+            };
+        };
+        responses: {
+            /** @description The widget */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Widget"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    updateWidget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WidgetSettings"];
+            };
+        };
+        responses: {
+            /** @description The widget */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Widget"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getEmbedConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The widget's public key (pk_…) */
+                key: components["parameters"]["WidgetKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbedConfig"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    createEmbedSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The widget's public key (pk_…) */
+                key: components["parameters"]["WidgetKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbedSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description An existing visitor */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbedSession"];
+                };
+            };
+            /** @description A new visitor */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbedSession"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
 }

@@ -126,3 +126,24 @@ type Token struct {
 	CreatedAt   int64
 	ExpiresAt   int64
 }
+
+type Widget struct {
+	ID        string
+	Name      string
+	PublicKey string
+	Secret    string
+	Origins   string
+	AgentID   string
+	Team      string
+	Greeting  string
+	UpdatedAt int64
+	CreatedAt int64
+}
+
+type WidgetVisitor struct {
+	PrincipalID string
+	WidgetID    string
+	Subject     string
+	RoomID      string
+	CreatedAt   int64
+}

@@ -7,6 +7,12 @@ export type RealtimeStatus = "connecting" | "open" | "closed";
 export interface RealtimeOptions {
   /** WebSocket URL; defaults to /api/v1/ws on the page's host. */
   url?: string;
+  /**
+   * token authenticates the socket where the session cookie can't, as in
+   * a third-party iframe. It is sent as a subprotocol, since browsers
+   * cannot set headers on a WebSocket.
+   */
+  token?: string;
   onEvent: (event: Event) => void;
   /**
    * onStream gets a streaming message as it now is, each time it grows.
@@ -71,7 +77,7 @@ export class Realtime {
   private connect() {
     this.opts.onStatus?.("connecting");
     const url = this.opts.url ?? `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/v1/ws`;
-    const ws = new WebSocket(url);
+    const ws = this.opts.token ? new WebSocket(url, ["say.v1", `say.token.${this.opts.token}`]) : new WebSocket(url);
     this.ws = ws;
     ws.onopen = () => {
       this.backoff = 500;

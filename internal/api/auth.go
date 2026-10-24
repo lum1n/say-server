@@ -38,14 +38,30 @@ func (s *Server) authenticate(r *http.Request) (core.Principal, error) {
 	return me, err
 }
 
+// TokenProtocol prefixes the access token offered as a WebSocket
+// subprotocol, next to WSProtocol. Browsers cannot set headers on a
+// WebSocket, and the widget's iframe cannot count on cookies, which
+// browsers block in third-party frames.
+const (
+	WSProtocol    = "say.v1"
+	TokenProtocol = "say.token."
+)
+
 // requestToken returns the secret from the Authorization header, or else
-// from the token cookie.
+// from a WebSocket subprotocol, or else from the token cookie.
 func requestToken(r *http.Request) string {
-	secret, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok {
-		if c, err := r.Cookie(TokenCookie); err == nil {
-			secret = c.Value
+	if secret, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer "); ok {
+		return strings.TrimSpace(secret)
+	}
+	for _, h := range r.Header.Values("Sec-WebSocket-Protocol") {
+		for p := range strings.SplitSeq(h, ",") {
+			if secret, ok := strings.CutPrefix(strings.TrimSpace(p), TokenProtocol); ok {
+				return secret
+			}
 		}
 	}
-	return strings.TrimSpace(secret)
+	if c, err := r.Cookie(TokenCookie); err == nil {
+		return strings.TrimSpace(c.Value)
+	}
+	return ""
 }

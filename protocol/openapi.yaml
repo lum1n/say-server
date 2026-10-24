@@ -10,11 +10,13 @@ info:
     envelope defined in envelope.schema.json. This file is the source of
     truth for sdk/ts and sdk/py.
 
-    Every route except /health, /setup and /login needs an access token,
-    sent as `Authorization: Bearer <token>` or, for browsers, in the
-    `say_token` cookie. People get the cookie from POST /setup or
-    POST /login; agents get a token from POST /principals or
-    `say principal add`. Request bodies must be `application/json`.
+    Every route except /health, /setup, /login and /embed/{key} needs an
+    access token, sent as `Authorization: Bearer <token>` or, for
+    browsers, in the `say_token` cookie. A browser that cannot use the
+    cookie (the widget's iframe) offers the token on /ws as the
+    subprotocol `say.token.<token>` next to `say.v1`. People get the
+    cookie from POST /setup or POST /login; agents get a token from
+    POST /principals or `say principal add`. Request bodies must be `application/json`.
 
     Realtime: every event has a per-room `seq`. A client keeps the last
     `seq` it has seen per room (its cursor) and resumes from it after a
@@ -613,7 +615,9 @@ paths:
         a client that falls behind, so apply them by message id and rely
         on the `edit` event that ends the stream. A push `{id, type: "rooms"}` without a
         payload says the caller's room list changed (it was added to a room
-        or created one); reread `GET /rooms`. Like event notifications it
+        or created one); reread `GET /rooms`. A client that offered the
+        subprotocols `say.v1` and `say.token.<token>` is answered with
+        `say.v1`. Like event notifications it
         is a hint, so also reread the list after reconnecting. A client that falls too far behind is
         closed with code 1008 and should reconnect and resubscribe from its
         cursors.
@@ -708,6 +712,161 @@ paths:
           $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/Error"
+  /rooms/{id}/handoff:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    post:
+      operationId: handoffRoom
+      summary: Hand a widget thread from its agent to its people
+      description: |
+        Agents in the thread stop being responders, so they answer only
+        when mentioned. The visitor or a person in the thread may call it;
+        a person's first message in the thread does the same.
+      responses:
+        "204":
+          description: Handed over
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /widgets:
+    get:
+      operationId: listWidgets
+      summary: Chat widgets (instance admins only)
+      responses:
+        "200":
+          description: The widgets, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [widgets]
+                properties:
+                  widgets:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Widget"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createWidget
+      summary: Create a chat widget (instance admins only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WidgetSettings"
+      responses:
+        "201":
+          description: The widget
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Widget"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /widgets/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: updateWidget
+      summary: Change a chat widget (instance admins only)
+      description: Absent fields stay as they are. Existing threads keep their members.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WidgetSettings"
+      responses:
+        "200":
+          description: The widget
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Widget"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /embed/{key}:
+    parameters:
+      - $ref: "#/components/parameters/WidgetKey"
+    get:
+      operationId: getEmbedConfig
+      summary: A widget's public settings, for its embed page
+      security: []
+      responses:
+        "200":
+          description: The settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedConfig"
+        "404":
+          $ref: "#/components/responses/Error"
+  /embed/{key}/session:
+    parameters:
+      - $ref: "#/components/parameters/WidgetKey"
+    post:
+      operationId: createEmbedSession
+      summary: Sign a visitor in to a widget
+      description: |
+        With a bearer token from an earlier session of the same visitor,
+        returns that session as is. With an identity token, finds or
+        creates the verified visitor it names, on any device. Otherwise
+        creates an anonymous visitor: a guest principal with a widget
+        thread, whose members are the widget's team and agent. Visitor
+        tokens last 90 days.
+      security:
+        - {}
+        - bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbedSessionRequest"
+      responses:
+        "200":
+          description: An existing visitor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedSession"
+        "201":
+          description: A new visitor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedSession"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
 components:
   securitySchemes:
     bearer:
@@ -718,6 +877,13 @@ components:
       in: cookie
       name: say_token
   parameters:
+    WidgetKey:
+      name: key
+      in: path
+      required: true
+      description: The widget's public key (pk_…)
+      schema:
+        type: string
     RoomID:
       name: id
       in: path
@@ -956,6 +1122,11 @@ components:
           description: responder marks an agent that answers every message in the room.
           items:
             type: string
+        display_name:
+          type: string
+          description: In member lists, so that guests, who cannot read the directory, can name senders.
+        kind:
+          $ref: "#/components/schemas/PrincipalKind"
     AddMember:
       type: object
       required: [principal_id]
@@ -1129,6 +1300,101 @@ components:
         last_error_at:
           type: string
           format: date-time
+    WidgetSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        origins:
+          type: array
+          maxItems: 20
+          description: |
+            Origins of the pages that may embed the widget, like
+            https://shop.example. The embed page is served with
+            `frame-ancestors` set to them. At least one is required.
+          items:
+            type: string
+        agent_id:
+          type: string
+          description: The agent that answers visitors; "" is none.
+        team:
+          type: array
+          description: People added to each new thread as admins.
+          items:
+            type: string
+        greeting:
+          type: string
+          maxLength: 1000
+        rotate_secret:
+          type: boolean
+          description: Replace the secret; identity tokens signed with the old one stop working.
+    Widget:
+      type: object
+      required: [id, name, public_key, secret, origins, team, greeting, updated_at, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        public_key:
+          type: string
+          description: pk_…, the widget attribute of `<say-chat>`.
+        secret:
+          type: string
+          description: sk_…, signs identity tokens (HS256 JWTs) on the host site's server. Keep it there.
+        origins:
+          type: array
+          items:
+            type: string
+        agent_id:
+          type: string
+        team:
+          type: array
+          items:
+            type: string
+        greeting:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    EmbedConfig:
+      type: object
+      required: [name, greeting, origins]
+      properties:
+        name:
+          type: string
+        greeting:
+          type: string
+        origins:
+          type: array
+          items:
+            type: string
+    EmbedSessionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        identity:
+          type: string
+          description: |
+            An HS256 JWT signed with the widget secret. Claims: `sub` (the
+            host site's user id, required), `exp` (required, at most 24 h
+            ahead), `name` (optional), `nbf` (optional).
+    EmbedSession:
+      type: object
+      required: [principal, room, token]
+      properties:
+        principal:
+          $ref: "#/components/schemas/Principal"
+        room:
+          $ref: "#/components/schemas/Room"
+        token:
+          type: string
+          description: The visitor's access token. Send it as a bearer token and, on /ws, as a subprotocol.
     Reachability:
       type: string
       enum: [live, offline, unlinked]

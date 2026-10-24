@@ -240,8 +240,9 @@ const maxSubscriptions = 1000
 // says the caller's room list changed.
 func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	// Accept checks that the Origin matches the Host, so another site cannot
-	// open a socket with the user's cookie.
-	conn, err := websocket.Accept(w, r, nil)
+	// open a socket with the user's cookie. A client that sent its token as
+	// a subprotocol is answered with WSProtocol, never the token.
+	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{Subprotocols: []string{WSProtocol}})
 	if err != nil {
 		return
 	}

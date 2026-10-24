@@ -62,6 +62,7 @@ function Sidebar({ admin, name }: { admin: boolean; name: string }) {
       <NewRoom />
       <footer>
         {admin && <Link to="/people">People and agents</Link>}
+        {admin && <Link to="/widgets">Widgets</Link>}
         <span>
           {name}{" "}
           <button type="button" className="link" onClick={() => signOut.mutate()} disabled={signOut.isPending}>

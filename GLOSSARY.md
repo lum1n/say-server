@@ -2,7 +2,7 @@
 
 **Principal**
 : Anything that can send an event. Kinds: `human`, `agent`, `guest`
-  (anonymous widget visitor), `ghost` (a remote user seen through a bridge),
+  (widget visitor), `ghost` (a remote user seen through a bridge),
   `system`. All kinds send through the same path; there is no special case
   for agents.
 
@@ -122,11 +122,28 @@
 
 **Widget**
 : An embeddable chat on a third-party site: the `<say-chat>` element, which
-  mounts an iframe on `/embed/$widgetId`.
+  mounts an iframe on `/embed/{key}`. Admins create widgets; each has
+  allowed origins, an optional agent, a team and a greeting.
 
-**Publishable key**
-: The public identifier of a widget, checked against its allowed origins.
+**Public key**
+: A widget's `pk_…` identifier, in the host page's HTML. Not a secret.
 
-**Verified identity**
-: A short HMAC-signed JWT from the host site carrying its own user id, which
-  maps to a principal.
+**Widget secret**
+: A widget's `sk_…` key, kept on the host site's server, which signs
+  identity tokens.
+
+**Visitor**
+: A guest principal that chats through a widget, with its own widget
+  thread. Anonymous, or verified by an identity token.
+
+**Widget thread**
+: A `widget-thread` room with one visitor, the widget's team and its agent.
+
+**Identity token**
+: A short-lived HS256 JWT, signed with the widget secret, in which the host
+  site says who its signed-in user is (`sub`, optionally `name`). The same
+  `sub` is the same visitor on every device.
+
+**Handoff**
+: The agent in a widget thread stops answering every message, because a
+  person on the team wrote there or the visitor asked for a person.

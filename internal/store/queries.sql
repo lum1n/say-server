@@ -214,3 +214,34 @@ DELETE FROM connector_sessions WHERE id = $1;
 SELECT id, principal_id, name, version, capabilities, connected_at, seen_at
 FROM connector_sessions WHERE seen_at >= $1
 ORDER BY connected_at, id;
+
+-- name: CreateWidget :exec
+INSERT INTO widgets (id, name, public_key, secret, origins, agent_id, team,
+                     greeting, updated_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+
+-- name: UpdateWidget :execrows
+UPDATE widgets
+SET name = $2, secret = $3, origins = $4, agent_id = $5, team = $6,
+    greeting = $7, updated_at = $8
+WHERE id = $1;
+
+-- name: GetWidget :one
+SELECT * FROM widgets WHERE id = $1;
+
+-- name: WidgetByKey :one
+SELECT * FROM widgets WHERE public_key = $1;
+
+-- name: ListWidgets :many
+SELECT * FROM widgets ORDER BY created_at, id;
+
+-- name: CreateVisitor :execrows
+INSERT INTO widget_visitors (principal_id, widget_id, subject, room_id, created_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT DO NOTHING;
+
+-- name: VisitorByPrincipal :one
+SELECT * FROM widget_visitors WHERE principal_id = $1;
+
+-- name: VisitorBySubject :one
+SELECT * FROM widget_visitors WHERE widget_id = $1 AND subject = $2;

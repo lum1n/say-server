@@ -48,6 +48,11 @@ export type WsHelloReply = Schemas["WsHelloReply"];
 export type WsAck = Schemas["WsAck"];
 export type Trigger = Schemas["Trigger"];
 export type Connector = Schemas["Connector"];
+export type Widget = Schemas["Widget"];
+export type WidgetSettings = Schemas["WidgetSettings"];
+export type EmbedConfig = Schemas["EmbedConfig"];
+export type EmbedSession = Schemas["EmbedSession"];
+export type EmbedSessionRequest = Schemas["EmbedSessionRequest"];
 
 /**
  * createSayClient makes a REST client. In the browser the session cookie
@@ -236,6 +241,52 @@ export async function editMessage(
     params: { path: { id, event_id: eventId } },
     body,
   });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/** handoffRoom hands a widget thread from its agent to the people in it. */
+export async function handoffRoom(id: string, client = defaultClient): Promise<void> {
+  const { error, response } = await client.POST("/rooms/{id}/handoff", { params: { path: { id } } });
+  if (!response.ok) fail(response, error);
+}
+
+export async function listWidgets(client = defaultClient): Promise<Widget[]> {
+  const { data, error, response } = await client.GET("/widgets");
+  if (!data) fail(response, error);
+  return data.widgets;
+}
+
+export async function createWidget(body: WidgetSettings, client = defaultClient): Promise<Widget> {
+  const { data, error, response } = await client.POST("/widgets", { body });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/** updateWidget changes the fields given; rotate_secret replaces the secret. */
+export async function updateWidget(id: string, body: WidgetSettings, client = defaultClient): Promise<Widget> {
+  const { data, error, response } = await client.PATCH("/widgets/{id}", { params: { path: { id } }, body });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/** getEmbedConfig reads a widget's public settings by its public key. */
+export async function getEmbedConfig(key: string, client = defaultClient): Promise<EmbedConfig> {
+  const { data, error, response } = await client.GET("/embed/{key}", { params: { path: { key } } });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/**
+ * createEmbedSession signs a widget visitor in. Pass a client made with
+ * the visitor's earlier token to get that visitor back.
+ */
+export async function createEmbedSession(
+  key: string,
+  body: EmbedSessionRequest,
+  client = defaultClient,
+): Promise<EmbedSession> {
+  const { data, error, response } = await client.POST("/embed/{key}/session", { params: { path: { key } }, body });
   if (!data) fail(response, error);
   return data;
 }

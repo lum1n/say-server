@@ -85,6 +85,9 @@ type wireMember struct {
 	PrincipalID string    `json:"principal_id"`
 	Role        core.Role `json:"role"`
 	Scopes      []string  `json:"scopes"`
+	// Only in member lists.
+	DisplayName string             `json:"display_name,omitempty"`
+	Kind        core.PrincipalKind `json:"kind,omitempty"`
 }
 
 func toMember(m core.Membership) wireMember {

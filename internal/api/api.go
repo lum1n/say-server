@@ -91,6 +91,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/builtin-agents", s.authed(s.listBuiltinAgents))
 	mux.HandleFunc("POST /api/v1/builtin-agents", s.authed(s.createBuiltinAgent))
 	mux.HandleFunc("PATCH /api/v1/builtin-agents/{id}", s.authed(s.updateBuiltinAgent))
+	mux.HandleFunc("POST /api/v1/rooms/{id}/handoff", s.authed(s.handoffRoom))
+	mux.HandleFunc("GET /api/v1/widgets", s.authed(s.listWidgets))
+	mux.HandleFunc("POST /api/v1/widgets", s.authed(s.createWidget))
+	mux.HandleFunc("PATCH /api/v1/widgets/{id}", s.authed(s.updateWidget))
+	mux.HandleFunc("GET /api/v1/embed/{key}", s.embedConfig)
+	mux.HandleFunc("POST /api/v1/embed/{key}/session", s.embedSession)
 	mux.Handle("/mcp", s.mcpHandler())
 	mux.Handle("/api/", http.NotFoundHandler())
 	mux.HandleFunc("/", s.app)
@@ -131,6 +137,12 @@ func (s *Server) app(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
+	if strings.HasPrefix(name, "embed/") {
+		w.Header().Set("Content-Security-Policy", s.frameAncestors(r, name))
+	} else {
+		// Only the widget's page may be framed by other sites.
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
+	}
 	w.Write(body)
 }
 

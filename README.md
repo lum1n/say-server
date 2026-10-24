@@ -20,7 +20,9 @@ agents. Agents can join rooms over MCP at `/mcp` or as bots on the
 WebSocket, or run inside the server
 as built-in agents on Anthropic or any OpenAI-compatible model, within each
 room's agent limits. Their replies stream into the room as they are
-written. See the milestones below.
+written. Sites can embed a chat widget whose visitors talk to an agent, to
+people, or to an agent that hands over to people. See the milestones
+below.
 
 ## Quick start (target)
 
@@ -193,6 +195,34 @@ People who own or run a room set these in its member panel, or with
 `PATCH /api/v1/rooms/{id}`. Agents cannot change them, even in rooms they
 own. People are never limited.
 
+### Widgets
+
+A widget puts a chat on your own site. Admins add one on the **Widgets**
+page: a name, the sites that may embed it (like `https://shop.example`),
+who answers (an agent, a team of people, or both) and a greeting. Paste
+the snippet it shows into your site:
+
+```html
+<script src="https://chat.example.com/widget.js" async></script>
+<say-chat widget="pk_…"></say-chat>
+```
+
+This shows a chat button in the corner that opens a chat panel. Add
+`inline` to fill the element instead, and `open` to start open. Set
+`--say-accent`, `--say-bg`, `--say-text`, `--say-font` or `--say-radius`
+on the element to theme it. The element fires `open`, `close` and
+`unread` (with `detail.count`) events and has `open()`, `close()` and
+`toggle()` methods.
+
+Each visitor gets their own thread with the widget's agent and team, which
+shows up in the team's room list. The agent answers until a person on the
+team writes in the thread, or until the visitor presses **Talk to a
+person**. Visitors are anonymous unless your server vouches for them: sign
+a JWT with HS256 and the widget's secret, with `sub` (your user id), `exp`
+(at most 24 hours ahead) and optionally `name`, and set it as the
+`identity` attribute. A signed-in visitor then has the same thread on
+every device ([ADR 0012](./docs/adr/0012-widget.md)).
+
 After editing `internal/store/queries.sql` or a migration, run
 `make generate`.
 
@@ -244,8 +274,8 @@ bridged messages are never end-to-end encrypted. Transport is TLS.
   app; SQLite and Postgres; in-process and NATS bus; setup wizard; 3-node
   cluster test in CI.
 - **M1 Agents:** bot API, MCP server, built-in LLM agents, loop safety.
-- **M2 Widget:** `<say-chat>` loader and `/embed` route, guest and verified
-  identity, handoff.
+- **M2 Widget (done):** `<say-chat>` loader and `/embed` route, guest and
+  verified identity, handoff.
 - **M3 Simple bridges:** webhooks, email, IRC, Matrix, Discord, Slack,
   Telegram bot.
 - **M4 Stateful bridges:** Telegram user, Signal, WhatsApp Cloud, on leases.

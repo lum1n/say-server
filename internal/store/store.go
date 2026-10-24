@@ -181,6 +181,22 @@ type Store interface {
 	// first.
 	ConnectorSessions(ctx context.Context, seenSince time.Time) ([]ConnectorSession, error)
 
+	// CreateWidget and UpdateWidget write a widget; UpdateWidget keeps its
+	// public key and creation time. WidgetByKey finds one by public key.
+	CreateWidget(ctx context.Context, w Widget) error
+	UpdateWidget(ctx context.Context, w Widget) error
+	GetWidget(ctx context.Context, id string) (Widget, error)
+	WidgetByKey(ctx context.Context, publicKey string) (Widget, error)
+	// Widgets returns every widget, oldest first.
+	Widgets(ctx context.Context) ([]Widget, error)
+	// CreateVisitor writes a widget visitor's guest principal, its thread
+	// with members and the visitor in one transaction. It returns
+	// ErrVisitorExists if the widget already has a visitor with
+	// v.Subject.
+	CreateVisitor(ctx context.Context, guest core.Principal, room core.Room, members []core.Membership, v Visitor) error
+	VisitorByPrincipal(ctx context.Context, principalID string) (Visitor, error)
+	VisitorBySubject(ctx context.Context, widgetID, subject string) (Visitor, error)
+
 	// AcquireLease takes or renews the named lease for holder until ttl
 	// from now. ok is false while another holder's lease is unexpired.
 	// The generation goes up each time the lease changes hands.

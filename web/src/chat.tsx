@@ -8,6 +8,7 @@ export const keys = {
   rooms: ["rooms"] as const,
   principals: ["principals"] as const,
   builtinAgents: ["builtin-agents"] as const,
+  widgets: ["widgets"] as const,
   room: (id: string) => ["room", id] as const,
   members: (id: string) => ["members", id] as const,
   events: (id: string) => ["events", id] as const,
@@ -67,6 +68,7 @@ export function RealtimeProvider({ queryClient, children }: { queryClient: Query
         queryClient.invalidateQueries({ queryKey: keys.rooms });
         // A room's agent settings changed, or its membership did.
         queryClient.invalidateQueries({ queryKey: ["room"] });
+        queryClient.invalidateQueries({ queryKey: ["members"] });
       },
     });
     setRt(r);
