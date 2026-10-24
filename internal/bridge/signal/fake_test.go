@@ -18,6 +18,7 @@ import (
 //
 //	account         the linked number; startLink is needed without it
 //	scanned         lets a waiting finishLink finish, as a phone would
+//	outdated        makes a waiting finishLink fail as Signal fails an old signal-cli
 //	push-*.json     params of a "receive" notification to send, in order
 //	requests.jsonl  every request the fake got
 //	die             makes it complain on stderr and exit
@@ -125,8 +126,12 @@ func (f *fake) handle(req wire) {
 	case "startLink":
 		result = map[string]string{"deviceLinkUri": "sgnl://linkdevice?uuid=fake&pub_key=fake"}
 	case "finishLink":
-		for !f.exists("scanned") {
+		for !f.exists("scanned") && !f.exists("outdated") {
 			time.Sleep(5 * time.Millisecond)
+		}
+		if f.exists("outdated") {
+			rerr = &rpcError{Code: -3, Message: "Link request error: StatusCode: 409 (MissingCapabilitiesException)"}
+			break
 		}
 		os.WriteFile(filepath.Join(f.dir, "account"), []byte(fakeNumber), 0o600)
 		result = map[string]string{"number": fakeNumber}

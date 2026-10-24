@@ -275,6 +275,12 @@ func (c *conn) account(ctx context.Context, r *rpc) (string, error) {
 	}
 	err = r.call(ctx, "finishLink", map[string]any{"deviceLinkUri": link.URI, "deviceName": c.cfg.DeviceName}, &linked)
 	stopAsk()
+	var re *rpcError
+	if errors.As(err, &re) && strings.Contains(re.Message, "MissingCapabilities") {
+		// Signal's servers turn away devices that lack features they now
+		// require; only a newer signal-cli has them.
+		return "", fmt.Errorf("link: signal-cli is too old for Signal's servers; update it and link again: %w", err)
+	}
 	if err != nil {
 		return "", fmt.Errorf("link: %w", err)
 	}

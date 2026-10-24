@@ -212,6 +212,27 @@ func TestLinkShowsQRUntilLinked(t *testing.T) {
 	}
 }
 
+func TestOutdatedSignalCLISaysSo(t *testing.T) {
+	r := start(t, false, nil)
+	select {
+	case <-r.h.prompts:
+	case err := <-r.done:
+		t.Fatalf("Run returned: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("no QR prompt")
+	}
+	os.WriteFile(filepath.Join(r.dir, "outdated"), nil, 0o600)
+	select {
+	case err := <-r.done:
+		r.done <- err // for the cleanup
+		if err == nil || !strings.Contains(err.Error(), "signal-cli is too old") {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return")
+	}
+}
+
 func TestLinkedAccountSkipsLinking(t *testing.T) {
 	r := start(t, true, &state{Account: fakeNumber})
 	r.waitConnected()
