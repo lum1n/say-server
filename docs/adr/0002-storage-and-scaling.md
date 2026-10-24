@@ -10,10 +10,16 @@ day one, not as a later rewrite.
 ## Decision
 
 - **Storage:** SQLite in WAL mode by default; Postgres in cluster mode. One
-  portable SQL subset, generated with sqlc for both engines. CI runs the
-  full suite against both.
-- **Event log:** each room has a monotonically increasing `seq`, allocated
-  in the database inside the insert transaction. Clients and connectors
+  portable SQL subset: a single schema, a single `queries.sql` and a single
+  store implementation serve both engines. sqlc checks the queries with its
+  Postgres engine and generates one `database/sql` package; on SQLite the
+  `$N` placeholders are rewritten to `?N`, which SQLite binds the same way.
+  Timestamps are unix milliseconds and JSON is TEXT, so no column type
+  differs between engines. CI runs the full suite against both.
+- **Event log:** each room has a monotonically increasing, gapless `seq`,
+  allocated in the database inside the insert transaction by incrementing
+  the room's `last_seq`. That update locks the room row, which also
+  serializes idempotency-key checks for the room. Clients and connectors
   resume from a cursor.
 - **Bus:** an interface with an in-process implementation (single node) and
   an embedded NATS implementation (cluster). Nodes find each other through

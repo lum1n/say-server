@@ -1,0 +1,48 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: say
+          POSTGRES_PASSWORD: say
+          POSTGRES_DB: say
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U say"
+          --health-interval 2s
+          --health-retries 30
+    env:
+      # The store suite runs every test on SQLite and on Postgres.
+      SAY_TEST_POSTGRES: postgres://say:say@localhost:5432/say?sslmode=disable
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test -race ./...
+      - name: Generated store code is up to date
+        run: |
+          cd internal/store && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r typecheck
+      - run: pnpm -r build

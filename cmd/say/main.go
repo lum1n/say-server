@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/vegard/say-v2/internal/api"
+	"github.com/vegard/say-v2/internal/store"
 )
 
 var version = "dev"
@@ -46,10 +47,17 @@ func main() {
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("addr", envOr("SAY_ADDR", ":8080"), "listen address")
+	dsn := fs.String("db", envOr("SAY_DB", "data/say.db"), "SQLite file path, or a postgres:// URL for cluster mode")
 	fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	st, err := store.Open(ctx, *dsn)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
 
 	srv := &http.Server{
 		Addr:              *addr,

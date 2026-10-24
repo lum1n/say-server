@@ -1,4 +1,5 @@
 STATIC := internal/api/static
+SQLC := github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 .PHONY: build web go generate test clean
@@ -16,6 +17,7 @@ go:
 	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/say ./cmd/say
 
 generate:
+	cd internal/store && go run $(SQLC) generate
 	pnpm --filter @say/sdk generate
 
 test:

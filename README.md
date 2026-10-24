@@ -38,8 +38,18 @@ Requires Go and pnpm.
 ```sh
 make build   # builds web/ and widget/, then the Go binary into bin/say
 make test    # go vet, Go tests, TypeScript typecheck
-bin/say      # listens on :8080
+bin/say      # listens on :8080, stores data in data/say.db
 ```
+
+The store tests run against SQLite, and also against Postgres when
+`SAY_TEST_POSTGRES` holds a URL; each test gets its own schema:
+
+```sh
+SAY_TEST_POSTGRES='postgres://say:say@localhost:5432/say?sslmode=disable' make test
+```
+
+After editing `internal/store/queries.sql` or a migration, run
+`make generate`.
 
 `go build ./cmd/say` works without the web build; the binary then serves a
 placeholder page instead of the app.
