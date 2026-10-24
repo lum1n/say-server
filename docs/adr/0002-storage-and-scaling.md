@@ -22,10 +22,15 @@ day one, not as a later rewrite.
   serializes idempotency-key checks for the room. Clients and connectors
   resume from a cursor.
 - **Bus:** an interface with an in-process implementation (single node) and
-  an embedded NATS implementation (cluster). Nodes find each other through
-  `--peers` or a DNS name; no extra infrastructure. The bus carries
-  notifications only; the database is the source of truth, so a missed bus
-  message is repaired by replaying from the cursor.
+  an embedded NATS implementation (cluster). In cluster mode each node runs
+  a NATS server with no client port, connects to it in process, and routes
+  to the other nodes on its cluster port. Nodes find each other through
+  `--peers` (host:port list; DNS names that resolve to one node work, and
+  NATS gossip completes the mesh from any one live peer); no extra
+  infrastructure. A shared `--cluster-secret` keeps other hosts from
+  joining. The bus carries notifications only; the database is the source
+  of truth, so a missed bus message is repaired by replaying from the
+  cursor.
 - **Search:** SQLite FTS5 and Postgres tsvector behind one interface.
 - **Files:** local disk or S3-compatible storage, served by signed URLs.
   Never base64 over the WebSocket.

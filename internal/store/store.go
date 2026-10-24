@@ -74,8 +74,13 @@ type OutboxEntry struct {
 // postgresql:// URL selects Postgres; anything else is a SQLite file path,
 // optionally prefixed with sqlite:.
 func Open(ctx context.Context, dsn string) (Store, error) {
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+	if IsPostgres(dsn) {
 		return OpenPostgres(ctx, dsn)
 	}
 	return OpenSQLite(ctx, strings.TrimPrefix(dsn, "sqlite:"))
+}
+
+// IsPostgres reports whether Open would pick Postgres for dsn.
+func IsPostgres(dsn string) bool {
+	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
 }

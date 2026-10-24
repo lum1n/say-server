@@ -30,8 +30,16 @@ Either opens a browser setup wizard that creates the admin account.
 Cluster mode is the same binary:
 
 ```sh
-say serve --db postgres://… --peers node-b:6222,node-c:6222
+say serve --db postgres://… --peers node-a:6222,node-b:6222 --cluster-secret …
 ```
+
+Every node shares the Postgres database and listens for the others on
+`--cluster-addr` (default `:6222`). `--peers` lists other nodes' cluster
+addresses; reaching any one live node is enough, since nodes tell each
+other about the rest, and a node that finds itself in the list ignores
+that entry, so all nodes can share one list. All nodes must use the same
+`--cluster-secret`. Each flag also reads `SAY_PEERS`, `SAY_CLUSTER_ADDR`
+and `SAY_CLUSTER_SECRET`.
 
 ## Building from source
 

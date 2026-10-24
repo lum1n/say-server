@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -54,19 +55,25 @@ func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	addr := fs.String("addr", envOr("SAY_ADDR", ":8080"), "listen address")
 	dsn := fs.String("db", envOr("SAY_DB", "data/say.db"), "SQLite file path, or a postgres:// URL for cluster mode")
+	peers := fs.String("peers", os.Getenv("SAY_PEERS"), "comma-separated host:port cluster addresses of other nodes; enables cluster mode")
+	clusterAddr := fs.String("cluster-addr", envOr("SAY_CLUSTER_ADDR", ":6222"), "listen address for other nodes in cluster mode")
+	clusterSecret := fs.String("cluster-secret", os.Getenv("SAY_CLUSTER_SECRET"), "shared secret every node must present to join the cluster")
 	fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	b, err := openBus(*peers, *clusterAddr, *clusterSecret, *dsn)
+	if err != nil {
+		return err
+	}
+	defer b.Close()
 
 	st, err := store.Open(ctx, *dsn)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-
-	b := bus.NewInProc()
-	defer b.Close()
 
 	srv := &http.Server{
 		Addr:              *addr,
@@ -95,6 +102,32 @@ func serve(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// openBus returns the in-process bus, or the NATS cluster bus when peers
+// are given.
+func openBus(peers, clusterAddr, secret, dsn string) (bus.Bus, error) {
+	var list []string
+	for _, p := range strings.Split(peers, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			list = append(list, p)
+		}
+	}
+	if len(list) == 0 {
+		return bus.NewInProc(), nil
+	}
+	if !store.IsPostgres(dsn) {
+		return nil, errors.New("--peers needs a shared postgres:// database (--db)")
+	}
+	if secret == "" {
+		slog.Warn("cluster port is open to anyone who can reach it; set --cluster-secret")
+	}
+	b, err := bus.NewNATS(bus.NATSConfig{ClusterAddr: clusterAddr, Peers: list, Secret: secret})
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("cluster bus started", "cluster_addr", b.ClusterAddr(), "peers", list)
+	return b, nil
 }
 
 // principal creates a principal and prints its id and a new access token.
