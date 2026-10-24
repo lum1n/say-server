@@ -192,3 +192,10 @@
 **Handoff**
 : The agent in a widget thread stops answering every message, because a
   person on the team wrote there or the visitor asked for a person.
+
+**Inbox**
+: The widget threads a person is in, kept out of their room list. A
+  thread is *open* while an agent answers it, *handed over* after a
+  handoff (or from the start, for a widget without an agent) and *idle*
+  after 30 minutes without a message. A handed-over thread whose visitor
+  wrote last stays handed over: the visitor is *waiting*.

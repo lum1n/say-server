@@ -44,6 +44,20 @@ type Visitor struct {
 	CreatedAt   time.Time
 }
 
+// WidgetThread is a visitor's thread as its team sees it in the inbox.
+type WidgetThread struct {
+	Visitor
+	WidgetName  string
+	VisitorName string
+	// LastSenderID and LastMessageAt are the thread's latest message;
+	// both are zero when it has none.
+	LastSenderID  string
+	LastMessageAt time.Time
+	// AgentAnswers is whether a member is still the thread's responder,
+	// that is, the thread has not been handed over.
+	AgentAnswers bool
+}
+
 func (s *sqlStore) CreateWidget(ctx context.Context, w Widget) error {
 	origins, team, err := widgetLists(w)
 	if err != nil {
@@ -215,4 +229,31 @@ func visitor(row db.WidgetVisitor) Visitor {
 		RoomID:      row.RoomID,
 		CreatedAt:   unmillis(row.CreatedAt),
 	}
+}
+
+func (s *sqlStore) WidgetThreads(ctx context.Context, principalID string, limit int) ([]WidgetThread, error) {
+	rows, err := s.q().WidgetThreadsFor(ctx, db.WidgetThreadsForParams{PrincipalID: principalID, Limit: int32(limit)})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WidgetThread, len(rows))
+	for i, row := range rows {
+		out[i] = WidgetThread{
+			Visitor: visitor(db.WidgetVisitor{
+				PrincipalID: row.PrincipalID,
+				WidgetID:    row.WidgetID,
+				Subject:     row.Subject,
+				RoomID:      row.RoomID,
+				CreatedAt:   row.CreatedAt,
+			}),
+			WidgetName:   row.WidgetName,
+			VisitorName:  row.VisitorName,
+			LastSenderID: row.LastSenderID.String,
+			AgentAnswers: row.AgentAnswers,
+		}
+		if row.LastMessageAt.Valid {
+			out[i].LastMessageAt = unmillis(row.LastMessageAt.Int64)
+		}
+	}
+	return out, nil
 }

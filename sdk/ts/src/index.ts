@@ -50,6 +50,7 @@ export type Trigger = Schemas["Trigger"];
 export type Connector = Schemas["Connector"];
 export type Widget = Schemas["Widget"];
 export type WidgetSettings = Schemas["WidgetSettings"];
+export type WidgetThread = Schemas["WidgetThread"];
 export type EmbedConfig = Schemas["EmbedConfig"];
 export type EmbedSession = Schemas["EmbedSession"];
 export type EmbedSessionRequest = Schemas["EmbedSessionRequest"];
@@ -290,6 +291,13 @@ export async function updateWidget(id: string, body: WidgetSettings, client = de
   const { data, error, response } = await client.PATCH("/widgets/{id}", { params: { path: { id } }, body });
   if (!data) fail(response, error);
   return data;
+}
+
+/** listWidgetThreads reads my inbox: the widget threads I am in, latest activity first. */
+export async function listWidgetThreads(client = defaultClient): Promise<WidgetThread[]> {
+  const { data, error, response } = await client.GET("/widget-threads");
+  if (!data) fail(response, error);
+  return data.threads;
 }
 
 /** getEmbedConfig reads a widget's public settings by its public key. */

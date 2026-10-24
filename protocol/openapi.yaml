@@ -818,6 +818,40 @@ paths:
           $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/Error"
+  /widget-threads:
+    get:
+      operationId: listWidgetThreads
+      summary: The widget threads I am in (the inbox)
+      description: |
+        Widget threads whose team or agent I am in, with whether an agent
+        still answers each, latest activity first. People and agents only.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+      responses:
+        "200":
+          description: The threads, latest activity first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [threads]
+                properties:
+                  threads:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WidgetThread"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
   /embed/{key}:
     parameters:
       - $ref: "#/components/parameters/WidgetKey"
@@ -1631,6 +1665,41 @@ components:
         updated_at:
           type: string
           format: date-time
+        created_at:
+          type: string
+          format: date-time
+    WidgetThread:
+      type: object
+      required: [room_id, widget_id, widget_name, visitor_id, visitor_name, verified, state, waiting, created_at]
+      properties:
+        room_id:
+          type: string
+        widget_id:
+          type: string
+        widget_name:
+          type: string
+        visitor_id:
+          type: string
+        visitor_name:
+          type: string
+        verified:
+          type: boolean
+          description: Whether the host site signed the visitor in (an identity token).
+        state:
+          type: string
+          enum: [open, handed_over, idle]
+          description: |
+            `open`: an agent answers the visitor. `handed_over`: the
+            thread is the team's, and agents answer only when mentioned.
+            `idle`: no message for 30 minutes, unless the visitor of a
+            handed-over thread is still waiting for a person.
+        waiting:
+          type: boolean
+          description: The visitor wrote the latest message, so nobody has answered it yet.
+        last_message_at:
+          type: string
+          format: date-time
+          description: Absent when the thread has no messages.
         created_at:
           type: string
           format: date-time

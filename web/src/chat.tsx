@@ -1,5 +1,5 @@
 import { type QueryClient, useQuery } from "@tanstack/react-query";
-import { type Delivery, type Event, listPrincipals, type Principal, Realtime } from "@say/sdk";
+import { type Delivery, type Event, listPrincipals, listWidgetThreads, type Principal, Realtime } from "@say/sdk";
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 
 // Query keys shared by the chat routes.
@@ -9,6 +9,7 @@ export const keys = {
   principals: ["principals"] as const,
   builtinAgents: ["builtin-agents"] as const,
   widgets: ["widgets"] as const,
+  widgetThreads: ["widget-threads"] as const,
   bridges: ["bridges"] as const,
   networks: ["networks"] as const,
   room: (id: string) => ["room", id] as const,
@@ -83,6 +84,8 @@ export function RealtimeProvider({ queryClient, children }: { queryClient: Query
         queryClient.setQueryData<Deliveries>(keys.deliveries(p.room_id), (map) => mergeDeliveries(map, p.deliveries, [p.event_id])),
       onRoomsChanged: () => {
         queryClient.invalidateQueries({ queryKey: keys.rooms });
+        // A widget thread was created or handed over.
+        queryClient.invalidateQueries({ queryKey: keys.widgetThreads });
         // A bridge of mine or of a room changed state.
         queryClient.invalidateQueries({ queryKey: keys.bridges });
         // A room's agent settings changed, or its membership did.
@@ -113,6 +116,20 @@ export function useDirectory() {
   });
   const byId = new Map<string, Principal>((q.data ?? []).map((p) => [p.id, p]));
   return { byId, list: q.data ?? [], refetch: q.refetch, isFetching: q.isFetching };
+}
+
+/**
+ * useWidgetThreads reads the inbox. Messages in threads that are not open
+ * are not pushed, so it is refetched every 15 s.
+ */
+export function useWidgetThreads(enabled = true) {
+  return useQuery({
+    queryKey: keys.widgetThreads,
+    queryFn: () => listWidgetThreads(),
+    enabled,
+    staleTime: 15_000,
+    refetchInterval: 15_000,
+  });
 }
 
 /** Online marks an agent whose bot is connected. */

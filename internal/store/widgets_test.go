@@ -86,3 +86,92 @@ func TestWidgetsAndVisitors(t *testing.T) {
 		}
 	})
 }
+
+func TestWidgetThreads(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		now := time.Now().Truncate(time.Millisecond)
+		person := func(kind core.PrincipalKind, name string) core.Principal {
+			p := core.Principal{ID: core.NewID(), Kind: kind, DisplayName: name, CreatedAt: now}
+			if err := s.CreatePrincipal(ctx, p); err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}
+		ada, bob, bot := person(core.PrincipalHuman, "Ada"), person(core.PrincipalHuman, "Bob"), person(core.PrincipalAgent, "Bot")
+		w := Widget{
+			ID: core.NewID(), Name: "Support", PublicKey: "pk_test", Secret: "sk_test",
+			Origins: []string{"https://shop.example"}, AgentID: bot.ID, Team: []string{ada.ID},
+			UpdatedAt: now, CreatedAt: now,
+		}
+		if err := s.CreateWidget(ctx, w); err != nil {
+			t.Fatal(err)
+		}
+		visit := func(name, subject string) Visitor {
+			guest := core.Principal{ID: core.NewID(), Kind: core.PrincipalGuest, DisplayName: name, CreatedAt: now}
+			room := core.Room{ID: core.NewID(), Kind: core.RoomWidgetThread, Name: "Support · " + name, CreatedAt: now}
+			ms := []core.Membership{
+				{RoomID: room.ID, PrincipalID: guest.ID, Role: core.RoleMember},
+				{RoomID: room.ID, PrincipalID: ada.ID, Role: core.RoleAdmin},
+				{RoomID: room.ID, PrincipalID: bot.ID, Role: core.RoleMember, Scopes: []string{core.ScopeResponder}},
+			}
+			v := Visitor{PrincipalID: guest.ID, WidgetID: w.ID, Subject: subject, RoomID: room.ID, CreatedAt: now}
+			if err := s.CreateVisitor(ctx, guest, room, ms, v); err != nil {
+				t.Fatal(err)
+			}
+			return v
+		}
+		say := func(room, sender string) core.Event {
+			e, err := s.AppendEvent(ctx, core.Event{
+				RoomID: room, Type: core.EventMessage, SenderID: sender, Parts: text("hi"), Stream: core.StreamFinal,
+			}, AppendOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return e
+		}
+		quiet := visit("Quiet", "")
+		cat := visit("Cat", "user-1")
+		dan := visit("Dan", "")
+		say(cat.RoomID, cat.PrincipalID)
+		time.Sleep(2 * time.Millisecond)
+		say(dan.RoomID, dan.PrincipalID)
+		last := say(dan.RoomID, bot.ID)
+		time.Sleep(2 * time.Millisecond)
+		// Cat's thread is handed over and has the latest message, a visitor's.
+		if err := s.SetMemberScopes(ctx, cat.RoomID, bot.ID, nil); err != nil {
+			t.Fatal(err)
+		}
+		catLast := say(cat.RoomID, cat.PrincipalID)
+
+		got, err := s.WidgetThreads(ctx, ada.ID, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rooms []string
+		for _, th := range got {
+			rooms = append(rooms, th.RoomID)
+		}
+		if !slices.Equal(rooms, []string{cat.RoomID, dan.RoomID, quiet.RoomID}) {
+			t.Fatalf("thread order = %v; want Cat, Dan, Quiet", rooms)
+		}
+		c, d, q := got[0], got[1], got[2]
+		if c.Visitor != cat || c.WidgetName != "Support" || c.VisitorName != "Cat" || c.AgentAnswers ||
+			c.LastSenderID != cat.PrincipalID || !c.LastMessageAt.Equal(catLast.CreatedAt) {
+			t.Fatalf("Cat's thread = %+v", c)
+		}
+		if !d.AgentAnswers || d.LastSenderID != bot.ID || !d.LastMessageAt.Equal(last.CreatedAt) {
+			t.Fatalf("Dan's thread = %+v", d)
+		}
+		if !q.AgentAnswers || q.LastSenderID != "" || !q.LastMessageAt.IsZero() {
+			t.Fatalf("Quiet's thread = %+v", q)
+		}
+		if got, err := s.WidgetThreads(ctx, ada.ID, 1); err != nil || len(got) != 1 || got[0].RoomID != cat.RoomID {
+			t.Fatalf("limit 1 = %+v, %v", got, err)
+		}
+		// Only members see a thread.
+		if got, err := s.WidgetThreads(ctx, bob.ID, 10); err != nil || len(got) != 0 {
+			t.Fatalf("Bob's threads = %+v, %v", got, err)
+		}
+	})
+}
