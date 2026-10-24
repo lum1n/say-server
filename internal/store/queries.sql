@@ -207,14 +207,24 @@ ORDER BY connected_at, id;
 
 -- name: CreateWidget :exec
 INSERT INTO widgets (id, name, public_key, secret, origins, agent_id, team,
-                     greeting, updated_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+                     greeting, enabled, updated_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
 
 -- name: UpdateWidget :execrows
 UPDATE widgets
 SET name = $2, secret = $3, origins = $4, agent_id = $5, team = $6,
-    greeting = $7, updated_at = $8
+    greeting = $7, enabled = $8, updated_at = $9
 WHERE id = $1;
+
+-- name: DeleteWidgetVisitorTokens :exec
+DELETE FROM tokens
+WHERE principal_id IN (SELECT principal_id FROM widget_visitors WHERE widget_id = $1);
+
+-- name: DeleteWidgetVisitors :exec
+DELETE FROM widget_visitors WHERE widget_id = $1;
+
+-- name: DeleteWidget :execrows
+DELETE FROM widgets WHERE id = $1;
 
 -- name: GetWidget :one
 SELECT * FROM widgets WHERE id = $1;

@@ -818,12 +818,26 @@ paths:
           $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteWidget
+      summary: Delete a chat widget (instance admins only)
+      description: Its visitors are signed out. Their threads stay with the team.
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /embed/{key}:
     parameters:
       - $ref: "#/components/parameters/WidgetKey"
     get:
       operationId: getEmbedConfig
       summary: A widget's public settings, for its embed page
+      description: A widget that is switched off is not found.
       security: []
       responses:
         "200":
@@ -1599,12 +1613,15 @@ components:
         greeting:
           type: string
           maxLength: 1000
+        enabled:
+          type: boolean
+          description: Off hides the widget on host sites and stops its visitors chatting; their threads stay.
         rotate_secret:
           type: boolean
           description: Replace the secret; identity tokens signed with the old one stop working.
     Widget:
       type: object
-      required: [id, name, public_key, secret, origins, team, greeting, updated_at, created_at]
+      required: [id, name, public_key, secret, origins, team, greeting, enabled, updated_at, created_at]
       properties:
         id:
           type: string
@@ -1628,6 +1645,8 @@ components:
             type: string
         greeting:
           type: string
+        enabled:
+          type: boolean
         updated_at:
           type: string
           format: date-time

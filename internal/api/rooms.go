@@ -256,6 +256,10 @@ func (s *Server) sendAt(ctx context.Context, me core.Principal, roomID string, m
 	if err != nil {
 		return core.Event{}, false, err
 	}
+	// A visitor's socket outlives its widget being switched off.
+	if err := s.checkVisitor(ctx, me); err != nil {
+		return core.Event{}, false, err
+	}
 	if m.Role == core.RoleObserver {
 		return core.Event{}, false, errorf(http.StatusForbidden, "forbidden", "observers cannot send")
 	}

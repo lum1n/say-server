@@ -57,6 +57,12 @@ read another visitor's chat.
   message is appended, so the agent never sees that message as one to
   answer. The "answers everything" box in the member panel hands the
   thread back.
+- **Switching off and deleting.** A widget that is switched off is not
+  found by its embed page, which says the chat is not available, and its
+  visitors' requests are refused, sends on an open socket included; it
+  can be switched on again. Deleting a widget deletes its visitors and
+  their tokens. Their guest principals and threads stay, so the team
+  keeps the conversations.
 - **Guests** see only their thread. They cannot create rooms (nor can
   ghosts) or read the directory, so member lists now carry each member's
   name and kind.

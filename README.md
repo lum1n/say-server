@@ -266,6 +266,11 @@ a JWT with HS256 and the widget's secret, with `sub` (your user id), `exp`
 `identity` attribute. A signed-in visitor then has the same thread on
 every device ([ADR 0012](./docs/adr/0012-widget.md)).
 
+**Switch off** takes a widget off your sites for a while: they say the
+chat is not available and its visitors cannot write, until you switch it
+on again. **Delete** removes it for good and signs its visitors out; the
+team keeps their threads.
+
 ### Accounts on other networks
 
 On the **Accounts** page, anyone connects their own account on another

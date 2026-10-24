@@ -292,6 +292,12 @@ export async function updateWidget(id: string, body: WidgetSettings, client = de
   return data;
 }
 
+/** deleteWidget deletes a widget and signs its visitors out; their threads stay. */
+export async function deleteWidget(id: string, client = defaultClient): Promise<void> {
+  const { error, response } = await client.DELETE("/widgets/{id}", { params: { path: { id } } });
+  if (!response.ok) fail(response, error);
+}
+
 /** getEmbedConfig reads a widget's public settings by its public key. */
 export async function getEmbedConfig(key: string, client = defaultClient): Promise<EmbedConfig> {
   const { data, error, response } = await client.GET("/embed/{key}", { params: { path: { key } } });
