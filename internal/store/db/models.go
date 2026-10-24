@@ -46,3 +46,10 @@ type Room struct {
 	LastSeq   int64
 	CreatedAt int64
 }
+
+type Token struct {
+	Hash        string
+	PrincipalID string
+	Name        string
+	CreatedAt   int64
+}

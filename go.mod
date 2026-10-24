@@ -3,6 +3,7 @@ module github.com/vegard/say-v2
 go 1.27.1
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/jackc/pgx/v5 v5.11.0
 	modernc.org/sqlite v1.61.0
 )

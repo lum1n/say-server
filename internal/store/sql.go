@@ -2,10 +2,14 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/vegard/say-v2/internal/core"
@@ -50,12 +54,47 @@ func (s *sqlStore) GetPrincipal(ctx context.Context, id string) (core.Principal,
 	if err != nil {
 		return core.Principal{}, notFound(err)
 	}
+	return principal(row), nil
+}
+
+func principal(row db.Principal) core.Principal {
 	return core.Principal{
 		ID:          row.ID,
 		Kind:        core.PrincipalKind(row.Kind),
 		DisplayName: row.DisplayName,
 		CreatedAt:   time.UnixMilli(row.CreatedAt),
-	}, nil
+	}
+}
+
+// tokenPrefix marks say secrets so that secret scanners and people can tell
+// them apart.
+const tokenPrefix = "say_"
+
+func (s *sqlStore) CreateToken(ctx context.Context, principalID, name string) (string, error) {
+	secret := tokenPrefix + rand.Text()
+	err := s.q().CreateToken(ctx, db.CreateTokenParams{
+		Hash:        tokenHash(secret),
+		PrincipalID: principalID,
+		Name:        name,
+		CreatedAt:   millis(time.Time{}),
+	})
+	if err != nil {
+		return "", err
+	}
+	return secret, nil
+}
+
+func (s *sqlStore) PrincipalByToken(ctx context.Context, secret string) (core.Principal, error) {
+	row, err := s.q().PrincipalByToken(ctx, tokenHash(secret))
+	if err != nil {
+		return core.Principal{}, notFound(err)
+	}
+	return principal(row), nil
+}
+
+func tokenHash(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *sqlStore) CreateRoom(ctx context.Context, r core.Room, owner core.Membership) error {
@@ -236,8 +275,22 @@ func (s *sqlStore) EventsAfter(ctx context.Context, roomID string, cursor int64,
 	if err != nil {
 		return nil, err
 	}
+	return events(rows)
+}
+
+func (s *sqlStore) EventsBefore(ctx context.Context, roomID string, before int64, limit int) ([]core.Event, error) {
+	rows, err := s.q().EventsBefore(ctx, db.EventsBeforeParams{RoomID: roomID, Seq: before, Limit: int32(limit)})
+	if err != nil {
+		return nil, err
+	}
+	slices.Reverse(rows)
+	return events(rows)
+}
+
+func events(rows []db.Event) ([]core.Event, error) {
 	events := make([]core.Event, len(rows))
 	for i, row := range rows {
+		var err error
 		if events[i], err = event(row); err != nil {
 			return nil, err
 		}

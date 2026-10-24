@@ -1,9 +1,21 @@
 import createClient from "openapi-fetch";
 import type { components, paths } from "./schema.gen";
 
-export type Health = components["schemas"]["Health"];
-export type PrincipalKind = components["schemas"]["PrincipalKind"];
-export type RoomKind = components["schemas"]["RoomKind"];
+type Schemas = components["schemas"];
+export type Health = Schemas["Health"];
+export type PrincipalKind = Schemas["PrincipalKind"];
+export type Principal = Schemas["Principal"];
+export type RoomKind = Schemas["RoomKind"];
+export type Room = Schemas["Room"];
+export type Member = Schemas["Member"];
+export type Event = Schemas["Event"];
+export type Part = Schemas["Part"];
+export type SendMessage = Schemas["SendMessage"];
+export type ApiError = Schemas["Error"];
+export type WsSubscribe = Schemas["WsSubscribe"];
+export type WsUnsubscribe = Schemas["WsUnsubscribe"];
+export type WsSend = Schemas["WsSend"];
+export type WsError = Schemas["WsError"];
 
 export function createSayClient(baseUrl = "/api/v1") {
   return createClient<paths>({ baseUrl });

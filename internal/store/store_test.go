@@ -163,6 +163,31 @@ func TestPrincipalsRoomsMembers(t *testing.T) {
 	})
 }
 
+func TestTokens(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		p, _ := seed(t, s)
+		secret, err := s.CreateToken(ctx, p.ID, "cli")
+		if err != nil || !strings.HasPrefix(secret, "say_") {
+			t.Fatalf("CreateToken = %q, %v", secret, err)
+		}
+		other, err := s.CreateToken(ctx, p.ID, "cli")
+		if err != nil || other == secret {
+			t.Fatalf("second CreateToken = %q, %v", other, err)
+		}
+		got, err := s.PrincipalByToken(ctx, secret)
+		if err != nil || got.ID != p.ID || got.Kind != core.PrincipalHuman {
+			t.Fatalf("PrincipalByToken = %+v, %v", got, err)
+		}
+		if _, err := s.PrincipalByToken(ctx, secret+"x"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("wrong secret: %v", err)
+		}
+		if _, err := s.CreateToken(ctx, "no-such-principal", "cli"); err == nil {
+			t.Fatal("token for unknown principal was created")
+		}
+	})
+}
+
 func TestCreateRoomIsAtomic(t *testing.T) {
 	eachEngine(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
@@ -208,6 +233,10 @@ func TestAppendAndReplay(t *testing.T) {
 		got, err = s.EventsAfter(ctx, r.ID, 0, 2)
 		if err != nil || len(got) != 2 {
 			t.Fatalf("EventsAfter limit = %d, %v", len(got), err)
+		}
+		before, err := s.EventsBefore(ctx, r.ID, 5, 2)
+		if err != nil || len(before) != 2 || before[0].Seq != 3 || before[1].Seq != 4 {
+			t.Fatalf("EventsBefore(5, 2) = %+v, %v", before, err)
 		}
 		e := got[0]
 		if e.ID != first.ID || !e.CreatedAt.Equal(first.CreatedAt) || e.Stream != core.StreamFinal ||

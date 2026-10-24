@@ -23,6 +23,12 @@ type Store interface {
 	CreatePrincipal(ctx context.Context, p core.Principal) error
 	GetPrincipal(ctx context.Context, id string) (core.Principal, error)
 
+	// CreateToken issues a new access token for principalID and returns its
+	// secret. Only a hash of the secret is stored, so it cannot be shown
+	// again. PrincipalByToken returns ErrNotFound for an unknown secret.
+	CreateToken(ctx context.Context, principalID, name string) (secret string, err error)
+	PrincipalByToken(ctx context.Context, secret string) (core.Principal, error)
+
 	// CreateRoom writes the room and its owner's membership in one
 	// transaction.
 	CreateRoom(ctx context.Context, r core.Room, owner core.Membership) error
@@ -45,6 +51,9 @@ type Store interface {
 	// EventsAfter returns up to limit events of room with seq > cursor, in
 	// seq order.
 	EventsAfter(ctx context.Context, roomID string, cursor int64, limit int) ([]core.Event, error)
+	// EventsBefore returns the last limit events of room with seq < before,
+	// in seq order.
+	EventsBefore(ctx context.Context, roomID string, before int64, limit int) ([]core.Event, error)
 
 	// PendingOutbox returns up to limit outbox entries, oldest first.
 	// AckOutbox removes one once it has been delivered.

@@ -13,7 +13,9 @@ binary against Postgres with an embedded NATS cluster bus.
 
 ## Status
 
-Early scaffolding. Nothing here is usable yet. See the milestones below.
+Early. The core API works: rooms, members, messages, and realtime delivery
+over WebSocket, SSE and long polling. There is no setup wizard or chat UI
+yet. See the milestones below.
 
 ## Quick start (target)
 
@@ -48,6 +50,19 @@ The store tests run against SQLite, and also against Postgres when
 SAY_TEST_POSTGRES='postgres://say:say@localhost:5432/say?sslmode=disable' make test
 ```
 
+To try the API before the setup wizard exists, create a principal and use
+its token:
+
+```sh
+bin/say principal add --name Ada        # prints the principal id and a token
+TOKEN=say_…
+curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"kind":"group","name":"general"}' localhost:8080/api/v1/rooms
+curl -N -H "Authorization: Bearer $TOKEN" localhost:8080/api/v1/rooms/<room id>/events/stream
+```
+
+The API is described in `protocol/openapi.yaml`.
+
 After editing `internal/store/queries.sql` or a migration, run
 `make generate`.
 
@@ -78,6 +93,7 @@ placeholder page instead of the app.
 - [ADR 0003: Connector protocol](./docs/adr/0003-connector-protocol.md)
 - [ADR 0004: Bridge risk policy](./docs/adr/0004-bridge-risk-policy.md)
 - [ADR 0005: Agent safety](./docs/adr/0005-agent-safety.md)
+- [ADR 0006: Realtime delivery and access tokens](./docs/adr/0006-realtime-and-access-tokens.md)
 
 ## Privacy
 

@@ -53,6 +53,12 @@ WHERE room_id = $1 AND seq > $2
 ORDER BY seq
 LIMIT $3;
 
+-- name: EventsBefore :many
+SELECT * FROM events
+WHERE room_id = $1 AND seq < $2
+ORDER BY seq DESC
+LIMIT $3;
+
 -- name: InsertOutbox :exec
 INSERT INTO outbox (event_id, room_id, seq, created_at)
 VALUES ($1, $2, $3, $4);
@@ -62,3 +68,11 @@ SELECT * FROM outbox ORDER BY created_at, room_id, seq LIMIT $1;
 
 -- name: DeleteOutbox :exec
 DELETE FROM outbox WHERE event_id = $1;
+
+-- name: CreateToken :exec
+INSERT INTO tokens (hash, principal_id, name, created_at)
+VALUES ($1, $2, $3, $4);
+
+-- name: PrincipalByToken :one
+SELECT p.* FROM principals p JOIN tokens t ON t.principal_id = p.id
+WHERE t.hash = $1;

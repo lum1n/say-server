@@ -90,6 +90,28 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) error {
 	return err
 }
 
+const createToken = `-- name: CreateToken :exec
+INSERT INTO tokens (hash, principal_id, name, created_at)
+VALUES ($1, $2, $3, $4)
+`
+
+type CreateTokenParams struct {
+	Hash        string
+	PrincipalID string
+	Name        string
+	CreatedAt   int64
+}
+
+func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) error {
+	_, err := q.db.ExecContext(ctx, createToken,
+		arg.Hash,
+		arg.PrincipalID,
+		arg.Name,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const deleteOutbox = `-- name: DeleteOutbox :exec
 DELETE FROM outbox WHERE event_id = $1
 `
@@ -144,6 +166,54 @@ type EventsAfterParams struct {
 
 func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Event, error) {
 	rows, err := q.db.QueryContext(ctx, eventsAfter, arg.RoomID, arg.Seq, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.RoomID,
+			&i.Seq,
+			&i.Type,
+			&i.SenderID,
+			&i.CausedBy,
+			&i.HopCount,
+			&i.Parts,
+			&i.Stream,
+			&i.IdempotencyKey,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const eventsBefore = `-- name: EventsBefore :many
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at FROM events
+WHERE room_id = $1 AND seq < $2
+ORDER BY seq DESC
+LIMIT $3
+`
+
+type EventsBeforeParams struct {
+	RoomID string
+	Seq    int64
+	Limit  int32
+}
+
+func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, eventsBefore, arg.RoomID, arg.Seq, arg.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -375,6 +445,23 @@ func (q *Queries) PendingOutbox(ctx context.Context, limit int32) ([]Outbox, err
 		return nil, err
 	}
 	return items, nil
+}
+
+const principalByToken = `-- name: PrincipalByToken :one
+SELECT p.id, p.kind, p.display_name, p.created_at FROM principals p JOIN tokens t ON t.principal_id = p.id
+WHERE t.hash = $1
+`
+
+func (q *Queries) PrincipalByToken(ctx context.Context, hash string) (Principal, error) {
+	row := q.db.QueryRowContext(ctx, principalByToken, hash)
+	var i Principal
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.DisplayName,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const roomsFor = `-- name: RoomsFor :many

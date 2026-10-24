@@ -11,7 +11,7 @@ import (
 )
 
 func newTestServer() *httptest.Server {
-	s := New("test")
+	s := New(Config{Version: "test"})
 	s.assets = fstest.MapFS{
 		shell:           {Data: []byte("<html>shell</html>")},
 		"widget.js":     {Data: []byte("widget")},
@@ -68,7 +68,7 @@ func TestApp(t *testing.T) {
 }
 
 func TestPlaceholderWithoutBuild(t *testing.T) {
-	s := New("test")
+	s := New(Config{Version: "test"})
 	s.assets = fstest.MapFS{}
 	ts := httptest.NewServer(s.Handler())
 	defer ts.Close()

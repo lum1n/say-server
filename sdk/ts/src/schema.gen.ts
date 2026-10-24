@@ -21,6 +21,184 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The principal the token belongs to */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Rooms the caller is a member of, oldest first */
+        get: operations["listRooms"];
+        put?: never;
+        /** Create a room owned by the caller */
+        post: operations["createRoom"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        /** One room */
+        get: operations["getRoom"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        /** Members of a room */
+        get: operations["listMembers"];
+        put?: never;
+        /** Add a principal to a room (owners and admins only) */
+        post: operations["addMember"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Page through a room's event log
+         * @description With `after`, reads forward from that cursor; `wait` then holds the
+         *     request until at least one event arrives or the wait ends (the
+         *     long-poll fallback). Without `after`, reads the page that ends
+         *     just before `before`, or the latest page. Events are always in seq
+         *     order.
+         */
+        get: operations["listEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}/events/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Server-Sent Events of a room
+         * @description Replays the events after the cursor, then streams new ones. Each
+         *     SSE message has `event: event`, `id: <seq>` and the Event as JSON
+         *     in `data`. Idle streams get a `: ping` comment every 25 seconds.
+         */
+        get: operations["streamEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a message to a room */
+        post: operations["sendMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ws": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The client and connector WebSocket
+         * @description Frames are envelopes (envelope.schema.json). A request carries a
+         *     client-chosen `id`, a `type` and a payload; the reply echoes `id`
+         *     and `type` with `status` `ok` or `error` (payload `WsError`).
+         *     Request types and payloads:
+         *
+         *     - `subscribe`: `WsSubscribe`. Pushes the room's events after
+         *       `after`, then new ones. Subscribing again restarts from the new
+         *       cursor.
+         *     - `unsubscribe`: `WsUnsubscribe`.
+         *     - `send`: `WsSend`; the reply payload is the `Event`.
+         *     - `ping`: no payload.
+         *
+         *     Events arrive as pushes `{id: <event id>, type: "event", payload:
+         *     Event}` without a status. A client that falls too far behind is
+         *     closed with code 1008 and should reconnect and resubscribe from its
+         *     cursors.
+         */
+        get: operations["openWebSocket"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -30,10 +208,55 @@ export interface components {
             status: "ok";
             version: string;
         };
+        Error: {
+            error: {
+                /**
+                 * @description Stable machine-readable code: unauthorized, forbidden,
+                 *     not_found, conflict, bad_request, unsupported_media_type,
+                 *     invalid, hop_limit, too_many or internal.
+                 */
+                code: string;
+                message: string;
+            };
+        };
         /** @enum {string} */
         PrincipalKind: "human" | "agent" | "guest" | "ghost" | "system";
+        Principal: {
+            id: string;
+            kind: components["schemas"]["PrincipalKind"];
+            display_name: string;
+            /** Format: date-time */
+            created_at: string;
+        };
         /** @enum {string} */
         RoomKind: "dm" | "group" | "channel" | "widget-thread";
+        Room: {
+            id: string;
+            kind: components["schemas"]["RoomKind"];
+            name: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        CreateRoom: {
+            /** @enum {string} */
+            kind: "dm" | "group" | "channel";
+            name?: string;
+        };
+        /** @enum {string} */
+        Role: "owner" | "admin" | "member" | "observer";
+        Member: {
+            principal_id: string;
+            role: components["schemas"]["Role"];
+            scopes: string[];
+        };
+        AddMember: {
+            principal_id: string;
+            /**
+             * @default member
+             * @enum {string}
+             */
+            role: "admin" | "member" | "observer";
+        };
         /** @enum {string} */
         Reachability: "live" | "offline" | "unlinked";
         Causation: {
@@ -42,9 +265,88 @@ export interface components {
             /** @description Automated hops since the last human event. */
             hop_count: number;
         };
+        /** @enum {string} */
+        EventType: "message" | "edit" | "reaction" | "typing" | "receipt";
+        /** @enum {string} */
+        StreamState: "streaming" | "final";
+        /** @enum {string} */
+        PartKind: "text" | "attachment" | "tool-call" | "tool-result" | "card";
+        /**
+         * @description One typed piece of a message. `data` is a JSON object of at most
+         *     64 KiB; for `text` it is a `TextPartData`.
+         */
+        Part: {
+            kind: components["schemas"]["PartKind"];
+            data: {
+                [key: string]: unknown;
+            };
+        };
+        TextPartData: {
+            text: string;
+        };
+        Event: {
+            id: string;
+            room_id: string;
+            /**
+             * Format: int64
+             * @description Position in the room's log; the cursor to resume from.
+             */
+            seq: number;
+            type: components["schemas"]["EventType"];
+            sender_id: string;
+            causation: components["schemas"]["Causation"];
+            parts: components["schemas"]["Part"][];
+            stream?: components["schemas"]["StreamState"];
+            /** Format: date-time */
+            created_at: string;
+        };
+        SendMessage: {
+            parts: components["schemas"]["Part"][];
+            /**
+             * @description The event in this room this message replies to. Automated
+             *     senders must set it; a reply that would pass the hop limit is
+             *     rejected with code hop_limit.
+             */
+            caused_by?: string;
+        };
+        WsSubscribe: {
+            room_id: string;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            after: number;
+        };
+        WsUnsubscribe: {
+            room_id: string;
+        };
+        WsSend: {
+            room_id: string;
+            idempotency_key?: string;
+            parts: components["schemas"]["Part"][];
+            caused_by?: string;
+        };
+        WsError: {
+            code: string;
+            message: string;
+            /** @description The HTTP status the same error would have. */
+            status: number;
+        };
     };
-    responses: never;
-    parameters: never;
+    responses: {
+        /** @description An error */
+        Error: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+    };
+    parameters: {
+        RoomID: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -69,6 +371,286 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
+        };
+    };
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Principal"];
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    listRooms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rooms */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        rooms: components["schemas"]["Room"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    createRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRoom"];
+            };
+        };
+        responses: {
+            /** @description The new room */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The room */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The members */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        members: components["schemas"]["Member"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    addMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddMember"];
+            };
+        };
+        responses: {
+            /** @description The new membership */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listEvents: {
+        parameters: {
+            query?: {
+                after?: number;
+                before?: number;
+                limit?: number;
+                /** @description Seconds to wait for new events; only with `after`. */
+                wait?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        events: components["schemas"]["Event"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    streamEvents: {
+        parameters: {
+            query?: {
+                /** @description Cursor to start after. Defaults to `Last-Event-ID`, then 0. */
+                after?: number;
+            };
+            header?: {
+                "Last-Event-ID"?: string;
+            };
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An event stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    sendMessage: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description A repeated key from the same sender in the same room returns the
+                 *     original event with status 200 instead of sending again.
+                 */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessage"];
+            };
+        };
+        responses: {
+            /** @description The event an earlier send with the same key created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"];
+                };
+            };
+            /** @description The new event */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    openWebSocket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Switching to the WebSocket protocol */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
         };
     };
 }

@@ -9,13 +9,27 @@ info:
     HTTP API of the say core. Realtime traffic (WebSocket, SSE) uses the
     envelope defined in envelope.schema.json. This file is the source of
     truth for sdk/ts and sdk/py.
+
+    Every route except /health needs an access token, sent as
+    `Authorization: Bearer <token>` or, for browsers, in the `say_token`
+    cookie. Request bodies must be `application/json`.
+
+    Realtime: every event has a per-room `seq`. A client keeps the last
+    `seq` it has seen per room (its cursor) and resumes from it after a
+    reconnect, over the WebSocket (`subscribe` with `after`), SSE
+    (`Last-Event-ID` or `?after=`) or long polling
+    (`GET /rooms/{id}/events?after=…&wait=…`).
 servers:
   - url: /api/v1
+security:
+  - bearer: []
+  - cookie: []
 paths:
   /health:
     get:
       operationId: getHealth
       summary: Liveness and version
+      security: []
       responses:
         "200":
           description: The server is up
@@ -23,7 +37,313 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /me:
+    get:
+      operationId: getMe
+      summary: The principal the token belongs to
+      responses:
+        "200":
+          description: The caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Principal"
+        "401":
+          $ref: "#/components/responses/Error"
+  /rooms:
+    get:
+      operationId: listRooms
+      summary: Rooms the caller is a member of, oldest first
+      responses:
+        "200":
+          description: The rooms
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rooms]
+                properties:
+                  rooms:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Room"
+        "401":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createRoom
+      summary: Create a room owned by the caller
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoom"
+      responses:
+        "201":
+          description: The new room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    get:
+      operationId: getRoom
+      summary: One room
+      responses:
+        "200":
+          description: The room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}/members:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    get:
+      operationId: listMembers
+      summary: Members of a room
+      responses:
+        "200":
+          description: The members
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                properties:
+                  members:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Member"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: addMember
+      summary: Add a principal to a room (owners and admins only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMember"
+      responses:
+        "201":
+          description: The new membership
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Member"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}/events:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    get:
+      operationId: listEvents
+      summary: Page through a room's event log
+      description: |
+        With `after`, reads forward from that cursor; `wait` then holds the
+        request until at least one event arrives or the wait ends (the
+        long-poll fallback). Without `after`, reads the page that ends
+        just before `before`, or the latest page. Events are always in seq
+        order.
+      parameters:
+        - name: after
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: before
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+        - name: wait
+          in: query
+          description: Seconds to wait for new events; only with `after`.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 60
+            default: 0
+      responses:
+        "200":
+          description: A page of events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Event"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}/events/stream:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    get:
+      operationId: streamEvents
+      summary: Server-Sent Events of a room
+      description: |
+        Replays the events after the cursor, then streams new ones. Each
+        SSE message has `event: event`, `id: <seq>` and the Event as JSON
+        in `data`. Idle streams get a `: ping` comment every 25 seconds.
+      parameters:
+        - name: after
+          in: query
+          description: Cursor to start after. Defaults to `Last-Event-ID`, then 0.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: Last-Event-ID
+          in: header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: An event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    post:
+      operationId: sendMessage
+      summary: Send a message to a room
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          description: |
+            A repeated key from the same sender in the same room returns the
+            original event with status 200 instead of sending again.
+          schema:
+            type: string
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessage"
+      responses:
+        "201":
+          description: The new event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "200":
+          description: The event an earlier send with the same key created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /ws:
+    get:
+      operationId: openWebSocket
+      summary: The client and connector WebSocket
+      description: |
+        Frames are envelopes (envelope.schema.json). A request carries a
+        client-chosen `id`, a `type` and a payload; the reply echoes `id`
+        and `type` with `status` `ok` or `error` (payload `WsError`).
+        Request types and payloads:
+
+        - `subscribe`: `WsSubscribe`. Pushes the room's events after
+          `after`, then new ones. Subscribing again restarts from the new
+          cursor.
+        - `unsubscribe`: `WsUnsubscribe`.
+        - `send`: `WsSend`; the reply payload is the `Event`.
+        - `ping`: no payload.
+
+        Events arrive as pushes `{id: <event id>, type: "event", payload:
+        Event}` without a status. A client that falls too far behind is
+        closed with code 1008 and should reconnect and resubscribe from its
+        cursors.
+      responses:
+        "101":
+          description: Switching to the WebSocket protocol
+        "401":
+          $ref: "#/components/responses/Error"
 components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+    cookie:
+      type: apiKey
+      in: cookie
+      name: say_token
+  parameters:
+    RoomID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: An error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
     Health:
       type: object
@@ -34,12 +354,91 @@ components:
           enum: [ok]
         version:
           type: string
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: |
+                Stable machine-readable code: unauthorized, forbidden,
+                not_found, conflict, bad_request, unsupported_media_type,
+                invalid, hop_limit, too_many or internal.
+            message:
+              type: string
     PrincipalKind:
       type: string
       enum: [human, agent, guest, ghost, system]
+    Principal:
+      type: object
+      required: [id, kind, display_name, created_at]
+      properties:
+        id:
+          type: string
+        kind:
+          $ref: "#/components/schemas/PrincipalKind"
+        display_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
     RoomKind:
       type: string
       enum: [dm, group, channel, widget-thread]
+    Room:
+      type: object
+      required: [id, kind, name, created_at]
+      properties:
+        id:
+          type: string
+        kind:
+          $ref: "#/components/schemas/RoomKind"
+        name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateRoom:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [dm, group, channel]
+        name:
+          type: string
+          maxLength: 200
+    Role:
+      type: string
+      enum: [owner, admin, member, observer]
+    Member:
+      type: object
+      required: [principal_id, role, scopes]
+      properties:
+        principal_id:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        scopes:
+          type: array
+          items:
+            type: string
+    AddMember:
+      type: object
+      required: [principal_id]
+      additionalProperties: false
+      properties:
+        principal_id:
+          type: string
+        role:
+          type: string
+          enum: [admin, member, observer]
+          default: member
     Reachability:
       type: string
       enum: [live, offline, unlinked]
@@ -54,3 +453,120 @@ components:
           type: integer
           minimum: 0
           description: Automated hops since the last human event.
+    EventType:
+      type: string
+      enum: [message, edit, reaction, typing, receipt]
+    StreamState:
+      type: string
+      enum: [streaming, final]
+    PartKind:
+      type: string
+      enum: [text, attachment, tool-call, tool-result, card]
+    Part:
+      type: object
+      description: |
+        One typed piece of a message. `data` is a JSON object of at most
+        64 KiB; for `text` it is a `TextPartData`.
+      required: [kind, data]
+      properties:
+        kind:
+          $ref: "#/components/schemas/PartKind"
+        data:
+          type: object
+          additionalProperties: true
+    TextPartData:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+    Event:
+      type: object
+      required: [id, room_id, seq, type, sender_id, causation, parts, created_at]
+      properties:
+        id:
+          type: string
+        room_id:
+          type: string
+        seq:
+          type: integer
+          format: int64
+          description: Position in the room's log; the cursor to resume from.
+        type:
+          $ref: "#/components/schemas/EventType"
+        sender_id:
+          type: string
+        causation:
+          $ref: "#/components/schemas/Causation"
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Part"
+        stream:
+          $ref: "#/components/schemas/StreamState"
+        created_at:
+          type: string
+          format: date-time
+    SendMessage:
+      type: object
+      required: [parts]
+      additionalProperties: false
+      properties:
+        parts:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/Part"
+        caused_by:
+          type: string
+          description: |
+            The event in this room this message replies to. Automated
+            senders must set it; a reply that would pass the hop limit is
+            rejected with code hop_limit.
+    WsSubscribe:
+      type: object
+      required: [room_id]
+      properties:
+        room_id:
+          type: string
+        after:
+          type: integer
+          format: int64
+          minimum: 0
+          default: 0
+    WsUnsubscribe:
+      type: object
+      required: [room_id]
+      properties:
+        room_id:
+          type: string
+    WsSend:
+      type: object
+      required: [room_id, parts]
+      properties:
+        room_id:
+          type: string
+        idempotency_key:
+          type: string
+          maxLength: 200
+        parts:
+          type: array
+          minItems: 1
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/Part"
+        caused_by:
+          type: string
+    WsError:
+      type: object
+      required: [code, message, status]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        status:
+          type: integer
+          description: The HTTP status the same error would have.
