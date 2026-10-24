@@ -30,9 +30,19 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
+	return newEnvWith(t, nil)
+}
+
+// newEnvWith is newEnv with the server's store wrapped by wrap, so a test
+// can slow or watch store calls.
+func newEnvWith(t *testing.T, wrap func(store.Store) store.Store) *env {
+	t.Helper()
 	st, err := store.OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "say.db"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if wrap != nil {
+		st = wrap(st)
 	}
 	b := bus.NewInProc()
 	s := New(Config{Version: "test", Store: st, Bus: b, Agents: core.AgentPolicy{MaxHops: 2}})
