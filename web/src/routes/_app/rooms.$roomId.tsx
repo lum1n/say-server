@@ -8,10 +8,12 @@ import {
   getRoom,
   listEvents,
   listMembers,
+  type Member,
   type Principal,
   type Room,
   SayError,
   sendMessage,
+  updateMember,
   updateRoom,
 } from "@say/sdk";
 import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -346,6 +348,21 @@ function Members({ roomId, room }: { roomId: string; room?: Room }) {
       queryClient.invalidateQueries({ queryKey: keys.members(roomId) });
     },
   });
+  // While a responder change is on its way, the box shows where it is going.
+  const [changing, setChanging] = useState<Record<string, boolean>>({});
+  const respond = useMutation({
+    mutationFn: ({ id, responder }: { id: string; responder: boolean }) => updateMember(roomId, id, { responder }),
+    onMutate: ({ id, responder }) => setChanging((c) => ({ ...c, [id]: responder })),
+    onSuccess: (m) =>
+      queryClient.setQueryData<Member[]>(keys.members(roomId), (list) =>
+        list?.map((x) => (x.principal_id === m.principal_id ? m : x)),
+      ),
+    onSettled: (_m, _err, { id }) =>
+      setChanging((c) => {
+        const { [id]: _, ...rest } = c;
+        return rest;
+      }),
+  });
 
   const list = members.data ?? [];
   const mine = list.find((m) => m.principal_id === me.data?.id);
@@ -364,15 +381,35 @@ function Members({ roomId, room }: { roomId: string; room?: Room }) {
       <ul>
         {list.map((m) => {
           const p = dir.byId.get(m.principal_id);
+          const responder = changing[m.principal_id] ?? m.scopes.includes("responder");
           return (
             <li key={m.principal_id}>
               {p?.display_name ?? "…"}
               {p?.kind === "agent" && <span className="badge">agent</span>}
               {m.role !== "member" && <span className="muted"> {m.role}</span>}
+              {p?.kind === "agent" &&
+                (canEditAgents ? (
+                  <label className="responder" title="A built-in agent answers every message here, not only @mentions">
+                    <input
+                      type="checkbox"
+                      checked={responder}
+                      disabled={m.principal_id in changing}
+                      onChange={(e) => {
+                        const responder = e.target.checked;
+                        setChanging((c) => ({ ...c, [m.principal_id]: responder }));
+                        respond.mutate({ id: m.principal_id, responder });
+                      }}
+                    />
+                    answers everything
+                  </label>
+                ) : (
+                  responder && <span className="muted"> answers everything</span>
+                ))}
             </li>
           );
         })}
       </ul>
+      <FormError error={respond.error} />
       {canAdd && candidates.length > 0 && (
         <form onSubmit={submit}>
           <select aria-label="Add a member" value={pick} onChange={(e) => setPick(e.target.value)} required>

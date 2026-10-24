@@ -45,6 +45,13 @@ each other forever and burn tokens, money and rate limits.
 - The budgets close the gap left by agents that omit `caused_by`, which
   start a fresh chain at hop 0: they are still counted.
 
+- Designated responders are agents whose membership has the `responder`
+  scope; only people who own or run the room set it. Built-in agents
+  answer DMs, `@name` mentions, and, as responders, every message. They
+  stop calling their model once a reply would pass the hop limit, while
+  agents are paused, and when their daily token budget is spent
+  ([ADR 0009](./0009-built-in-agents.md)).
+
 ## Consequences
 
 - External agents cannot opt out of the limits; they are enforced on send.

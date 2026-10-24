@@ -117,3 +117,62 @@ ON CONFLICT (username) DO NOTHING;
 
 -- name: LoginByUsername :one
 SELECT * FROM logins WHERE username = $1;
+
+-- name: SetMemberScopes :execrows
+UPDATE memberships SET scopes = $3 WHERE room_id = $1 AND principal_id = $2;
+
+-- name: CreateBuiltinAgent :exec
+INSERT INTO builtin_agents (principal_id, provider, base_url, model, api_key,
+                            system_prompt, max_tokens, daily_token_budget,
+                            enabled, updated_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
+
+-- name: UpdateBuiltinAgent :execrows
+UPDATE builtin_agents
+SET provider = $2, base_url = $3, model = $4, api_key = $5, system_prompt = $6,
+    max_tokens = $7, daily_token_budget = $8, enabled = $9, updated_at = $10
+WHERE principal_id = $1;
+
+-- name: GetBuiltinAgent :one
+SELECT * FROM builtin_agents WHERE principal_id = $1;
+
+-- name: ListBuiltinAgents :many
+SELECT * FROM builtin_agents ORDER BY created_at, principal_id;
+
+-- name: SetBuiltinAgentError :exec
+UPDATE builtin_agents SET last_error = $2, last_error_at = $3
+WHERE principal_id = $1;
+
+-- name: AddAgentUsage :exec
+INSERT INTO agent_usage (principal_id, day, input_tokens, output_tokens)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (principal_id, day) DO UPDATE
+SET input_tokens = agent_usage.input_tokens + excluded.input_tokens,
+    output_tokens = agent_usage.output_tokens + excluded.output_tokens;
+
+-- name: AgentUsage :one
+SELECT input_tokens, output_tokens FROM agent_usage
+WHERE principal_id = $1 AND day = $2;
+
+-- name: AgentCursor :one
+SELECT seq FROM agent_cursors WHERE principal_id = $1 AND room_id = $2;
+
+-- name: SetAgentCursor :exec
+INSERT INTO agent_cursors (principal_id, room_id, seq) VALUES ($1, $2, $3)
+ON CONFLICT (principal_id, room_id) DO UPDATE SET seq = excluded.seq;
+
+-- Takes the lease for holder when it is free, expired or already holder's,
+-- and returns its generation; no row means someone else holds it.
+-- name: AcquireLease :one
+INSERT INTO leases (name, holder, generation, expires_at)
+VALUES ($1, $2, 1, $3)
+ON CONFLICT (name) DO UPDATE
+SET holder = excluded.holder,
+    generation = CASE WHEN leases.holder = excluded.holder
+                      THEN leases.generation ELSE leases.generation + 1 END,
+    expires_at = excluded.expires_at
+WHERE leases.holder = excluded.holder OR leases.expires_at < $4
+RETURNING generation;
+
+-- name: ReleaseLease :exec
+DELETE FROM leases WHERE name = $1 AND holder = $2;

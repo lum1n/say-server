@@ -34,8 +34,8 @@ var builtinAgentPolicy = core.AgentPolicy{
 	RateLimit:  DefaultRateLimit,
 }
 
-// agentPolicy is the policy that applies in room.
-func (s *Server) agentPolicy(room core.Room) core.AgentPolicy {
+// AgentPolicy is the policy that applies in room.
+func (s *Server) AgentPolicy(room core.Room) core.AgentPolicy {
 	return withDefaults(room.Agents, s.defaults)
 }
 

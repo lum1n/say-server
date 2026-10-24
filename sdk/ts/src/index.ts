@@ -22,6 +22,11 @@ export type Part = Schemas["Part"];
 export type SendMessage = Schemas["SendMessage"];
 export type CreateRoom = Schemas["CreateRoom"];
 export type AddMember = Schemas["AddMember"];
+export type UpdateMember = Schemas["UpdateMember"];
+export type LLMProvider = Schemas["LLMProvider"];
+export type BuiltinAgent = Schemas["BuiltinAgent"];
+export type BuiltinAgentSettings = Schemas["BuiltinAgentSettings"];
+export type CreateBuiltinAgent = Schemas["CreateBuiltinAgent"];
 export type ApiError = Schemas["Error"];
 export type WsSubscribe = Schemas["WsSubscribe"];
 export type WsUnsubscribe = Schemas["WsUnsubscribe"];
@@ -133,6 +138,44 @@ export async function listMembers(id: string, client = defaultClient): Promise<M
 
 export async function addMember(id: string, body: AddMember, client = defaultClient): Promise<Member> {
   const { data, error, response } = await client.POST("/rooms/{id}/members", { params: { path: { id } }, body });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/** updateMember makes an agent a designated responder in a room, or stops it being one. */
+export async function updateMember(
+  id: string,
+  principalId: string,
+  body: UpdateMember,
+  client = defaultClient,
+): Promise<Member> {
+  const { data, error, response } = await client.PATCH("/rooms/{id}/members/{principal_id}", {
+    params: { path: { id, principal_id: principalId } },
+    body,
+  });
+  if (!data) fail(response, error);
+  return data;
+}
+
+export async function listBuiltinAgents(client = defaultClient): Promise<BuiltinAgent[]> {
+  const { data, error, response } = await client.GET("/builtin-agents");
+  if (!data) fail(response, error);
+  return data.agents;
+}
+
+export async function createBuiltinAgent(body: CreateBuiltinAgent, client = defaultClient): Promise<BuiltinAgent> {
+  const { data, error, response } = await client.POST("/builtin-agents", { body });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/** updateBuiltinAgent changes the fields given; an absent api_key keeps the stored one. */
+export async function updateBuiltinAgent(
+  id: string,
+  body: BuiltinAgentSettings,
+  client = defaultClient,
+): Promise<BuiltinAgent> {
+  const { data, error, response } = await client.PATCH("/builtin-agents/{id}", { params: { path: { id } }, body });
   if (!data) fail(response, error);
   return data;
 }

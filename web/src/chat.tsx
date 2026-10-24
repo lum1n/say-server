@@ -7,6 +7,7 @@ export const keys = {
   me: ["me"] as const,
   rooms: ["rooms"] as const,
   principals: ["principals"] as const,
+  builtinAgents: ["builtin-agents"] as const,
   room: (id: string) => ["room", id] as const,
   members: (id: string) => ["members", id] as const,
   events: (id: string) => ["events", id] as const,

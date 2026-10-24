@@ -191,6 +191,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rooms/{id}/members/{principal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                principal_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Make an agent a designated responder, or stop it being one
+         * @description A built-in agent that is a responder answers every message in the
+         *     room, not only those that mention it. Only people who own or
+         *     administer the room, or instance admins in it, may change it.
+         */
+        patch: operations["updateMember"];
+        trace?: never;
+    };
     "/rooms/{id}/events": {
         parameters: {
             query?: never;
@@ -296,6 +321,53 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/builtin-agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Built-in agents (instance admins only)
+         * @description Agents the server runs itself by calling a model provider. API
+         *     keys are never returned.
+         */
+        get: operations["listBuiltinAgents"];
+        put?: never;
+        /**
+         * Add a built-in agent (instance admins only)
+         * @description Creates an agent principal that the server runs. Add it to rooms
+         *     like any other principal; it answers DMs, mentions, and every
+         *     message in rooms where it is a responder.
+         */
+        post: operations["createBuiltinAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/builtin-agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The agent's principal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change a built-in agent (instance admins only) */
+        patch: operations["updateBuiltinAgent"];
         trace?: never;
     };
 }
@@ -411,6 +483,7 @@ export interface components {
         Member: {
             principal_id: string;
             role: components["schemas"]["Role"];
+            /** @description responder marks an agent that answers every message in the room. */
             scopes: string[];
         };
         AddMember: {
@@ -420,6 +493,59 @@ export interface components {
              * @enum {string}
              */
             role: "admin" | "member" | "observer";
+        };
+        UpdateMember: {
+            /** @description Only agents can be responders. */
+            responder?: boolean;
+        };
+        /**
+         * @description openai also covers any OpenAI-compatible endpoint, such as Ollama.
+         * @enum {string}
+         */
+        LLMProvider: "anthropic" | "openai";
+        /** @description Absent fields stay as they are. */
+        BuiltinAgentSettings: {
+            provider?: components["schemas"]["LLMProvider"];
+            /** @description An OpenAI-compatible endpoint, e.g. http://localhost:11434/v1. Empty is the provider's own API. */
+            base_url?: string;
+            /** @description Empty picks the provider's default model. */
+            model?: string;
+            /** @description Write-only. Empty uses the server's ANTHROPIC_API_KEY or OPENAI_API_KEY. */
+            api_key?: string;
+            /** @description Added to the instructions the server gives every built-in agent. */
+            system_prompt?: string;
+            /** @description The longest reply, in tokens. 0 is the default, 1024. */
+            max_tokens?: number;
+            /**
+             * Format: int64
+             * @description Input plus output tokens per UTC day; 0 is no limit.
+             */
+            daily_token_budget?: number;
+            enabled?: boolean;
+        };
+        CreateBuiltinAgent: components["schemas"]["BuiltinAgentSettings"] & {
+            display_name: string;
+        };
+        BuiltinAgent: {
+            principal: components["schemas"]["Principal"];
+            provider: components["schemas"]["LLMProvider"];
+            base_url: string;
+            model: string;
+            has_api_key: boolean;
+            system_prompt: string;
+            max_tokens: number;
+            /** Format: int64 */
+            daily_token_budget: number;
+            /**
+             * Format: int64
+             * @description Tokens used so far today (UTC).
+             */
+            tokens_today: number;
+            enabled: boolean;
+            /** @description Why the agent last failed to reply, until it next succeeds. */
+            last_error?: string;
+            /** Format: date-time */
+            last_error_at?: string;
         };
         /** @enum {string} */
         Reachability: "live" | "offline" | "unlinked";
@@ -869,6 +995,38 @@ export interface operations {
             422: components["responses"]["Error"];
         };
     };
+    updateMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                principal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMember"];
+            };
+        };
+        responses: {
+            /** @description The membership */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
     listEvents: {
         parameters: {
             query?: {
@@ -1017,6 +1175,90 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Error"];
+        };
+    };
+    listBuiltinAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The built-in agents, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agents: components["schemas"]["BuiltinAgent"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createBuiltinAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBuiltinAgent"];
+            };
+        };
+        responses: {
+            /** @description The new agent */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuiltinAgent"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    updateBuiltinAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The agent's principal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BuiltinAgentSettings"];
+            };
+        };
+        responses: {
+            /** @description The agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuiltinAgent"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
 }

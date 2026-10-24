@@ -9,6 +9,64 @@ import (
 	"context"
 )
 
+const acquireLease = `-- name: AcquireLease :one
+INSERT INTO leases (name, holder, generation, expires_at)
+VALUES ($1, $2, 1, $3)
+ON CONFLICT (name) DO UPDATE
+SET holder = excluded.holder,
+    generation = CASE WHEN leases.holder = excluded.holder
+                      THEN leases.generation ELSE leases.generation + 1 END,
+    expires_at = excluded.expires_at
+WHERE leases.holder = excluded.holder OR leases.expires_at < $4
+RETURNING generation
+`
+
+type AcquireLeaseParams struct {
+	Name        string
+	Holder      string
+	ExpiresAt   int64
+	ExpiresAt_2 int64
+}
+
+// Takes the lease for holder when it is free, expired or already holder's,
+// and returns its generation; no row means someone else holds it.
+func (q *Queries) AcquireLease(ctx context.Context, arg AcquireLeaseParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, acquireLease,
+		arg.Name,
+		arg.Holder,
+		arg.ExpiresAt,
+		arg.ExpiresAt_2,
+	)
+	var generation int64
+	err := row.Scan(&generation)
+	return generation, err
+}
+
+const addAgentUsage = `-- name: AddAgentUsage :exec
+INSERT INTO agent_usage (principal_id, day, input_tokens, output_tokens)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (principal_id, day) DO UPDATE
+SET input_tokens = agent_usage.input_tokens + excluded.input_tokens,
+    output_tokens = agent_usage.output_tokens + excluded.output_tokens
+`
+
+type AddAgentUsageParams struct {
+	PrincipalID  string
+	Day          string
+	InputTokens  int64
+	OutputTokens int64
+}
+
+func (q *Queries) AddAgentUsage(ctx context.Context, arg AddAgentUsageParams) error {
+	_, err := q.db.ExecContext(ctx, addAgentUsage,
+		arg.PrincipalID,
+		arg.Day,
+		arg.InputTokens,
+		arg.OutputTokens,
+	)
+	return err
+}
+
 const addMember = `-- name: AddMember :exec
 INSERT INTO memberships (room_id, principal_id, role, scopes)
 VALUES ($1, $2, $3, $4)
@@ -29,6 +87,44 @@ func (q *Queries) AddMember(ctx context.Context, arg AddMemberParams) error {
 		arg.Scopes,
 	)
 	return err
+}
+
+const agentCursor = `-- name: AgentCursor :one
+SELECT seq FROM agent_cursors WHERE principal_id = $1 AND room_id = $2
+`
+
+type AgentCursorParams struct {
+	PrincipalID string
+	RoomID      string
+}
+
+func (q *Queries) AgentCursor(ctx context.Context, arg AgentCursorParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, agentCursor, arg.PrincipalID, arg.RoomID)
+	var seq int64
+	err := row.Scan(&seq)
+	return seq, err
+}
+
+const agentUsage = `-- name: AgentUsage :one
+SELECT input_tokens, output_tokens FROM agent_usage
+WHERE principal_id = $1 AND day = $2
+`
+
+type AgentUsageParams struct {
+	PrincipalID string
+	Day         string
+}
+
+type AgentUsageRow struct {
+	InputTokens  int64
+	OutputTokens int64
+}
+
+func (q *Queries) AgentUsage(ctx context.Context, arg AgentUsageParams) (AgentUsageRow, error) {
+	row := q.db.QueryRowContext(ctx, agentUsage, arg.PrincipalID, arg.Day)
+	var i AgentUsageRow
+	err := row.Scan(&i.InputTokens, &i.OutputTokens)
+	return i, err
 }
 
 const automatedAt = `-- name: AutomatedAt :one
@@ -94,6 +190,44 @@ func (q *Queries) ClaimSetup(ctx context.Context, value string) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const createBuiltinAgent = `-- name: CreateBuiltinAgent :exec
+INSERT INTO builtin_agents (principal_id, provider, base_url, model, api_key,
+                            system_prompt, max_tokens, daily_token_budget,
+                            enabled, updated_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+`
+
+type CreateBuiltinAgentParams struct {
+	PrincipalID      string
+	Provider         string
+	BaseUrl          string
+	Model            string
+	ApiKey           string
+	SystemPrompt     string
+	MaxTokens        int32
+	DailyTokenBudget int64
+	Enabled          int32
+	UpdatedAt        int64
+	CreatedAt        int64
+}
+
+func (q *Queries) CreateBuiltinAgent(ctx context.Context, arg CreateBuiltinAgentParams) error {
+	_, err := q.db.ExecContext(ctx, createBuiltinAgent,
+		arg.PrincipalID,
+		arg.Provider,
+		arg.BaseUrl,
+		arg.Model,
+		arg.ApiKey,
+		arg.SystemPrompt,
+		arg.MaxTokens,
+		arg.DailyTokenBudget,
+		arg.Enabled,
+		arg.UpdatedAt,
+		arg.CreatedAt,
+	)
+	return err
 }
 
 const createLogin = `-- name: CreateLogin :execrows
@@ -343,6 +477,31 @@ func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]E
 	return items, nil
 }
 
+const getBuiltinAgent = `-- name: GetBuiltinAgent :one
+SELECT principal_id, provider, base_url, model, api_key, system_prompt, max_tokens, daily_token_budget, enabled, last_error, last_error_at, updated_at, created_at FROM builtin_agents WHERE principal_id = $1
+`
+
+func (q *Queries) GetBuiltinAgent(ctx context.Context, principalID string) (BuiltinAgent, error) {
+	row := q.db.QueryRowContext(ctx, getBuiltinAgent, principalID)
+	var i BuiltinAgent
+	err := row.Scan(
+		&i.PrincipalID,
+		&i.Provider,
+		&i.BaseUrl,
+		&i.Model,
+		&i.ApiKey,
+		&i.SystemPrompt,
+		&i.MaxTokens,
+		&i.DailyTokenBudget,
+		&i.Enabled,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.UpdatedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getEvent = `-- name: GetEvent :one
 SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated FROM events WHERE id = $1
 `
@@ -488,6 +647,47 @@ func (q *Queries) InsertOutbox(ctx context.Context, arg InsertOutboxParams) erro
 	return err
 }
 
+const listBuiltinAgents = `-- name: ListBuiltinAgents :many
+SELECT principal_id, provider, base_url, model, api_key, system_prompt, max_tokens, daily_token_budget, enabled, last_error, last_error_at, updated_at, created_at FROM builtin_agents ORDER BY created_at, principal_id
+`
+
+func (q *Queries) ListBuiltinAgents(ctx context.Context) ([]BuiltinAgent, error) {
+	rows, err := q.db.QueryContext(ctx, listBuiltinAgents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BuiltinAgent
+	for rows.Next() {
+		var i BuiltinAgent
+		if err := rows.Scan(
+			&i.PrincipalID,
+			&i.Provider,
+			&i.BaseUrl,
+			&i.Model,
+			&i.ApiKey,
+			&i.SystemPrompt,
+			&i.MaxTokens,
+			&i.DailyTokenBudget,
+			&i.Enabled,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.UpdatedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPrincipals = `-- name: ListPrincipals :many
 SELECT id, kind, display_name, created_at, admin FROM principals ORDER BY created_at, id
 `
@@ -624,6 +824,20 @@ func (q *Queries) PrincipalByToken(ctx context.Context, arg PrincipalByTokenPara
 	return i, err
 }
 
+const releaseLease = `-- name: ReleaseLease :exec
+DELETE FROM leases WHERE name = $1 AND holder = $2
+`
+
+type ReleaseLeaseParams struct {
+	Name   string
+	Holder string
+}
+
+func (q *Queries) ReleaseLease(ctx context.Context, arg ReleaseLeaseParams) error {
+	_, err := q.db.ExecContext(ctx, releaseLease, arg.Name, arg.Holder)
+	return err
+}
+
 const roomsFor = `-- name: RoomsFor :many
 SELECT r.id, r.kind, r.name, r.last_seq, r.created_at, r.agents_paused, r.max_hop_count, r.agent_turn_limit, r.agent_turn_window, r.agent_rate_limit
 FROM rooms r JOIN memberships m ON m.room_id = r.id
@@ -665,6 +879,22 @@ func (q *Queries) RoomsFor(ctx context.Context, principalID string) ([]Room, err
 	return items, nil
 }
 
+const setAgentCursor = `-- name: SetAgentCursor :exec
+INSERT INTO agent_cursors (principal_id, room_id, seq) VALUES ($1, $2, $3)
+ON CONFLICT (principal_id, room_id) DO UPDATE SET seq = excluded.seq
+`
+
+type SetAgentCursorParams struct {
+	PrincipalID string
+	RoomID      string
+	Seq         int64
+}
+
+func (q *Queries) SetAgentCursor(ctx context.Context, arg SetAgentCursorParams) error {
+	_, err := q.db.ExecContext(ctx, setAgentCursor, arg.PrincipalID, arg.RoomID, arg.Seq)
+	return err
+}
+
 const setAgentPolicy = `-- name: SetAgentPolicy :execrows
 UPDATE rooms
 SET agents_paused = $2, max_hop_count = $3, agent_turn_limit = $4,
@@ -696,6 +926,40 @@ func (q *Queries) SetAgentPolicy(ctx context.Context, arg SetAgentPolicyParams) 
 	return result.RowsAffected()
 }
 
+const setBuiltinAgentError = `-- name: SetBuiltinAgentError :exec
+UPDATE builtin_agents SET last_error = $2, last_error_at = $3
+WHERE principal_id = $1
+`
+
+type SetBuiltinAgentErrorParams struct {
+	PrincipalID string
+	LastError   string
+	LastErrorAt int64
+}
+
+func (q *Queries) SetBuiltinAgentError(ctx context.Context, arg SetBuiltinAgentErrorParams) error {
+	_, err := q.db.ExecContext(ctx, setBuiltinAgentError, arg.PrincipalID, arg.LastError, arg.LastErrorAt)
+	return err
+}
+
+const setMemberScopes = `-- name: SetMemberScopes :execrows
+UPDATE memberships SET scopes = $3 WHERE room_id = $1 AND principal_id = $2
+`
+
+type SetMemberScopesParams struct {
+	RoomID      string
+	PrincipalID string
+	Scopes      string
+}
+
+func (q *Queries) SetMemberScopes(ctx context.Context, arg SetMemberScopesParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setMemberScopes, arg.RoomID, arg.PrincipalID, arg.Scopes)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const setupDone = `-- name: SetupDone :one
 SELECT count(*) FROM instance WHERE key = 'setup'
 `
@@ -705,4 +969,43 @@ func (q *Queries) SetupDone(ctx context.Context) (int64, error) {
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const updateBuiltinAgent = `-- name: UpdateBuiltinAgent :execrows
+UPDATE builtin_agents
+SET provider = $2, base_url = $3, model = $4, api_key = $5, system_prompt = $6,
+    max_tokens = $7, daily_token_budget = $8, enabled = $9, updated_at = $10
+WHERE principal_id = $1
+`
+
+type UpdateBuiltinAgentParams struct {
+	PrincipalID      string
+	Provider         string
+	BaseUrl          string
+	Model            string
+	ApiKey           string
+	SystemPrompt     string
+	MaxTokens        int32
+	DailyTokenBudget int64
+	Enabled          int32
+	UpdatedAt        int64
+}
+
+func (q *Queries) UpdateBuiltinAgent(ctx context.Context, arg UpdateBuiltinAgentParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateBuiltinAgent,
+		arg.PrincipalID,
+		arg.Provider,
+		arg.BaseUrl,
+		arg.Model,
+		arg.ApiKey,
+		arg.SystemPrompt,
+		arg.MaxTokens,
+		arg.DailyTokenBudget,
+		arg.Enabled,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

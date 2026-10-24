@@ -46,7 +46,7 @@ type wireAgentPolicy struct {
 }
 
 func (s *Server) toRoom(r core.Room) wireRoom {
-	p := s.agentPolicy(r)
+	p := s.AgentPolicy(r)
 	return wireRoom{
 		ID:   r.ID,
 		Kind: r.Kind,

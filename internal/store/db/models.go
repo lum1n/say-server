@@ -4,6 +4,35 @@
 
 package db
 
+type AgentCursor struct {
+	PrincipalID string
+	RoomID      string
+	Seq         int64
+}
+
+type AgentUsage struct {
+	PrincipalID  string
+	Day          string
+	InputTokens  int64
+	OutputTokens int64
+}
+
+type BuiltinAgent struct {
+	PrincipalID      string
+	Provider         string
+	BaseUrl          string
+	Model            string
+	ApiKey           string
+	SystemPrompt     string
+	MaxTokens        int32
+	DailyTokenBudget int64
+	Enabled          int32
+	LastError        string
+	LastErrorAt      int64
+	UpdatedAt        int64
+	CreatedAt        int64
+}
+
 type Event struct {
 	ID             string
 	RoomID         string
@@ -22,6 +51,13 @@ type Event struct {
 type Instance struct {
 	Key   string
 	Value string
+}
+
+type Lease struct {
+	Name       string
+	Holder     string
+	Generation int64
+	ExpiresAt  int64
 }
 
 type Login struct {

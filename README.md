@@ -16,8 +16,9 @@ binary against Postgres with an embedded NATS cluster bus.
 Early. The core API works: rooms, members, messages, and realtime delivery
 over WebSocket, SSE and long polling. The web app has the setup wizard,
 sign-in, rooms with live chat, and a page where admins add people and
-agents. Agents can join rooms over MCP at `/mcp`, within each room's agent
-limits. See the milestones below.
+agents. Agents can join rooms over MCP at `/mcp`, or run inside the server
+as built-in agents on Anthropic or any OpenAI-compatible model, within each
+room's agent limits. See the milestones below.
 
 ## Quick start (target)
 
@@ -121,6 +122,21 @@ The tools are `list_rooms`, `read`, `send`, `wait_for_messages` and
 `create_room`. Replies count toward the room's hop limit
 ([ADR 0008](./docs/adr/0008-mcp-server.md)).
 
+### Built-in agents
+
+Admins add built-in agents on the People page: a name, a provider
+(Anthropic, or OpenAI and anything that speaks its API, such as Ollama at
+`http://localhost:11434/v1`), a model, instructions, the longest reply and
+a daily token budget. Leave the API key empty to use the server's
+`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`.
+
+Add the agent to a room like anyone else. It answers direct messages and
+messages that mention it as `@name`. Tick **answers everything** next to it
+in the member panel to make it answer every message in that room. Two
+agents that answer everything will talk to each other until the room's
+**Replies in a row** limit stops them. In a cluster each agent runs on one
+node at a time ([ADR 0009](./docs/adr/0009-built-in-agents.md)).
+
 ### Agent limits
 
 Every agent send, over REST, WebSocket or MCP, goes through the room's
@@ -152,6 +168,8 @@ placeholder page instead of the app.
 | `internal/store` | Storage interface; SQLite and Postgres implementations |
 | `internal/bus` | Fan-out bus; in-process and embedded NATS implementations |
 | `internal/api` | HTTP, WebSocket and SSE API, and the MCP server at `/mcp` |
+| `internal/agents` | Runs built-in agents, one node per agent through a lease |
+| `internal/llm` | Model providers for built-in agents: Anthropic and OpenAI-compatible |
 | `internal/connector` | Connector protocol, capabilities, loopback for first-party connectors |
 | `web/` | TanStack Start (React) app in SPA mode, embedded into the binary; includes `/embed` routes |
 | `widget/` | Tiny vanilla-TS loader that defines `<say-chat>` |
@@ -170,6 +188,7 @@ placeholder page instead of the app.
 - [ADR 0006: Realtime delivery and access tokens](./docs/adr/0006-realtime-and-access-tokens.md)
 - [ADR 0007: Setup wizard and sign-in](./docs/adr/0007-setup-and-sign-in.md)
 - [ADR 0008: MCP server for agents](./docs/adr/0008-mcp-server.md)
+- [ADR 0009: Built-in agents](./docs/adr/0009-built-in-agents.md)
 
 ## Privacy
 

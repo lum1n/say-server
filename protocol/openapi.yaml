@@ -319,6 +319,44 @@ paths:
           $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/Error"
+  /rooms/{id}/members/{principal_id}:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+      - name: principal_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: updateMember
+      summary: Make an agent a designated responder, or stop it being one
+      description: |
+        A built-in agent that is a responder answers every message in the
+        room, not only those that mention it. Only people who own or
+        administer the room, or instance admins in it, may change it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMember"
+      responses:
+        "200":
+          description: The membership
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Member"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
   /rooms/{id}/events:
     parameters:
       - $ref: "#/components/parameters/RoomID"
@@ -502,6 +540,92 @@ paths:
         "101":
           description: Switching to the WebSocket protocol
         "401":
+          $ref: "#/components/responses/Error"
+  /builtin-agents:
+    get:
+      operationId: listBuiltinAgents
+      summary: Built-in agents (instance admins only)
+      description: |
+        Agents the server runs itself by calling a model provider. API
+        keys are never returned.
+      responses:
+        "200":
+          description: The built-in agents, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agents]
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BuiltinAgent"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createBuiltinAgent
+      summary: Add a built-in agent (instance admins only)
+      description: |
+        Creates an agent principal that the server runs. Add it to rooms
+        like any other principal; it answers DMs, mentions, and every
+        message in rooms where it is a responder.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBuiltinAgent"
+      responses:
+        "201":
+          description: The new agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuiltinAgent"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /builtin-agents/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The agent's principal id
+        schema:
+          type: string
+    patch:
+      operationId: updateBuiltinAgent
+      summary: Change a built-in agent (instance admins only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuiltinAgentSettings"
+      responses:
+        "200":
+          description: The agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuiltinAgent"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
           $ref: "#/components/responses/Error"
 components:
   securitySchemes:
@@ -728,6 +852,7 @@ components:
           $ref: "#/components/schemas/Role"
         scopes:
           type: array
+          description: responder marks an agent that answers every message in the room.
           items:
             type: string
     AddMember:
@@ -741,6 +866,94 @@ components:
           type: string
           enum: [admin, member, observer]
           default: member
+    UpdateMember:
+      type: object
+      additionalProperties: false
+      properties:
+        responder:
+          type: boolean
+          description: Only agents can be responders.
+    LLMProvider:
+      type: string
+      description: openai also covers any OpenAI-compatible endpoint, such as Ollama.
+      enum: [anthropic, openai]
+    BuiltinAgentSettings:
+      type: object
+      description: Absent fields stay as they are.
+      additionalProperties: false
+      properties:
+        provider:
+          $ref: "#/components/schemas/LLMProvider"
+        base_url:
+          type: string
+          description: An OpenAI-compatible endpoint, e.g. http://localhost:11434/v1. Empty is the provider's own API.
+          maxLength: 2000
+        model:
+          type: string
+          description: Empty picks the provider's default model.
+          maxLength: 2000
+        api_key:
+          type: string
+          description: Write-only. Empty uses the server's ANTHROPIC_API_KEY or OPENAI_API_KEY.
+          maxLength: 2000
+        system_prompt:
+          type: string
+          description: Added to the instructions the server gives every built-in agent.
+          maxLength: 20000
+        max_tokens:
+          type: integer
+          description: The longest reply, in tokens. 0 is the default, 1024.
+          minimum: 0
+          maximum: 64000
+        daily_token_budget:
+          type: integer
+          format: int64
+          description: Input plus output tokens per UTC day; 0 is no limit.
+          minimum: 0
+        enabled:
+          type: boolean
+    CreateBuiltinAgent:
+      allOf:
+        - $ref: "#/components/schemas/BuiltinAgentSettings"
+        - type: object
+          required: [display_name, provider]
+          properties:
+            display_name:
+              type: string
+              maxLength: 100
+    BuiltinAgent:
+      type: object
+      required: [principal, provider, base_url, model, has_api_key, system_prompt, max_tokens, daily_token_budget, tokens_today, enabled]
+      properties:
+        principal:
+          $ref: "#/components/schemas/Principal"
+        provider:
+          $ref: "#/components/schemas/LLMProvider"
+        base_url:
+          type: string
+        model:
+          type: string
+        has_api_key:
+          type: boolean
+        system_prompt:
+          type: string
+        max_tokens:
+          type: integer
+        daily_token_budget:
+          type: integer
+          format: int64
+        tokens_today:
+          type: integer
+          format: int64
+          description: Tokens used so far today (UTC).
+        enabled:
+          type: boolean
+        last_error:
+          type: string
+          description: Why the agent last failed to reply, until it next succeeds.
+        last_error_at:
+          type: string
+          format: date-time
     Reachability:
       type: string
       enum: [live, offline, unlinked]

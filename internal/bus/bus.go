@@ -16,3 +16,14 @@ type Bus interface {
 	Subscribe(subject string, h Handler) (unsubscribe func(), err error)
 	Close() error
 }
+
+// RoomSubject is where a room announces new events.
+func RoomSubject(roomID string) string { return "room." + roomID }
+
+// RoomsSubject is where a principal hears that its set of rooms, or a
+// room's settings, changed.
+func RoomsSubject(principalID string) string { return "principal." + principalID + ".rooms" }
+
+// BuiltinAgentsSubject announces that a built-in agent was created or
+// changed.
+const BuiltinAgentsSubject = "builtin_agents"

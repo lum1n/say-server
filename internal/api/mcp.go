@@ -110,7 +110,7 @@ type mcpRoom struct {
 }
 
 func (s *Server) mcpRoom(r core.Room) mcpRoom {
-	p := s.agentPolicy(r)
+	p := s.AgentPolicy(r)
 	return mcpRoom{ID: r.ID, Kind: r.Kind, Name: r.Name, AgentsPaused: p.Paused, MaxHopCount: p.MaxHops}
 }
 
@@ -301,23 +301,13 @@ func (s *Server) mcpMessages(ctx context.Context, events []core.Event) ([]mcpMes
 			}
 			names[e.SenderID] = p
 		}
-		var text []string
-		for _, part := range e.Parts {
-			if part.Kind != core.PartText {
-				text = append(text, "["+string(part.Kind)+"]")
-				continue
-			}
-			var d struct{ Text string }
-			json.Unmarshal(part.Data, &d)
-			text = append(text, d.Text)
-		}
 		out = append(out, mcpMessage{
 			ID:         e.ID,
 			Seq:        e.Seq,
 			SenderID:   e.SenderID,
 			SenderName: p.DisplayName,
 			SenderKind: string(p.Kind),
-			Text:       strings.Join(text, "\n"),
+			Text:       e.Text(),
 			ReplyTo:    e.Causation.CausedBy,
 			HopCount:   e.Causation.HopCount,
 			SentAt:     e.CreatedAt.UTC(),

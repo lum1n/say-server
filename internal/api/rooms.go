@@ -240,7 +240,7 @@ func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg
 	if err != nil {
 		return core.Event{}, false, roomErr(err)
 	}
-	policy := s.agentPolicy(room)
+	policy := s.AgentPolicy(room)
 	automated := me.Kind.Automated()
 	// The switch is read outside the append's transaction, so a send
 	// already under way when someone pauses the room may still land.

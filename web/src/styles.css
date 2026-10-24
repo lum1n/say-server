@@ -309,6 +309,39 @@ a {
   display: none;
 }
 
+.members .responder {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.builtin-agents {
+  margin-top: 32px;
+}
+
+.builtin-agents .directory li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.builtin-agents .agent-settings {
+  margin-top: 12px;
+}
+
+.agent-error {
+  color: crimson;
+  font-size: 13px;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-settings textarea {
+  font: inherit;
+  resize: vertical;
+}
+
 .token code {
   display: block;
   word-break: break-all;

@@ -54,6 +54,15 @@
 : A permission granted to a connector credential, such as `agent` or
   `puppet` (post as ghosts).
 
+**Built-in agent**
+: An agent principal the server runs itself by calling a model provider
+  (Anthropic, or OpenAI-compatible). It answers DMs and `@name` mentions,
+  and every message in rooms where it is a responder.
+
+**Responder**
+: An agent whose membership in a room has the `responder` scope. A
+  built-in agent that is a responder answers every message in the room.
+
 **Bridge**
 : A connector that mirrors rooms to an external network.
 
@@ -69,8 +78,9 @@
   offline connector fails with `409`.
 
 **Lease**
-: A database row that grants one node the right to run a stateful session
-  (such as a Telegram user account), with a generation counter so a stale
+: A database row that grants one node the right to run something stateful,
+  such as a built-in agent or a Telegram user session, until it expires.
+  Its generation counter goes up each time it changes hands, so a stale
   holder can be fenced.
 
 **Outbox**

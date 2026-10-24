@@ -13,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/vegard/say-v2/internal/bus"
 	"github.com/vegard/say-v2/internal/core"
 )
 
@@ -21,20 +22,15 @@ import (
 // replay after a reconnect, catching up after a missed notification and
 // live delivery are one code path, and order is always seq order.
 
-func subject(roomID string) string { return "room." + roomID }
-
-// roomsSubject is where a principal hears that its set of rooms changed.
-func roomsSubject(principalID string) string { return "principal." + principalID + ".rooms" }
-
 // notify announces new events in room. A failure only delays delivery
 // until the next notification or resync, so it is logged, not returned.
 func (s *Server) notify(ctx context.Context, roomID string) {
-	s.publish(ctx, subject(roomID))
+	s.publish(ctx, bus.RoomSubject(roomID))
 }
 
 // notifyRooms tells principal's sockets to reread its room list.
 func (s *Server) notifyRooms(ctx context.Context, principalID string) {
-	s.publish(ctx, roomsSubject(principalID))
+	s.publish(ctx, bus.RoomsSubject(principalID))
 }
 
 func (s *Server) publish(ctx context.Context, subject string) {
@@ -48,7 +44,7 @@ func (s *Server) publish(ctx context.Context, subject string) {
 // every resync interval, so a lost notification costs latency, not events.
 func (s *Server) follow(ctx context.Context, roomID string, cursor int64, deliver func(core.Event) error) error {
 	wake := make(chan struct{}, 1)
-	unsubscribe, err := s.bus.Subscribe(subject(roomID), func(string, []byte) {
+	unsubscribe, err := s.bus.Subscribe(bus.RoomSubject(roomID), func(string, []byte) {
 		select {
 		case wake <- struct{}{}:
 		default:
@@ -213,7 +209,7 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	defer cancel()
 	// Like room notifications this is only a hint: a client rereads its
 	// room list on each push and after every reconnect.
-	unsubscribe, err := s.bus.Subscribe(roomsSubject(me.ID), func(string, []byte) {
+	unsubscribe, err := s.bus.Subscribe(bus.RoomsSubject(me.ID), func(string, []byte) {
 		c.push(envelope{ID: core.NewID(), Type: "rooms"})
 	})
 	if err != nil {

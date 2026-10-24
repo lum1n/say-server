@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/vegard/say-v2/internal/agents"
 	"github.com/vegard/say-v2/internal/api"
 	"github.com/vegard/say-v2/internal/bus"
 	"github.com/vegard/say-v2/internal/core"
@@ -82,9 +83,10 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	app := api.New(api.Config{Version: version, Store: st, Bus: b, SetupCode: code})
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           api.New(api.Config{Version: version, Store: st, Bus: b, SetupCode: code}).Handler(),
+		Handler:           app.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// Requests share ctx, so streams and long polls end on shutdown
 		// instead of holding it up.
@@ -97,6 +99,19 @@ func serve(args []string) error {
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	slog.Info("say listening", "addr", ln.Addr().String(), "version", version)
+	runner := agents.New(agents.Config{Store: st, Bus: b, Chat: app, Holder: holderName()})
+	agentsCtx, stopAgents := context.WithCancel(ctx)
+	agentsDone := make(chan struct{})
+	go func() {
+		defer close(agentsDone)
+		runner.Run(agentsCtx)
+	}()
+	// The runner releases its agents' leases on the way out, so another
+	// node takes them over at once; the store must still be open.
+	defer func() {
+		stopAgents()
+		<-agentsDone
+	}()
 	if code != "" {
 		slog.Info("open the setup wizard to create the admin", "url", setupURL(ln.Addr(), code))
 	}
@@ -140,6 +155,13 @@ func setupURL(addr net.Addr, code string) string {
 		Path:     "/setup",
 		RawQuery: url.Values{"code": {code}}.Encode(),
 	}).String()
+}
+
+// holderName names this process in leases: the host name, which helps
+// operators, plus a random part, because two nodes may share a host.
+func holderName() string {
+	host, _ := os.Hostname()
+	return host + "/" + rand.Text()[:8]
 }
 
 // openBus returns the in-process bus, or the NATS cluster bus when peers

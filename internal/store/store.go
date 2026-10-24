@@ -107,6 +107,8 @@ type Store interface {
 	AddMember(ctx context.Context, m core.Membership) error
 	GetMember(ctx context.Context, roomID, principalID string) (core.Membership, error)
 	Members(ctx context.Context, roomID string) ([]core.Membership, error)
+	// SetMemberScopes replaces a membership's scopes.
+	SetMemberScopes(ctx context.Context, roomID, principalID string, scopes []string) error
 
 	// AppendEvent allocates the next seq for e.RoomID and writes the event
 	// and its outbox entry in one transaction. An empty e.ID or e.CreatedAt
@@ -126,6 +128,33 @@ type Store interface {
 	// AckOutbox removes one once it has been delivered.
 	PendingOutbox(ctx context.Context, limit int) ([]OutboxEntry, error)
 	AckOutbox(ctx context.Context, eventID string) error
+
+	// CreateBuiltinAgent writes agent principal p and its settings in one
+	// transaction; a.PrincipalID is ignored. UpdateBuiltinAgent replaces
+	// the settings, apart from the last error and the creation time.
+	CreateBuiltinAgent(ctx context.Context, p core.Principal, a BuiltinAgent) error
+	UpdateBuiltinAgent(ctx context.Context, a BuiltinAgent) error
+	GetBuiltinAgent(ctx context.Context, principalID string) (BuiltinAgent, error)
+	// BuiltinAgents returns every built-in agent, oldest first.
+	BuiltinAgents(ctx context.Context) ([]BuiltinAgent, error)
+	// SetBuiltinAgentError records the agent's latest failure; an empty msg
+	// clears it.
+	SetBuiltinAgentError(ctx context.Context, principalID, msg string) error
+	// AddAgentUsage adds to the tokens the agent used on the UTC day of at,
+	// and AgentUsage reads them back.
+	AddAgentUsage(ctx context.Context, principalID string, at time.Time, u Usage) error
+	AgentUsage(ctx context.Context, principalID string, at time.Time) (Usage, error)
+	// AgentCursor returns ErrNotFound when the agent has not read the room.
+	AgentCursor(ctx context.Context, principalID, roomID string) (int64, error)
+	SetAgentCursor(ctx context.Context, principalID, roomID string, seq int64) error
+
+	// AcquireLease takes or renews the named lease for holder until ttl
+	// from now. ok is false while another holder's lease is unexpired.
+	// The generation goes up each time the lease changes hands.
+	AcquireLease(ctx context.Context, name, holder string, ttl time.Duration) (generation int64, ok bool, err error)
+	// ReleaseLease gives up holder's lease; it is a no-op when holder does
+	// not hold it.
+	ReleaseLease(ctx context.Context, name, holder string) error
 
 	Close() error
 }
