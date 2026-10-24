@@ -719,3 +719,7 @@ a {
   margin: 4px 0 0;
   padding-left: 18px;
 }
+
+.hook code {
+  overflow-wrap: anywhere;
+}

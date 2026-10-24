@@ -827,7 +827,11 @@ func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]E
 }
 
 const finishBridgeMessage = `-- name: FinishBridgeMessage :exec
-UPDATE bridge_messages SET state = $3, remote_id = $4, error = $5, updated_at = $6
+UPDATE bridge_messages SET state = $3, error = $5, updated_at = $6,
+    remote_id = CASE WHEN EXISTS (
+        SELECT 1 FROM bridge_messages o
+        WHERE o.link_id = $1 AND o.remote_id = $4 AND o.event_id <> $2
+    ) THEN '' ELSE $4 END
 WHERE link_id = $1 AND event_id = $2
 `
 
@@ -840,6 +844,8 @@ type FinishBridgeMessageParams struct {
 	UpdatedAt int64
 }
 
+// A remote id the link already has for another message is dropped: the
+// network reused it, and the send happened all the same.
 func (q *Queries) FinishBridgeMessage(ctx context.Context, arg FinishBridgeMessageParams) error {
 	_, err := q.db.ExecContext(ctx, finishBridgeMessage,
 		arg.LinkID,

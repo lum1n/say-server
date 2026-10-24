@@ -194,9 +194,14 @@ func newEnv(t *testing.T) *env {
 }
 
 func (e *env) runner(holder string) (stop func()) {
+	return e.runnerWith(holder, e.store)
+}
+
+// runnerWith runs a node's bridges on st.
+func (e *env) runnerWith(holder string, st store.Store) (stop func()) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	r := bridge.New(bridge.Config{Store: e.store, Bus: e.bus, Chat: e.srv, Holder: holder})
+	r := bridge.New(bridge.Config{Store: st, Bus: e.bus, Chat: e.srv, Holder: holder})
 	go func() {
 		defer close(done)
 		r.Run(ctx)
@@ -565,5 +570,48 @@ func TestBridgeSettings(t *testing.T) {
 	}
 	if code := e.call("POST", "/api/v1/bridges", map[string]any{"network": "fake", "mode": "bot", "config": map[string]any{"server": "x"}}, nil); code != http.StatusForbidden {
 		t.Fatalf("Bo adds a bot: %d", code)
+	}
+}
+
+// crashedStore is a node's store that never hears it stop: its lease is
+// left to expire, as when the node is killed.
+type crashedStore struct{ store.Store }
+
+func (crashedStore) ReleaseLease(context.Context, string, string) error { return nil }
+
+func (crashedStore) SetBridgeSeen(context.Context, string, time.Time) error { return nil }
+
+func TestTakeoverAfterCrashSendsOnce(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	b := e.addBridge(store.ModeAccount)
+	crash := e.runnerWith("n1", crashedStore{e.store})
+	c1 := fakes.conn(t, b.ID)
+	e.runner("n2")
+	c1.in <- bridge.Incoming{Chat: bridge.RemoteChat{ID: "g", Name: "Group"}, ID: "m1", Author: bridge.Author{ID: "bob", Name: "Bob"}, Text: "hi"}
+	l := e.portal(b.ID, "g")
+	first, _, _ := e.srv.SendText(ctx, e.ada, l.RoomID, "one", "", "", false)
+	eventually(t, "n1 sends", func() bool { return e.delivery(l.ID, first.ID) == store.BridgeSent })
+
+	crash()
+	during, _, _ := e.srv.SendText(ctx, e.ada, l.RoomID, "two", "", "", false)
+	var c2 *fakeConn
+	eventually(t, "n2 takes over once the lease expires", func() bool {
+		fakes.mu.Lock()
+		defer fakes.mu.Unlock()
+		c2 = fakes.conns[b.ID]
+		return c2 != c1 && c2.isRunning()
+	})
+	after, _, _ := e.srv.SendText(ctx, e.ada, l.RoomID, "three", "", "", false)
+	eventually(t, "n2 sends", func() bool {
+		return e.delivery(l.ID, during.ID) == store.BridgeSent && e.delivery(l.ID, after.ID) == store.BridgeSent
+	})
+	time.Sleep(300 * time.Millisecond)
+	var texts []string
+	for _, s := range append(c1.sends(), c2.sends()...) {
+		texts = append(texts, s.Text)
+	}
+	if strings.Join(texts, ",") != "one,two,three" {
+		t.Fatalf("sends = %v", texts)
 	}
 }

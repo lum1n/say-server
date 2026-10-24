@@ -543,6 +543,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/hooks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The bridge's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post a message to a bridge that takes hooks
+         * @description For networks with `hook: true`, such as webhooks. The network
+         *     checks the secret: for webhooks, `Authorization: Bearer <secret>`
+         *     or `?token=<secret>`. Any node takes it. In a relay bot the chat
+         *     must be linked to a room, or nothing is taken (404 `not_linked`).
+         *     A repeated `id` in the same chat is ignored.
+         */
+        post: operations["postHook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/networks": {
         parameters: {
             query?: never;
@@ -989,6 +1016,27 @@ export interface components {
             modes: components["schemas"]["BridgeMode"][];
             fields: components["schemas"]["NetworkField"][];
             capabilities: string[];
+            /** @description The network takes messages posted to `/hooks/{bridge id}`. */
+            hook?: boolean;
+        };
+        /** @description A message posted to a webhook bridge's hook. */
+        HookMessage: {
+            /** @description The remote chat, linked to a room; else `?chat=`, else "default". */
+            chat?: string;
+            /** @description The message's id in the chat, so repeats are ignored; made up if absent. */
+            id?: string;
+            text?: string;
+            /** @description The text, as Discord webhooks name it, if `text` is absent. */
+            content?: string;
+            /** @description Who wrote it; "Webhook" if absent. */
+            username?: string;
+            /** @description A stable id of the writer; the username if absent. */
+            user_id?: string;
+            reply_to?: string;
+            /** @description The message `id` now reads `text`. */
+            edit?: boolean;
+            /** Format: date-time */
+            time?: string;
         };
         BridgeSettings: {
             /** @description Required to create; can't change. */
@@ -2083,6 +2131,34 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EmbedSession"];
                 };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    postHook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The bridge's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HookMessage"];
+            };
+        };
+        responses: {
+            /** @description Taken */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];

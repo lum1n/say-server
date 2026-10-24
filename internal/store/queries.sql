@@ -308,7 +308,13 @@ VALUES ($1, $2, $3, $4, $5, $6, $6)
 ON CONFLICT DO NOTHING;
 
 -- name: FinishBridgeMessage :exec
-UPDATE bridge_messages SET state = $3, remote_id = $4, error = $5, updated_at = $6
+-- A remote id the link already has for another message is dropped: the
+-- network reused it, and the send happened all the same.
+UPDATE bridge_messages SET state = $3, error = $5, updated_at = $6,
+    remote_id = CASE WHEN EXISTS (
+        SELECT 1 FROM bridge_messages o
+        WHERE o.link_id = $1 AND o.remote_id = $4 AND o.event_id <> $2
+    ) THEN '' ELSE $4 END
 WHERE link_id = $1 AND event_id = $2;
 
 -- name: BridgeMessageByRemote :one

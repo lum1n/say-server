@@ -296,6 +296,19 @@ accounts, no Slack web-session tokens ([ADR
 credentials and reads these messages; bridged messages are never
 end-to-end encrypted, and Matrix's encrypted rooms aren't readable yet.
 
+### Relay bots
+
+Instance admins add relay bots on the same page. A room's owner links the
+room to a channel on the other side, and the bot mirrors it both ways:
+everyone's messages go out under their names, and people there show up
+as members of the room.
+
+| Network | What you need |
+|---|---|
+| Discord | A bot from discord.com/developers with the Message Content intent, invited with View Channels, Send Messages, Read Message History and Manage Webhooks; link rooms by channel id |
+| Telegram bot | A bot token from @BotFather with privacy mode off, added to the group; send `/chatid` there for the id to link |
+| Webhooks | A secret of your choosing. Programs post `{"chat": "alerts", "text": "…", "username": "Grafana"}` to the hook URL shown on the page, with `Authorization: Bearer <secret>`. Optionally a URL that say posts the room's messages to, as JSON or in the Slack or Discord webhook format |
+
 After editing `internal/store/queries.sql` or a migration, run
 `make generate`.
 
@@ -358,9 +371,9 @@ bridged messages are never end-to-end encrypted. Transport is TLS.
 - **M2 Embedding (done):** the node as a Go package, iOS and Android
   bindings, a C library and a terminal client. Also a chat widget for
   other sites: `<say-chat>`, guest and verified visitors, handoff.
-- **M3 Bridges:** your own accounts on Matrix, Slack, IRC, email,
-  Telegram and Signal, whose chats become rooms (done); relay bots for
-  Discord, the Telegram Bot API and webhooks.
+- **M3 Bridges (done):** your own accounts on Matrix, Slack, IRC, email,
+  Telegram and Signal, whose chats become rooms; relay bots for Discord,
+  the Telegram Bot API and webhooks.
 - **M4:** WhatsApp Cloud.
 - **M5:** A2A, WASM hooks, connector registry.
 

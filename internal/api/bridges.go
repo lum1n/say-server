@@ -28,6 +28,9 @@ type wireNetwork struct {
 	Modes        []string       `json:"modes"`
 	Fields       []bridge.Field `json:"fields"`
 	Capabilities []string       `json:"capabilities"`
+	// Hook says the network takes messages posted to
+	// /api/v1/hooks/{bridge id}.
+	Hook bool `json:"hook"`
 }
 
 type wireBridge struct {
@@ -94,7 +97,7 @@ func (s *Server) listNetworks(w http.ResponseWriter, r *http.Request, me core.Pr
 		for i, c := range n.Capabilities {
 			caps[i] = string(c)
 		}
-		out = append(out, wireNetwork{Name: n.Name, Title: n.Title, Modes: n.Modes, Fields: n.Fields, Capabilities: caps})
+		out = append(out, wireNetwork{Name: n.Name, Title: n.Title, Modes: n.Modes, Fields: n.Fields, Capabilities: caps, Hook: n.Hook != nil})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"networks": out})
 }
@@ -272,6 +275,45 @@ func (s *Server) answerBridge(w http.ResponseWriter, r *http.Request, me core.Pr
 		return
 	}
 	if err := s.bus.Publish(r.Context(), bus.BridgeAnswerSubject(b.ID), []byte(body.Value)); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// hook takes messages posted to a bridge's hook URL, for networks that
+// receive over HTTP. The network checks the request's secret; any node
+// may take it.
+func (s *Server) hook(w http.ResponseWriter, r *http.Request) {
+	notFound := errorf(http.StatusNotFound, "not_found", "no such hook")
+	b, err := s.store.GetBridge(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		err = notFound
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	n, ok := bridge.Lookup(b.Network)
+	if !ok || n.Hook == nil || !b.Enabled {
+		writeError(w, notFound)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	msgs, err := n.Hook(bridge.Info{ID: b.ID, Mode: b.Mode, Config: b.Config, State: b.State}, r)
+	switch {
+	case errors.Is(err, bridge.ErrUnauthorized):
+		writeError(w, errorf(http.StatusUnauthorized, "unauthorized", "the hook's secret is missing or wrong"))
+		return
+	case err != nil:
+		writeError(w, errorf(http.StatusBadRequest, "invalid", "%v", err))
+		return
+	}
+	err = bridge.ReceiveHooked(r.Context(), bridge.Config{Store: s.store, Bus: s.bus, Chat: s}, b, msgs)
+	if errors.Is(err, bridge.ErrNotLinked) {
+		err = errorf(http.StatusNotFound, "not_linked", "%v", err)
+	}
+	if err != nil {
 		writeError(w, err)
 		return
 	}

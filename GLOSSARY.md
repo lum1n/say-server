@@ -109,6 +109,15 @@
 : Ties one room to one remote chat or channel on one bridge, with the
   cursor its delivery has reached.
 
+**Relay bot**
+: A bridge in bot mode: a bot on Discord or Telegram, or webhooks, that an
+  admin adds. Rooms are linked to its channels, and it relays everyone's
+  messages under their names.
+
+**Hook**
+: The URL `/api/v1/hooks/{bridge id}` where programs post messages to a
+  bridge that takes them over HTTP, such as webhooks. Any node takes them.
+
 **IdentityLink**
 : Maps a remote user on a network to a ghost principal. Merging ghosts into
   one person is manual or opt-in.

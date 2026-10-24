@@ -83,8 +83,25 @@ event (ADR 0003) was never read by anything and only grew.
 | Telegram | MTProto (gotd/td) with the instance's own `api_id`/`api_hash` | Login code and 2FA through prompts; flood-wait respected |
 | Signal | signal-cli as a linked device, out of process (GPL) | QR prompt; no history to backfill; its data stays on one node |
 
-Discord has no sanctioned way to act as a user, so it comes later as a
-relay bot only, with the Telegram Bot API and webhooks.
+Discord has no sanctioned way to act as a user, so it is a relay bot
+only, as are the Telegram Bot API and webhooks.
+
+### Networks (bot mode)
+
+| Network | Route | Notes |
+|---|---|---|
+| Discord | A bot the admin creates, over the Gateway and REST | People in say show under their own names through a channel webhook named "say" (Manage Webhooks), else as "**Name**: text"; missed messages are fetched on reconnect |
+| Telegram bot | Bot API with long polling | Privacy mode off to see all group messages; `/chatid` tells the chat id to link |
+| Webhooks | `POST /api/v1/hooks/{bridge id}` in; a POST to the admin's URL out | Out in say's JSON, or the Slack or Discord webhook format; optional HMAC signature |
+
+A network may also take messages over HTTP (`Network.Hook`). Any node
+answers the hook: receiving needs only the store, so the request does not
+have to reach the node holding the bridge's lease. In a relay bot every
+message must be for a linked chat, or none is taken.
+
+A network that hands back a remote id the link already has (a webhook
+that always answers the same id) gets its send kept as sent, without the
+id.
 
 ## Consequences
 

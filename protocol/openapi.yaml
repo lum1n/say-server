@@ -875,6 +875,40 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /hooks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The bridge's id.
+        schema:
+          type: string
+    post:
+      operationId: postHook
+      summary: Post a message to a bridge that takes hooks
+      description: |
+        For networks with `hook: true`, such as webhooks. The network
+        checks the secret: for webhooks, `Authorization: Bearer <secret>`
+        or `?token=<secret>`. Any node takes it. In a relay bot the chat
+        must be linked to a room, or nothing is taken (404 `not_linked`).
+        A repeated `id` in the same chat is ignored.
+      security:
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HookMessage"
+      responses:
+        "204":
+          description: Taken
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /networks:
     get:
       operationId: listNetworks
@@ -1689,6 +1723,38 @@ components:
           type: array
           items:
             type: string
+        hook:
+          description: The network takes messages posted to `/hooks/{bridge id}`.
+          type: boolean
+    HookMessage:
+      description: A message posted to a webhook bridge's hook.
+      type: object
+      properties:
+        chat:
+          description: The remote chat, linked to a room; else `?chat=`, else "default".
+          type: string
+        id:
+          description: The message's id in the chat, so repeats are ignored; made up if absent.
+          type: string
+        text:
+          type: string
+        content:
+          description: The text, as Discord webhooks name it, if `text` is absent.
+          type: string
+        username:
+          description: Who wrote it; "Webhook" if absent.
+          type: string
+        user_id:
+          description: A stable id of the writer; the username if absent.
+          type: string
+        reply_to:
+          type: string
+        edit:
+          description: The message `id` now reads `text`.
+          type: boolean
+        time:
+          type: string
+          format: date-time
     BridgeSettings:
       type: object
       properties:

@@ -146,6 +146,17 @@ func TestBridges(t *testing.T) {
 		if m, err := s.BridgeMessageByRemote(ctx, l.ID, "r1"); err != nil || m.EventID != evs[0].ID || m.State != BridgeSent {
 			t.Fatalf("BridgeMessageByRemote = %+v, %v", m, err)
 		}
+		// A network that reuses an id: the send is kept without it.
+		if err := s.FinishBridgeMessage(ctx, l.ID, evs[2].ID, BridgeSent, "r1", ""); err != nil {
+			t.Fatalf("reused remote id: %v", err)
+		}
+		if m, _ := s.GetBridgeMessage(ctx, l.ID, evs[2].ID); m.State != BridgeSent || m.RemoteID != "" {
+			t.Fatalf("reused remote id = %+v", m)
+		}
+		if m, _ := s.BridgeMessageByRemote(ctx, l.ID, "r1"); m.EventID != evs[0].ID {
+			t.Fatalf("r1 is now %+v", m)
+		}
+		s.FinishBridgeMessage(ctx, l.ID, evs[2].ID, BridgeSending, "", "")
 		if err := s.MarkBridgeSendsUnknown(ctx, b.ID); err != nil {
 			t.Fatal(err)
 		}

@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"sort"
 	"time"
@@ -35,6 +36,11 @@ type Network struct {
 	Capabilities []connector.Capability
 	// Open makes a connection for a bridge. It must not do I/O: Run does.
 	Open func(b Info, h Host) (Conn, error)
+	// Hook, if set, reads a request sent to the bridge's hook URL
+	// (/api/v1/hooks/{bridge id}) and returns the messages in it. Any
+	// node may call it, also one not running the bridge. An error
+	// wrapping ErrUnauthorized is answered 401, others 400.
+	Hook func(b Info, r *http.Request) ([]Incoming, error)
 }
 
 // Field is one config setting of a network.
@@ -79,6 +85,9 @@ type Editor interface {
 // ErrRejected marks a send the network refused, so it surely did not
 // arrive.
 var ErrRejected = errors.New("rejected")
+
+// ErrUnauthorized marks a hook request without the bridge's secret.
+var ErrUnauthorized = errors.New("unauthorized")
 
 // Rejected wraps err as a refusal.
 func Rejected(err error) error { return fmt.Errorf("%w: %w", ErrRejected, err) }

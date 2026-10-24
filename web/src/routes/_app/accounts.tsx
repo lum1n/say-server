@@ -84,12 +84,23 @@ function BridgeRow({ bridge: b, network }: { bridge: Bridge; network?: Network }
           {b.error}
         </p>
       )}
+      {network?.hook && (
+        <p className="muted hook">
+          Hook URL: <code>{hookURL(b.id)}</code>
+        </p>
+      )}
       {b.prompt && <PromptBox bridge={b} />}
       <FormError error={toggle.error} />
       {editing && network && <ConfigForm network={network} mode={b.mode} bridge={b} onSaved={() => setEditing(false)} />}
       <Chats bridge={b} />
     </li>
   );
+}
+
+// hookURL is where programs post messages to a bridge that takes hooks.
+function hookURL(id: string) {
+  const origin = typeof window === "undefined" ? "" : window.location.origin;
+  return `${origin}/api/v1/hooks/${id}`;
 }
 
 // PromptBox shows a login step only the owner can do: scan a QR code, or

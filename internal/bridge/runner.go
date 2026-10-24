@@ -377,8 +377,9 @@ func (i *instance) syncLinks(ctx context.Context) {
 func (i *instance) follow(l store.BridgeLink) {
 	i.mu.Lock()
 	_, ok := i.links[l.ID]
+	running := i.links != nil
 	i.mu.Unlock()
-	if ok {
+	if ok || !running {
 		return
 	}
 	id := l.ID

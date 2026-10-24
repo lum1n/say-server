@@ -104,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/bridges/{id}/links", s.authed(s.listLinks))
 	mux.HandleFunc("POST /api/v1/bridges/{id}/links", s.authed(s.createLink))
 	mux.HandleFunc("DELETE /api/v1/bridges/{id}/links/{link_id}", s.authed(s.deleteLink))
+	mux.HandleFunc("POST /api/v1/hooks/{id}", s.hook)
 	mux.HandleFunc("GET /api/v1/embed/{key}", s.embedConfig)
 	mux.HandleFunc("POST /api/v1/embed/{key}/session", s.embedSession)
 	mux.Handle("/mcp", s.mcpHandler())
