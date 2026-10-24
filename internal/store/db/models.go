@@ -16,6 +16,7 @@ type Event struct {
 	Stream         string
 	IdempotencyKey string
 	CreatedAt      int64
+	Automated      int32
 }
 
 type Instance struct {
@@ -53,11 +54,16 @@ type Principal struct {
 }
 
 type Room struct {
-	ID        string
-	Kind      string
-	Name      string
-	LastSeq   int64
-	CreatedAt int64
+	ID              string
+	Kind            string
+	Name            string
+	LastSeq         int64
+	CreatedAt       int64
+	AgentsPaused    int32
+	MaxHopCount     int32
+	AgentTurnLimit  int32
+	AgentTurnWindow int64
+	AgentRateLimit  int32
 }
 
 type Token struct {

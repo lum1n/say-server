@@ -35,7 +35,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	b := bus.NewInProc()
-	s := New(Config{Version: "test", Store: st, Bus: b, MaxHops: 2})
+	s := New(Config{Version: "test", Store: st, Bus: b, Agents: core.AgentPolicy{MaxHops: 2}})
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		ts.Close()
@@ -585,7 +585,7 @@ func TestResyncWithoutNotification(t *testing.T) {
 	_, err := e.store.AppendEvent(context.Background(), core.Event{
 		RoomID: r.ID, Type: core.EventMessage, SenderID: ada.ID, Stream: core.StreamFinal,
 		Parts: []core.Part{{Kind: core.PartText, Data: []byte(`{"text":"quiet"}`)}},
-	}, "")
+	}, store.AppendOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

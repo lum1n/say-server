@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/vegard/say-v2/internal/core"
@@ -27,14 +28,38 @@ func toPrincipal(p core.Principal) wirePrincipal {
 }
 
 type wireRoom struct {
-	ID        string        `json:"id"`
-	Kind      core.RoomKind `json:"kind"`
-	Name      string        `json:"name"`
-	CreatedAt time.Time     `json:"created_at"`
+	ID        string          `json:"id"`
+	Kind      core.RoomKind   `json:"kind"`
+	Name      string          `json:"name"`
+	Agents    wireAgentPolicy `json:"agents"`
+	CreatedAt time.Time       `json:"created_at"`
 }
 
-func toRoom(r core.Room) wireRoom {
-	return wireRoom{ID: r.ID, Kind: r.Kind, Name: r.Name, CreatedAt: r.CreatedAt.UTC()}
+// wireAgentPolicy shows the limits that apply in a room, the server's
+// defaults included.
+type wireAgentPolicy struct {
+	Paused            bool `json:"paused"`
+	MaxHopCount       int  `json:"max_hop_count"`
+	TurnLimit         int  `json:"turn_limit"`
+	TurnWindowSeconds int  `json:"turn_window_seconds"`
+	RateLimit         int  `json:"rate_limit_per_minute"`
+}
+
+func (s *Server) toRoom(r core.Room) wireRoom {
+	p := s.agentPolicy(r)
+	return wireRoom{
+		ID:   r.ID,
+		Kind: r.Kind,
+		Name: r.Name,
+		Agents: wireAgentPolicy{
+			Paused:            p.Paused,
+			MaxHopCount:       p.MaxHops,
+			TurnLimit:         p.TurnLimit,
+			TurnWindowSeconds: int(p.TurnWindow / time.Second),
+			RateLimit:         p.RateLimit,
+		},
+		CreatedAt: r.CreatedAt.UTC(),
+	}
 }
 
 type wireMember struct {
@@ -156,6 +181,8 @@ type apiError struct {
 	Status  int    `json:"-"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// RetryAfter, when set, is sent as the Retry-After header.
+	RetryAfter time.Duration `json:"-"`
 }
 
 func (e *apiError) Error() string { return e.Code + ": " + e.Message }
@@ -176,6 +203,9 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 	if ae.Status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", "Bearer")
+	}
+	if ae.RetryAfter > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(int(ae.RetryAfter/time.Second)))
 	}
 	writeJSON(w, ae.Status, map[string]*apiError{"error": ae})
 }

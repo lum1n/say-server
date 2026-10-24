@@ -31,6 +31,47 @@ func (q *Queries) AddMember(ctx context.Context, arg AddMemberParams) error {
 	return err
 }
 
+const automatedAt = `-- name: AutomatedAt :one
+SELECT created_at FROM events
+WHERE room_id = $1 AND automated = 1
+ORDER BY seq DESC
+LIMIT 1 OFFSET $2
+`
+
+type AutomatedAtParams struct {
+	RoomID string
+	Offset int32
+}
+
+// The created_at of the room's automated event OFFSET places back from the
+// latest; no row means the room has no more than OFFSET of them.
+func (q *Queries) AutomatedAt(ctx context.Context, arg AutomatedAtParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, automatedAt, arg.RoomID, arg.Offset)
+	var created_at int64
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
+const automatedFromSenderAt = `-- name: AutomatedFromSenderAt :one
+SELECT created_at FROM events
+WHERE room_id = $1 AND sender_id = $2 AND automated = 1
+ORDER BY seq DESC
+LIMIT 1 OFFSET $3
+`
+
+type AutomatedFromSenderAtParams struct {
+	RoomID   string
+	SenderID string
+	Offset   int32
+}
+
+func (q *Queries) AutomatedFromSenderAt(ctx context.Context, arg AutomatedFromSenderAtParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, automatedFromSenderAt, arg.RoomID, arg.SenderID, arg.Offset)
+	var created_at int64
+	err := row.Scan(&created_at)
+	return created_at, err
+}
+
 const bumpSeq = `-- name: BumpSeq :one
 UPDATE rooms SET last_seq = last_seq + 1 WHERE id = $1 RETURNING last_seq
 `
@@ -174,7 +215,7 @@ func (q *Queries) DeleteToken(ctx context.Context, hash string) error {
 }
 
 const eventByIdempotencyKey = `-- name: EventByIdempotencyKey :one
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated FROM events
 WHERE room_id = $1 AND sender_id = $2 AND idempotency_key = $3
 `
 
@@ -199,12 +240,13 @@ func (q *Queries) EventByIdempotencyKey(ctx context.Context, arg EventByIdempote
 		&i.Stream,
 		&i.IdempotencyKey,
 		&i.CreatedAt,
+		&i.Automated,
 	)
 	return i, err
 }
 
 const eventsAfter = `-- name: EventsAfter :many
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated FROM events
 WHERE room_id = $1 AND seq > $2
 ORDER BY seq
 LIMIT $3
@@ -237,6 +279,7 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 			&i.Stream,
 			&i.IdempotencyKey,
 			&i.CreatedAt,
+			&i.Automated,
 		); err != nil {
 			return nil, err
 		}
@@ -252,7 +295,7 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 }
 
 const eventsBefore = `-- name: EventsBefore :many
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated FROM events
 WHERE room_id = $1 AND seq < $2
 ORDER BY seq DESC
 LIMIT $3
@@ -285,6 +328,7 @@ func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]E
 			&i.Stream,
 			&i.IdempotencyKey,
 			&i.CreatedAt,
+			&i.Automated,
 		); err != nil {
 			return nil, err
 		}
@@ -300,7 +344,7 @@ func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]E
 }
 
 const getEvent = `-- name: GetEvent :one
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at FROM events WHERE id = $1
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated FROM events WHERE id = $1
 `
 
 func (q *Queries) GetEvent(ctx context.Context, id string) (Event, error) {
@@ -318,6 +362,7 @@ func (q *Queries) GetEvent(ctx context.Context, id string) (Event, error) {
 		&i.Stream,
 		&i.IdempotencyKey,
 		&i.CreatedAt,
+		&i.Automated,
 	)
 	return i, err
 }
@@ -361,7 +406,7 @@ func (q *Queries) GetPrincipal(ctx context.Context, id string) (Principal, error
 }
 
 const getRoom = `-- name: GetRoom :one
-SELECT id, kind, name, last_seq, created_at FROM rooms WHERE id = $1
+SELECT id, kind, name, last_seq, created_at, agents_paused, max_hop_count, agent_turn_limit, agent_turn_window, agent_rate_limit FROM rooms WHERE id = $1
 `
 
 func (q *Queries) GetRoom(ctx context.Context, id string) (Room, error) {
@@ -373,14 +418,19 @@ func (q *Queries) GetRoom(ctx context.Context, id string) (Room, error) {
 		&i.Name,
 		&i.LastSeq,
 		&i.CreatedAt,
+		&i.AgentsPaused,
+		&i.MaxHopCount,
+		&i.AgentTurnLimit,
+		&i.AgentTurnWindow,
+		&i.AgentRateLimit,
 	)
 	return i, err
 }
 
 const insertEvent = `-- name: InsertEvent :exec
 INSERT INTO events (id, room_id, seq, type, sender_id, caused_by, hop_count,
-                    parts, stream, idempotency_key, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    parts, stream, idempotency_key, automated, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 `
 
 type InsertEventParams struct {
@@ -394,6 +444,7 @@ type InsertEventParams struct {
 	Parts          string
 	Stream         string
 	IdempotencyKey string
+	Automated      int32
 	CreatedAt      int64
 }
 
@@ -409,6 +460,7 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 		arg.Parts,
 		arg.Stream,
 		arg.IdempotencyKey,
+		arg.Automated,
 		arg.CreatedAt,
 	)
 	return err
@@ -573,33 +625,32 @@ func (q *Queries) PrincipalByToken(ctx context.Context, arg PrincipalByTokenPara
 }
 
 const roomsFor = `-- name: RoomsFor :many
-SELECT r.id, r.kind, r.name, r.created_at
+SELECT r.id, r.kind, r.name, r.last_seq, r.created_at, r.agents_paused, r.max_hop_count, r.agent_turn_limit, r.agent_turn_window, r.agent_rate_limit
 FROM rooms r JOIN memberships m ON m.room_id = r.id
 WHERE m.principal_id = $1
 ORDER BY r.created_at, r.id
 `
 
-type RoomsForRow struct {
-	ID        string
-	Kind      string
-	Name      string
-	CreatedAt int64
-}
-
-func (q *Queries) RoomsFor(ctx context.Context, principalID string) ([]RoomsForRow, error) {
+func (q *Queries) RoomsFor(ctx context.Context, principalID string) ([]Room, error) {
 	rows, err := q.db.QueryContext(ctx, roomsFor, principalID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RoomsForRow
+	var items []Room
 	for rows.Next() {
-		var i RoomsForRow
+		var i Room
 		if err := rows.Scan(
 			&i.ID,
 			&i.Kind,
 			&i.Name,
+			&i.LastSeq,
 			&i.CreatedAt,
+			&i.AgentsPaused,
+			&i.MaxHopCount,
+			&i.AgentTurnLimit,
+			&i.AgentTurnWindow,
+			&i.AgentRateLimit,
 		); err != nil {
 			return nil, err
 		}
@@ -612,6 +663,37 @@ func (q *Queries) RoomsFor(ctx context.Context, principalID string) ([]RoomsForR
 		return nil, err
 	}
 	return items, nil
+}
+
+const setAgentPolicy = `-- name: SetAgentPolicy :execrows
+UPDATE rooms
+SET agents_paused = $2, max_hop_count = $3, agent_turn_limit = $4,
+    agent_turn_window = $5, agent_rate_limit = $6
+WHERE id = $1
+`
+
+type SetAgentPolicyParams struct {
+	ID              string
+	AgentsPaused    int32
+	MaxHopCount     int32
+	AgentTurnLimit  int32
+	AgentTurnWindow int64
+	AgentRateLimit  int32
+}
+
+func (q *Queries) SetAgentPolicy(ctx context.Context, arg SetAgentPolicyParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setAgentPolicy,
+		arg.ID,
+		arg.AgentsPaused,
+		arg.MaxHopCount,
+		arg.AgentTurnLimit,
+		arg.AgentTurnWindow,
+		arg.AgentRateLimit,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const setupDone = `-- name: SetupDone :one

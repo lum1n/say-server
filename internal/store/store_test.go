@@ -320,7 +320,7 @@ func TestAppendAndReplay(t *testing.T) {
 				SenderID: p.ID,
 				Parts:    text(fmt.Sprint("hello ", i)),
 				Stream:   core.StreamFinal,
-			}, "")
+			}, AppendOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -353,7 +353,7 @@ func TestAppendAndReplay(t *testing.T) {
 		reply, err := s.AppendEvent(ctx, core.Event{
 			RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID,
 			Causation: core.Causation{CausedBy: first.ID, HopCount: 2},
-		}, "")
+		}, AppendOptions{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -362,7 +362,7 @@ func TestAppendAndReplay(t *testing.T) {
 			t.Fatalf("GetEvent = %+v, %v", back, err)
 		}
 
-		if _, err := s.AppendEvent(ctx, core.Event{RoomID: "nope", Type: core.EventMessage, SenderID: p.ID}, ""); !errors.Is(err, ErrNotFound) {
+		if _, err := s.AppendEvent(ctx, core.Event{RoomID: "nope", Type: core.EventMessage, SenderID: p.ID}, AppendOptions{}); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("append to missing room: %v", err)
 		}
 	})
@@ -374,7 +374,7 @@ func TestIdempotencyKey(t *testing.T) {
 		p, r := seed(t, s)
 		send := func(key, body string) core.Event {
 			t.Helper()
-			e, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID, Parts: text(body)}, key)
+			e, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID, Parts: text(body)}, AppendOptions{IdempotencyKey: key})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -392,6 +392,149 @@ func TestIdempotencyKey(t *testing.T) {
 		pending, err := s.PendingOutbox(ctx, 10)
 		if err != nil || len(pending) != 2 {
 			t.Fatalf("outbox after retry = %+v, %v", pending, err)
+		}
+	})
+}
+
+func TestAgentPolicy(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		p, r := seed(t, s)
+		if got, _ := s.GetRoom(ctx, r.ID); got.Agents != (core.AgentPolicy{}) {
+			t.Fatalf("new room policy = %+v", got.Agents)
+		}
+		want := core.AgentPolicy{Paused: true, MaxHops: 3, TurnLimit: 20, TurnWindow: 5 * time.Minute, RateLimit: 4}
+		if err := s.SetAgentPolicy(ctx, r.ID, want); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := s.GetRoom(ctx, r.ID); err != nil || got.Agents != want {
+			t.Fatalf("GetRoom policy = %+v, %v", got.Agents, err)
+		}
+		if rooms, err := s.RoomsFor(ctx, p.ID); err != nil || len(rooms) != 1 || rooms[0].Agents != want {
+			t.Fatalf("RoomsFor policy = %+v, %v", rooms, err)
+		}
+		if err := s.SetAgentPolicy(ctx, "nope", want); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("unknown room = %v", err)
+		}
+	})
+}
+
+// Budgets count automated events only, check them under the room lock and
+// leave no seq gap when they refuse one.
+func TestBudgets(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		human, r := seed(t, s)
+		a1 := core.Principal{ID: core.NewID(), Kind: core.PrincipalAgent, DisplayName: "a1"}
+		a2 := core.Principal{ID: core.NewID(), Kind: core.PrincipalAgent, DisplayName: "a2"}
+		for _, p := range []core.Principal{a1, a2} {
+			if err := s.CreatePrincipal(ctx, p); err != nil {
+				t.Fatal(err)
+			}
+		}
+		opts := AppendOptions{
+			Automated: true,
+			Room:      Budget{Max: 4, Window: time.Hour},
+			Sender:    Budget{Max: 2, Window: time.Minute},
+		}
+		long := time.Now().Add(-2 * time.Minute) // outside the sender window
+		app := func(p core.Principal, at time.Time, o AppendOptions) (core.Event, error) {
+			return s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID, CreatedAt: at}, o)
+		}
+		for _, at := range []time.Time{long, {}, {}} {
+			if _, err := app(a1, at, opts); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// a1 sent two in the last minute.
+		var be *BudgetError
+		if _, err := app(a1, time.Time{}, opts); !errors.As(err, &be) || !be.Sender || !be.RetryAt.After(time.Now()) {
+			t.Fatalf("sender budget = %v", err)
+		}
+		if _, err := app(a2, time.Time{}, opts); err != nil {
+			t.Fatal(err)
+		}
+		// The room has had four automated events this hour.
+		if _, err := app(a2, time.Time{}, opts); !errors.As(err, &be) || be.Sender || be.Budget.Max != 4 {
+			t.Fatalf("room budget = %v", err)
+		}
+		// Humans are neither counted nor limited.
+		if _, err := app(human, time.Time{}, AppendOptions{Room: opts.Room}); err != nil {
+			t.Fatal(err)
+		}
+		// The refusals left no gap: seq 1–4 for the agents, 5 for the human.
+		got, err := s.EventsAfter(ctx, r.ID, 0, 10)
+		if err != nil || len(got) != 5 || got[4].Seq != 5 || got[4].SenderID != human.ID {
+			t.Fatalf("log = %+v, %v", got, err)
+		}
+		opts.Room.Max = 10
+		if _, err := app(a2, time.Time{}, opts); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// A retried send whose event is stored passes after the budget is spent.
+func TestBudgetRetry(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		_, r := seed(t, s)
+		a := core.Principal{ID: core.NewID(), Kind: core.PrincipalAgent, DisplayName: "a"}
+		if err := s.CreatePrincipal(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		opts := AppendOptions{IdempotencyKey: "k", Automated: true, Sender: Budget{Max: 1, Window: time.Minute}}
+		first, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: a.ID}, opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		again, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: a.ID}, opts)
+		if err != nil || again.ID != first.ID {
+			t.Fatalf("retry = %+v, %v", again, err)
+		}
+		opts.IdempotencyKey = "other"
+		var be *BudgetError
+		if _, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: a.ID}, opts); !errors.As(err, &be) {
+			t.Fatalf("new key = %v", err)
+		}
+	})
+}
+
+// Concurrent automated appends, also from several nodes, admit exactly the
+// budget: the room lock serializes the count and the insert.
+func TestConcurrentBudget(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		_, r := seed(t, s)
+		a := core.Principal{ID: core.NewID(), Kind: core.PrincipalAgent, DisplayName: "a"}
+		if err := s.CreatePrincipal(ctx, a); err != nil {
+			t.Fatal(err)
+		}
+		opts := AppendOptions{Automated: true, Room: Budget{Max: 3, Window: time.Hour}}
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		ok, refused := 0, 0
+		for range 12 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				_, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: a.ID}, opts)
+				var be *BudgetError
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case err == nil:
+					ok++
+				case errors.As(err, &be):
+					refused++
+				default:
+					t.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+		if ok != 3 || refused != 9 {
+			t.Fatalf("ok %d, refused %d", ok, refused)
 		}
 	})
 }
@@ -416,7 +559,7 @@ func TestConcurrentAppends(t *testing.T) {
 					if w%2 == 0 {
 						key = fmt.Sprint("w", w, "-", i)
 					}
-					_, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID}, key)
+					_, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID}, AppendOptions{IdempotencyKey: key})
 					if err != nil {
 						errs <- err
 					}
@@ -451,7 +594,7 @@ func TestOutbox(t *testing.T) {
 		p, r := seed(t, s)
 		var ids []string
 		for range 3 {
-			e, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID}, "")
+			e, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID}, AppendOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -162,7 +162,13 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Change a room's agent settings
+         * @description Only people (not agents) who own or administer the room, or
+         *     instance admins who are in it, may change it, so an agent can
+         *     never lift its own limits.
+         */
+        patch: operations["updateRoom"];
         trace?: never;
     };
     "/rooms/{id}/members": {
@@ -306,7 +312,8 @@ export interface components {
                 /**
                  * @description Stable machine-readable code: unauthorized, forbidden,
                  *     not_found, conflict, bad_request, unsupported_media_type,
-                 *     invalid, hop_limit, too_many, invalid_credentials,
+                 *     invalid, hop_limit, agents_paused, agent_budget,
+                 *     rate_limited, too_many, invalid_credentials,
                  *     bad_setup_code, setup_done, username_taken or internal.
                  */
                 code: string;
@@ -360,8 +367,39 @@ export interface components {
             id: string;
             kind: components["schemas"]["RoomKind"];
             name: string;
+            agents: components["schemas"]["AgentPolicy"];
             /** Format: date-time */
             created_at: string;
+        };
+        /**
+         * @description The limits on automated senders (agents) that apply in a room,
+         *     with the server's defaults filled in. People are never limited.
+         */
+        AgentPolicy: {
+            /** @description Every automated send is refused with agents_paused. */
+            paused: boolean;
+            /** @description The longest automated causation chain (hop_limit). */
+            max_hop_count: number;
+            /**
+             * @description Automated messages, from all agents together, the room takes in
+             *     any turn_window_seconds (agent_budget).
+             */
+            turn_limit: number;
+            turn_window_seconds: number;
+            /** @description Messages one agent may send per minute (rate_limited). */
+            rate_limit_per_minute: number;
+        };
+        UpdateRoom: {
+            agents?: components["schemas"]["AgentPolicyPatch"];
+        };
+        /** @description Absent fields stay as they are; a zero limit means the server default. */
+        AgentPolicyPatch: {
+            paused?: boolean;
+            max_hop_count?: number;
+            turn_limit?: number;
+            /** @description 0, or from 60 to 86400. */
+            turn_window_seconds?: number;
+            rate_limit_per_minute?: number;
         };
         CreateRoom: {
             /** @enum {string} */
@@ -457,6 +495,8 @@ export interface components {
             message: string;
             /** @description The HTTP status the same error would have. */
             status: number;
+            /** @description For agent_budget and rate_limited, seconds until a send would pass. */
+            retry_after?: number;
         };
     };
     responses: {
@@ -740,6 +780,37 @@ export interface operations {
             404: components["responses"]["Error"];
         };
     };
+    updateRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRoom"];
+            };
+        };
+        responses: {
+            /** @description The room */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
     listMembers: {
         parameters: {
             query?: never;
@@ -903,7 +974,30 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            /** @description Agents are paused in this room (code agents_paused) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             422: components["responses"]["Error"];
+            /**
+             * @description An automated sender hit the room's agent turn budget (code
+             *     agent_budget) or its own rate limit (code rate_limited).
+             */
+            429: {
+                headers: {
+                    /** @description Seconds until the send would pass. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     openWebSocket: {

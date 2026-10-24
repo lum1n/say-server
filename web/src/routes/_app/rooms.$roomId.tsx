@@ -2,14 +2,17 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   addMember,
+  type AgentPolicy,
   type Event,
   getMe,
   getRoom,
   listEvents,
   listMembers,
   type Principal,
+  type Room,
   SayError,
   sendMessage,
+  updateRoom,
 } from "@say/sdk";
 import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { keys, mergeEvents, useDirectory, useRealtime } from "../../chat";
@@ -30,10 +33,11 @@ function RoomPage() {
       <header className="room-header">
         <Link to="/" className="back">‹ Rooms</Link>
         <h1>{room.data ? room.data.name || "Untitled room" : "…"}</h1>
+        {room.data && <PauseAgents room={room.data} />}
       </header>
       {/* key: a fresh log, composer and member list per room */}
       <Log key={`log-${roomId}`} roomId={roomId} />
-      <Members key={`members-${roomId}`} roomId={roomId} />
+      <Members key={`members-${roomId}`} roomId={roomId} room={room.data} />
     </main>
   );
 }
@@ -237,7 +241,99 @@ function Composer({ roomId, onSent }: { roomId: string; onSent: () => void }) {
   );
 }
 
-function Members({ roomId }: { roomId: string }) {
+// useCanEditAgents reports whether I may change the room's agent settings:
+// people who own or run the room, and instance admins in it.
+function useCanEditAgents(roomId: string) {
+  const me = useQuery({ queryKey: keys.me, queryFn: () => getMe() });
+  const members = useQuery({ queryKey: keys.members(roomId), queryFn: () => listMembers(roomId) });
+  const mine = members.data?.find((m) => m.principal_id === me.data?.id);
+  return (
+    me.data?.kind === "human" && !!mine && (mine.role === "owner" || mine.role === "admin" || !!me.data.admin)
+  );
+}
+
+function useUpdateAgents(roomId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (agents: Partial<AgentPolicy>) => updateRoom(roomId, { agents }),
+    onSuccess: (room) => {
+      queryClient.setQueryData(keys.room(roomId), room);
+      queryClient.invalidateQueries({ queryKey: keys.rooms });
+    },
+  });
+}
+
+// PauseAgents shows that agents are paused, and lets those who may switch it.
+function PauseAgents({ room }: { room: Room }) {
+  const canEdit = useCanEditAgents(room.id);
+  const update = useUpdateAgents(room.id);
+  const paused = room.agents.paused;
+  return (
+    <span className="agents-switch">
+      {paused && <span className="badge">agents paused</span>}
+      {canEdit && (
+        <button
+          type="button"
+          className="link"
+          disabled={update.isPending}
+          onClick={() => update.mutate({ paused: !paused })}
+          title={paused ? "Let agents send again" : "Stop every agent from sending in this room"}
+        >
+          {paused ? "Resume agents" : "Pause agents"}
+        </button>
+      )}
+      {update.error && <span role="alert"> {update.error.message}</span>}
+    </span>
+  );
+}
+
+// AgentLimits edits how far agents may go in the room.
+function AgentLimits({ room }: { room: Room }) {
+  const update = useUpdateAgents(room.id);
+  const a = room.agents;
+  const [hops, setHops] = useState(String(a.max_hop_count));
+  const [turns, setTurns] = useState(String(a.turn_limit));
+  const [minutes, setMinutes] = useState(String(Math.round(a.turn_window_seconds / 60)));
+  const [rate, setRate] = useState(String(a.rate_limit_per_minute));
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    update.mutate({
+      max_hop_count: Number(hops),
+      turn_limit: Number(turns),
+      turn_window_seconds: Number(minutes) * 60,
+      rate_limit_per_minute: Number(rate),
+    });
+  };
+  return (
+    <form className="agent-limits" onSubmit={submit}>
+      <h2>Agent limits</h2>
+      <label>
+        Replies in a row
+        <input type="number" min={1} max={64} required value={hops} onChange={(e) => setHops(e.target.value)} />
+      </label>
+      <label>
+        Messages from all agents
+        <span className="per">
+          <input type="number" min={1} max={10000} required value={turns} onChange={(e) => setTurns(e.target.value)} />
+          per
+          <input type="number" min={1} max={1440} required value={minutes} onChange={(e) => setMinutes(e.target.value)} />
+          min
+        </span>
+      </label>
+      <label>
+        Messages per agent per minute
+        <input type="number" min={1} max={600} required value={rate} onChange={(e) => setRate(e.target.value)} />
+      </label>
+      <button type="submit" disabled={update.isPending}>
+        Save limits
+      </button>
+      {update.isSuccess && !update.isPending && <span className="muted">Saved.</span>}
+      <FormError error={update.error} />
+    </form>
+  );
+}
+
+function Members({ roomId, room }: { roomId: string; room?: Room }) {
   const queryClient = useQueryClient();
   const dir = useDirectory();
   const me = useQuery({ queryKey: keys.me, queryFn: () => getMe() });
@@ -254,6 +350,7 @@ function Members({ roomId }: { roomId: string }) {
   const list = members.data ?? [];
   const mine = list.find((m) => m.principal_id === me.data?.id);
   const canAdd = mine?.role === "owner" || mine?.role === "admin";
+  const canEditAgents = useCanEditAgents(roomId);
   const inRoom = new Set(list.map((m) => m.principal_id));
   const candidates = dir.list.filter((p) => !inRoom.has(p.id) && (p.kind === "human" || p.kind === "agent"));
   const submit = (e: FormEvent) => {
@@ -293,6 +390,7 @@ function Members({ roomId }: { roomId: string }) {
           <FormError error={add.error} />
         </form>
       )}
+      {canEditAgents && room && <AgentLimits room={room} />}
     </aside>
   );
 }

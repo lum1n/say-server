@@ -43,7 +43,24 @@ type Room struct {
 	ID        string
 	Kind      RoomKind
 	Name      string
+	Agents    AgentPolicy
 	CreatedAt time.Time
+}
+
+// AgentPolicy is a room's limits on automated senders
+// (docs/adr/0005-agent-safety.md). A zero limit means the server default.
+type AgentPolicy struct {
+	// Paused rejects every automated send in the room.
+	Paused bool
+	// MaxHops is the longest automated causation chain in the room.
+	MaxHops int
+	// TurnLimit is how many automated messages, from all senders together,
+	// the room takes in any TurnWindow.
+	TurnLimit  int
+	TurnWindow time.Duration
+	// RateLimit is how many messages one automated sender may send to the
+	// room per minute.
+	RateLimit int
 }
 
 type Role string

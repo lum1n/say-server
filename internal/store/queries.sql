@@ -20,10 +20,16 @@ VALUES ($1, $2, $3, $4);
 SELECT * FROM rooms WHERE id = $1;
 
 -- name: RoomsFor :many
-SELECT r.id, r.kind, r.name, r.created_at
+SELECT r.*
 FROM rooms r JOIN memberships m ON m.room_id = r.id
 WHERE m.principal_id = $1
 ORDER BY r.created_at, r.id;
+
+-- name: SetAgentPolicy :execrows
+UPDATE rooms
+SET agents_paused = $2, max_hop_count = $3, agent_turn_limit = $4,
+    agent_turn_window = $5, agent_rate_limit = $6
+WHERE id = $1;
 
 -- name: AddMember :exec
 INSERT INTO memberships (room_id, principal_id, role, scopes)
@@ -47,8 +53,22 @@ WHERE room_id = $1 AND sender_id = $2 AND idempotency_key = $3;
 
 -- name: InsertEvent :exec
 INSERT INTO events (id, room_id, seq, type, sender_id, caused_by, hop_count,
-                    parts, stream, idempotency_key, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
+                    parts, stream, idempotency_key, automated, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
+
+-- The created_at of the room's automated event OFFSET places back from the
+-- latest; no row means the room has no more than OFFSET of them.
+-- name: AutomatedAt :one
+SELECT created_at FROM events
+WHERE room_id = $1 AND automated = 1
+ORDER BY seq DESC
+LIMIT 1 OFFSET $2;
+
+-- name: AutomatedFromSenderAt :one
+SELECT created_at FROM events
+WHERE room_id = $1 AND sender_id = $2 AND automated = 1
+ORDER BY seq DESC
+LIMIT 1 OFFSET $3;
 
 -- name: EventsAfter :many
 SELECT * FROM events

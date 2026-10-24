@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/vegard/say-v2/internal/bus"
+	"github.com/vegard/say-v2/internal/core"
 	"github.com/vegard/say-v2/internal/store"
 )
 
@@ -30,19 +31,18 @@ type Config struct {
 	// SetupCode must accompany POST /api/v1/setup, which creates the first
 	// admin. Empty when the instance is already set up.
 	SetupCode string
-	// MaxHops is the longest automated causation chain a send may extend
-	// (docs/adr/0005-agent-safety.md). Zero means DefaultMaxHops.
-	MaxHops int
+	// Agents is the agent policy of rooms that set no limits of their own
+	// (docs/adr/0005-agent-safety.md). Its zero limits take the Default
+	// constants; Paused is ignored.
+	Agents core.AgentPolicy
 }
-
-const DefaultMaxHops = 8
 
 type Server struct {
 	version   string
 	assets    fs.FS
 	store     store.Store
 	bus       bus.Bus
-	maxHops   int
+	defaults  core.AgentPolicy
 	setupCode string
 	// resync is how often a realtime follower rereads the store without a
 	// bus notification; heartbeat is how often idle streams are pinged.
@@ -52,15 +52,14 @@ type Server struct {
 
 func New(c Config) *Server {
 	assets, _ := fs.Sub(static, "static")
-	if c.MaxHops == 0 {
-		c.MaxHops = DefaultMaxHops
-	}
+	c.Agents.Paused = false
+	c.Agents = withDefaults(c.Agents, builtinAgentPolicy)
 	return &Server{
 		version:   c.Version,
 		assets:    assets,
 		store:     c.Store,
 		bus:       c.Bus,
-		maxHops:   c.MaxHops,
+		defaults:  c.Agents,
 		setupCode: c.SetupCode,
 		resync:    30 * time.Second,
 		heartbeat: 25 * time.Second,
@@ -80,6 +79,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/rooms", s.authed(s.listRooms))
 	mux.HandleFunc("POST /api/v1/rooms", s.authed(s.createRoom))
 	mux.HandleFunc("GET /api/v1/rooms/{id}", s.authed(s.getRoom))
+	mux.HandleFunc("PATCH /api/v1/rooms/{id}", s.authed(s.updateRoom))
 	mux.HandleFunc("GET /api/v1/rooms/{id}/members", s.authed(s.listMembers))
 	mux.HandleFunc("POST /api/v1/rooms/{id}/members", s.authed(s.addMember))
 	mux.HandleFunc("GET /api/v1/rooms/{id}/events", s.authed(s.listEvents))

@@ -14,6 +14,8 @@ export type CreatePrincipal = Schemas["CreatePrincipal"];
 export type CreatedPrincipal = Schemas["CreatedPrincipal"];
 export type RoomKind = Schemas["RoomKind"];
 export type Room = Schemas["Room"];
+export type AgentPolicy = Schemas["AgentPolicy"];
+export type UpdateRoom = Schemas["UpdateRoom"];
 export type Member = Schemas["Member"];
 export type Event = Schemas["Event"];
 export type Part = Schemas["Part"];
@@ -112,6 +114,13 @@ export async function createRoom(body: CreateRoom, client = defaultClient): Prom
 
 export async function getRoom(id: string, client = defaultClient): Promise<Room> {
   const { data, error, response } = await client.GET("/rooms/{id}", { params: { path: { id } } });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/** updateRoom changes a room's agent settings. */
+export async function updateRoom(id: string, body: UpdateRoom, client = defaultClient): Promise<Room> {
+  const { data, error, response } = await client.PATCH("/rooms/{id}", { params: { path: { id } }, body });
   if (!data) fail(response, error);
   return data;
 }

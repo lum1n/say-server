@@ -45,15 +45,11 @@ func (s *sqlStore) CreatePrincipal(ctx context.Context, p core.Principal) error 
 }
 
 func createPrincipal(ctx context.Context, q *db.Queries, p core.Principal) error {
-	var admin int32
-	if p.Admin {
-		admin = 1
-	}
 	return q.CreatePrincipal(ctx, db.CreatePrincipalParams{
 		ID:          p.ID,
 		Kind:        string(p.Kind),
 		DisplayName: p.DisplayName,
-		Admin:       admin,
+		Admin:       flag(p.Admin),
 		CreatedAt:   millis(p.CreatedAt),
 	})
 }
@@ -208,7 +204,7 @@ func (s *sqlStore) GetRoom(ctx context.Context, id string) (core.Room, error) {
 	if err != nil {
 		return core.Room{}, notFound(err)
 	}
-	return room(row.ID, row.Kind, row.Name, row.CreatedAt), nil
+	return room(row), nil
 }
 
 func (s *sqlStore) RoomsFor(ctx context.Context, principalID string) ([]core.Room, error) {
@@ -218,13 +214,43 @@ func (s *sqlStore) RoomsFor(ctx context.Context, principalID string) ([]core.Roo
 	}
 	rooms := make([]core.Room, len(rows))
 	for i, row := range rows {
-		rooms[i] = room(row.ID, row.Kind, row.Name, row.CreatedAt)
+		rooms[i] = room(row)
 	}
 	return rooms, nil
 }
 
-func room(id, kind, name string, createdAt int64) core.Room {
-	return core.Room{ID: id, Kind: core.RoomKind(kind), Name: name, CreatedAt: time.UnixMilli(createdAt)}
+func room(row db.Room) core.Room {
+	return core.Room{
+		ID:   row.ID,
+		Kind: core.RoomKind(row.Kind),
+		Name: row.Name,
+		Agents: core.AgentPolicy{
+			Paused:     row.AgentsPaused != 0,
+			MaxHops:    int(row.MaxHopCount),
+			TurnLimit:  int(row.AgentTurnLimit),
+			TurnWindow: time.Duration(row.AgentTurnWindow) * time.Millisecond,
+			RateLimit:  int(row.AgentRateLimit),
+		},
+		CreatedAt: time.UnixMilli(row.CreatedAt),
+	}
+}
+
+func (s *sqlStore) SetAgentPolicy(ctx context.Context, roomID string, p core.AgentPolicy) error {
+	n, err := s.q().SetAgentPolicy(ctx, db.SetAgentPolicyParams{
+		ID:              roomID,
+		AgentsPaused:    flag(p.Paused),
+		MaxHopCount:     int32(p.MaxHops),
+		AgentTurnLimit:  int32(p.TurnLimit),
+		AgentTurnWindow: p.TurnWindow.Milliseconds(),
+		AgentRateLimit:  int32(p.RateLimit),
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *sqlStore) AddMember(ctx context.Context, m core.Membership) error {
@@ -274,7 +300,7 @@ func membership(row db.Membership) (core.Membership, error) {
 	return m, nil
 }
 
-func (s *sqlStore) AppendEvent(ctx context.Context, e core.Event, idempotencyKey string) (core.Event, error) {
+func (s *sqlStore) AppendEvent(ctx context.Context, e core.Event, opts AppendOptions) (core.Event, error) {
 	if e.ID == "" {
 		e.ID = core.NewID()
 	}
@@ -295,11 +321,11 @@ func (s *sqlStore) AppendEvent(ctx context.Context, e core.Event, idempotencyKey
 		if err != nil {
 			return notFound(err)
 		}
-		if idempotencyKey != "" {
+		if opts.IdempotencyKey != "" {
 			row, err := q.EventByIdempotencyKey(ctx, db.EventByIdempotencyKeyParams{
 				RoomID:         e.RoomID,
 				SenderID:       e.SenderID,
-				IdempotencyKey: idempotencyKey,
+				IdempotencyKey: opts.IdempotencyKey,
 			})
 			if err == nil {
 				ev, err := event(row)
@@ -310,6 +336,13 @@ func (s *sqlStore) AppendEvent(ctx context.Context, e core.Event, idempotencyKey
 				return errRollback
 			}
 			if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+		}
+		// A retried send above is not a new turn, so it passes even when
+		// the budget has been spent since.
+		if opts.Automated {
+			if err := checkBudgets(ctx, q, e, opts); err != nil {
 				return err
 			}
 		}
@@ -324,7 +357,8 @@ func (s *sqlStore) AppendEvent(ctx context.Context, e core.Event, idempotencyKey
 			HopCount:       int32(e.Causation.HopCount),
 			Parts:          parts,
 			Stream:         string(e.Stream),
-			IdempotencyKey: idempotencyKey,
+			IdempotencyKey: opts.IdempotencyKey,
+			Automated:      flag(opts.Automated),
 			CreatedAt:      millis(e.CreatedAt),
 		})
 		if err != nil {
@@ -344,6 +378,38 @@ func (s *sqlStore) AppendEvent(ctx context.Context, e core.Event, idempotencyKey
 		return core.Event{}, err
 	}
 	return e, nil
+}
+
+// checkBudgets fails when e would be more than a budget's Max events in
+// its Window: when the Max-th latest counted event is inside the window
+// that ends at e.
+func checkBudgets(ctx context.Context, q *db.Queries, e core.Event, opts AppendOptions) error {
+	check := func(b Budget, sender bool) error {
+		if b.Max <= 0 {
+			return nil
+		}
+		var at int64
+		var err error
+		if sender {
+			at, err = q.AutomatedFromSenderAt(ctx, db.AutomatedFromSenderAtParams{RoomID: e.RoomID, SenderID: e.SenderID, Offset: int32(b.Max - 1)})
+		} else {
+			at, err = q.AutomatedAt(ctx, db.AutomatedAtParams{RoomID: e.RoomID, Offset: int32(b.Max - 1)})
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if retry := time.UnixMilli(at).Add(b.Window); retry.After(e.CreatedAt) {
+			return &BudgetError{Sender: sender, Budget: b, RetryAt: retry}
+		}
+		return nil
+	}
+	if err := check(opts.Room, false); err != nil {
+		return err
+	}
+	return check(opts.Sender, true)
 }
 
 // errRollback makes tx roll back without the caller treating it as a
@@ -464,6 +530,13 @@ func millis(t time.Time) int64 {
 		t = time.Now()
 	}
 	return t.UnixMilli()
+}
+
+func flag(b bool) int32 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func nonNil(s []string) []string {

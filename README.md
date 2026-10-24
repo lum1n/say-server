@@ -16,7 +16,8 @@ binary against Postgres with an embedded NATS cluster bus.
 Early. The core API works: rooms, members, messages, and realtime delivery
 over WebSocket, SSE and long polling. The web app has the setup wizard,
 sign-in, rooms with live chat, and a page where admins add people and
-agents. Agents can join rooms over MCP at `/mcp`. See the milestones below.
+agents. Agents can join rooms over MCP at `/mcp`, within each room's agent
+limits. See the milestones below.
 
 ## Quick start (target)
 
@@ -119,6 +120,22 @@ claude mcp add --transport http say http://localhost:7290/mcp \
 The tools are `list_rooms`, `read`, `send`, `wait_for_messages` and
 `create_room`. Replies count toward the room's hop limit
 ([ADR 0008](./docs/adr/0008-mcp-server.md)).
+
+### Agent limits
+
+Every agent send, over REST, WebSocket or MCP, goes through the room's
+limits ([ADR 0005](./docs/adr/0005-agent-safety.md)):
+
+- **Pause agents** in the room header stops every agent from sending.
+- **Replies in a row** (`max_hop_count`, default 8) caps a chain of agent
+  replies; a person's message starts a new chain.
+- **Messages from all agents** (default 60 per 10 minutes) and **messages
+  per agent per minute** (default 10) catch agents that talk without
+  replying to anything. They answer 429 with `Retry-After`.
+
+People who own or run a room set these in its member panel, or with
+`PATCH /api/v1/rooms/{id}`. Agents cannot change them, even in rooms they
+own. People are never limited.
 
 After editing `internal/store/queries.sql` or a migration, run
 `make generate`.

@@ -32,7 +32,7 @@ func (s *Server) listRooms(w http.ResponseWriter, r *http.Request, me core.Princ
 	}
 	out := make([]wireRoom, len(rooms))
 	for i, room := range rooms {
-		out[i] = toRoom(room)
+		out[i] = s.toRoom(room)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rooms": out})
 }
@@ -54,7 +54,7 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request, me core.Prin
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toRoom(room))
+	writeJSON(w, http.StatusCreated, s.toRoom(room))
 }
 
 // newRoom creates a room owned by me.
@@ -86,7 +86,7 @@ func (s *Server) getRoom(w http.ResponseWriter, r *http.Request, me core.Princip
 		writeError(w, roomErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, toRoom(room))
+	writeJSON(w, http.StatusOK, s.toRoom(room))
 }
 
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request, me core.Principal) {
@@ -236,6 +236,17 @@ func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg
 	if err != nil {
 		return core.Event{}, false, errorf(http.StatusUnprocessableEntity, "invalid", "%v", err)
 	}
+	room, err := s.store.GetRoom(ctx, roomID)
+	if err != nil {
+		return core.Event{}, false, roomErr(err)
+	}
+	policy := s.agentPolicy(room)
+	automated := me.Kind.Automated()
+	// The switch is read outside the append's transaction, so a send
+	// already under way when someone pauses the room may still land.
+	if automated && policy.Paused {
+		return core.Event{}, false, errorf(http.StatusConflict, "agents_paused", "agents are paused in this room")
+	}
 	var cause *core.Event
 	if msg.CausedBy != "" {
 		c, err := s.store.GetEvent(ctx, msg.CausedBy)
@@ -247,9 +258,9 @@ func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg
 		}
 		cause = &c
 	}
-	causation, err := core.Next(cause, me.Kind, s.maxHops)
+	causation, err := core.Next(cause, me.Kind, policy.MaxHops)
 	if errors.Is(err, core.ErrHopLimit) {
-		return core.Event{}, false, errorf(http.StatusUnprocessableEntity, "hop_limit", "the causation chain reached its limit of %d automated hops", s.maxHops)
+		return core.Event{}, false, errorf(http.StatusUnprocessableEntity, "hop_limit", "the causation chain reached this room's limit of %d automated hops", policy.MaxHops)
 	}
 	id := core.NewID()
 	e, err = s.store.AppendEvent(ctx, core.Event{
@@ -260,7 +271,16 @@ func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg
 		Causation: causation,
 		Parts:     parts,
 		Stream:    core.StreamFinal,
-	}, idempotencyKey)
+	}, store.AppendOptions{
+		IdempotencyKey: idempotencyKey,
+		Automated:      automated,
+		Room:           store.Budget{Max: policy.TurnLimit, Window: policy.TurnWindow},
+		Sender:         store.Budget{Max: policy.RateLimit, Window: time.Minute},
+	})
+	var be *store.BudgetError
+	if errors.As(err, &be) {
+		return core.Event{}, false, budgetErr(be)
+	}
 	if err != nil {
 		return core.Event{}, false, roomErr(err)
 	}

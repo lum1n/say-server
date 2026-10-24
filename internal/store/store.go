@@ -12,6 +12,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -23,6 +24,41 @@ var (
 	ErrSetupDone     = errors.New("store: setup is already done")
 	ErrUsernameTaken = errors.New("store: username is taken")
 )
+
+// AppendOptions are the conditions of an AppendEvent.
+type AppendOptions struct {
+	// A repeated non-empty IdempotencyKey from the same sender in the same
+	// room returns the originally stored event instead of writing a new one.
+	IdempotencyKey string
+	// Automated marks an event from an automated sender. Only automated
+	// events count against the budgets, and only they are checked.
+	Automated bool
+	// Room budgets the room's automated events from all senders, Sender
+	// those from e.SenderID.
+	Room, Sender Budget
+}
+
+// Budget allows at most Max events in any Window. A zero Max has no limit.
+type Budget struct {
+	Max    int
+	Window time.Duration
+}
+
+// BudgetError is AppendEvent's error when an automated event would exceed
+// a budget. RetryAt is when the oldest counted event leaves the window.
+type BudgetError struct {
+	Sender  bool // the Sender budget, not the Room budget
+	Budget  Budget
+	RetryAt time.Time
+}
+
+func (e *BudgetError) Error() string {
+	who := "room"
+	if e.Sender {
+		who = "sender"
+	}
+	return fmt.Sprintf("store: %s budget of %d events per %s is spent", who, e.Budget.Max, e.Budget.Window)
+}
 
 // Login is a username and password hash that signs a human principal in.
 type Login struct {
@@ -65,17 +101,18 @@ type Store interface {
 	GetRoom(ctx context.Context, id string) (core.Room, error)
 	// RoomsFor returns the rooms principalID is a member of, oldest first.
 	RoomsFor(ctx context.Context, principalID string) ([]core.Room, error)
+	// SetAgentPolicy replaces the room's agent policy.
+	SetAgentPolicy(ctx context.Context, roomID string, p core.AgentPolicy) error
 
 	AddMember(ctx context.Context, m core.Membership) error
 	GetMember(ctx context.Context, roomID, principalID string) (core.Membership, error)
 	Members(ctx context.Context, roomID string) ([]core.Membership, error)
 
 	// AppendEvent allocates the next seq for e.RoomID and writes the event
-	// and its outbox entry in one transaction. A repeated non-empty
-	// idempotencyKey from the same sender in the same room returns the
-	// originally stored event instead of writing a new one. An empty e.ID
-	// or e.CreatedAt is filled in.
-	AppendEvent(ctx context.Context, e core.Event, idempotencyKey string) (core.Event, error)
+	// and its outbox entry in one transaction. An empty e.ID or e.CreatedAt
+	// is filled in. The budgets are checked under the room's lock, so they
+	// hold across the nodes of a cluster; a spent one is a *BudgetError.
+	AppendEvent(ctx context.Context, e core.Event, opts AppendOptions) (core.Event, error)
 	GetEvent(ctx context.Context, id string) (core.Event, error)
 
 	// EventsAfter returns up to limit events of room with seq > cursor, in

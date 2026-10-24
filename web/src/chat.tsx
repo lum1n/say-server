@@ -31,7 +31,11 @@ export function RealtimeProvider({ queryClient, children }: { queryClient: Query
   useEffect(() => {
     const r = new Realtime({
       onEvent: (e) => queryClient.setQueryData<Event[]>(keys.events(e.room_id), (log) => mergeEvents(log, [e])),
-      onRoomsChanged: () => queryClient.invalidateQueries({ queryKey: keys.rooms }),
+      onRoomsChanged: () => {
+        queryClient.invalidateQueries({ queryKey: keys.rooms });
+        // A room's agent settings changed, or its membership did.
+        queryClient.invalidateQueries({ queryKey: ["room"] });
+      },
     });
     setRt(r);
     return () => r.close();

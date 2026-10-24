@@ -428,13 +428,18 @@ func decodePayload(raw json.RawMessage, v any) error {
 }
 
 // errPayload is the payload of a reply with status "error": the same
-// {code, message} as an HTTP error body, plus the HTTP status it maps to.
+// {code, message} as an HTTP error body, plus the HTTP status it maps to
+// and, for a rate limit, retry_after in seconds.
 func errPayload(err error) json.RawMessage {
 	var ae *apiError
 	if !errors.As(err, &ae) {
 		slog.Error("websocket request failed", "err", err)
 		ae = errorf(http.StatusInternalServerError, "internal", "internal error")
 	}
-	data, _ := json.Marshal(map[string]any{"code": ae.Code, "message": ae.Message, "status": ae.Status})
+	body := map[string]any{"code": ae.Code, "message": ae.Message, "status": ae.Status}
+	if ae.RetryAfter > 0 {
+		body["retry_after"] = int(ae.RetryAfter / time.Second)
+	}
+	data, _ := json.Marshal(body)
 	return data
 }

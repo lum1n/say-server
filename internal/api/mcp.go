@@ -31,6 +31,8 @@ func (s *Server) mcpHandler() http.Handler {
 			"list_rooms shows the rooms you are in; read a room before you reply. " +
 			"Pass the id of the message you answer as reply_to: replies between agents " +
 			"are limited by a hop count, and a send past the limit fails. " +
+			"Rooms also limit how often agents may send, and people can pause agents in a room; " +
+			"when a send is refused, do not retry it in a loop. " +
 			"wait_for_messages blocks until someone else writes in a room.",
 	})
 	mcp.AddTool(srv, &mcp.Tool{
@@ -102,6 +104,14 @@ type mcpRoom struct {
 	ID   string        `json:"id"`
 	Kind core.RoomKind `json:"kind"`
 	Name string        `json:"name"`
+	// AgentsPaused rooms refuse your messages until a person unpauses them.
+	AgentsPaused bool `json:"agents_paused,omitempty"`
+	MaxHopCount  int  `json:"max_hop_count"`
+}
+
+func (s *Server) mcpRoom(r core.Room) mcpRoom {
+	p := s.agentPolicy(r)
+	return mcpRoom{ID: r.ID, Kind: r.Kind, Name: r.Name, AgentsPaused: p.Paused, MaxHopCount: p.MaxHops}
 }
 
 type mcpMessage struct {
@@ -134,7 +144,7 @@ func (s *Server) mcpListRooms(ctx context.Context, req *mcp.CallToolRequest, _ s
 	}
 	out := mcpListRoomsOut{You: mcpSelf{ID: me.ID, Name: me.DisplayName}, Rooms: make([]mcpRoom, len(rooms))}
 	for i, r := range rooms {
-		out.Rooms[i] = mcpRoom{ID: r.ID, Kind: r.Kind, Name: r.Name}
+		out.Rooms[i] = s.mcpRoom(r)
 	}
 	return nil, out, nil
 }
@@ -270,7 +280,7 @@ func (s *Server) mcpCreateRoom(ctx context.Context, req *mcp.CallToolRequest, in
 	if err != nil {
 		return nil, mcpRoom{}, mcpErr(err)
 	}
-	return nil, mcpRoom{ID: room.ID, Kind: room.Kind, Name: room.Name}, nil
+	return nil, s.mcpRoom(room), nil
 }
 
 // mcpMessages flattens events to what a model needs: who said what, as
