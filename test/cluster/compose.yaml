@@ -1,0 +1,38 @@
+# Three say nodes on one Postgres, for the cluster test (see cluster_test.go).
+# Nodes are reachable on localhost:8081–8083. Build the image first:
+#
+#	docker build -t say:cluster-test .
+
+x-node: &node
+  image: say:cluster-test
+  pull_policy: never
+  depends_on:
+    postgres:
+      condition: service_healthy
+  environment:
+    SAY_DB: postgres://say:say@postgres:5432/say?sslmode=disable
+    SAY_PEERS: say1:6222,say2:6222,say3:6222
+    SAY_CLUSTER_SECRET: cluster-test-secret
+    SAY_SETUP_CODE: cluster-test
+
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: say
+      POSTGRES_PASSWORD: say
+      POSTGRES_DB: say
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "say"]
+      interval: 2s
+      retries: 30
+
+  say1:
+    <<: *node
+    ports: ["8081:8080"]
+  say2:
+    <<: *node
+    ports: ["8082:8080"]
+  say3:
+    <<: *node
+    ports: ["8083:8080"]

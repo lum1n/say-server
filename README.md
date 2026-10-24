@@ -22,7 +22,7 @@ sign-in, but no chat UI yet. See the milestones below.
 ```sh
 curl -fsSL get.<name>.sh | sh && say
 # or
-docker run -p 8080:8080 -v data:/data say
+docker run -p 8080:8080 -v data:/data say   # after `make image`
 ```
 
 Either opens a browser setup wizard that creates the admin account.
@@ -71,6 +71,24 @@ The store tests run against SQLite, and also against Postgres when
 
 ```sh
 SAY_TEST_POSTGRES='postgres://say:say@localhost:5432/say?sslmode=disable' make test
+```
+
+With Docker:
+
+```sh
+make image          # builds the say image (distroless, data in /data)
+make cluster-test   # three nodes and Postgres in docker compose: a client on
+                    # one node sees messages posted to another, and replays
+                    # what it missed after reconnecting elsewhere
+```
+
+The cluster test (`test/cluster`) only talks HTTP, so it also runs against
+any cluster you start yourself, as long as every node has the same
+`SAY_SETUP_CODE`:
+
+```sh
+SAY_CLUSTER_NODES=http://a:8080,http://b:8080,http://c:8080 SAY_SETUP_CODE=… \
+  go test -count=1 ./test/cluster
 ```
 
 To try the API from a script, create an agent and use its token (it never
