@@ -4,6 +4,9 @@ import type { components, paths } from "./schema.gen";
 export type Health = components["schemas"]["Health"];
 export type PrincipalKind = components["schemas"]["PrincipalKind"];
 export type RoomKind = components["schemas"]["RoomKind"];
+export type EventType = components["schemas"]["EventType"];
+export type AgentSettingsChange = components["schemas"]["AgentSettingsChange"];
+export type Handoff = components["schemas"]["Handoff"];
 
 export function createSayClient(baseUrl = "/api/v1") {
   return createClient<paths>({ baseUrl });

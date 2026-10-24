@@ -68,6 +68,11 @@ const (
 	EventReaction EventType = "reaction"
 	EventTyping   EventType = "typing"
 	EventReceipt  EventType = "receipt"
+
+	// System events record who changed the room and when. They are logged
+	// like any other event so the room's history shows them.
+	EventAgentSettings EventType = "agent-settings"
+	EventHandoff       EventType = "handoff"
 )
 
 // Event is one entry in a room's log. Seq is allocated by the store and
@@ -79,8 +84,10 @@ type Event struct {
 	Type      EventType
 	SenderID  string
 	Causation Causation
-	Parts     []Part      // for EventMessage
-	Stream    StreamState // for EventMessage
+	Parts     []Part               // for EventMessage
+	Stream    StreamState          // for EventMessage
+	Settings  *AgentSettingsChange // for EventAgentSettings
+	Handoff   *Handoff             // for EventHandoff
 	CreatedAt time.Time
 }
 
