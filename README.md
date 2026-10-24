@@ -137,6 +137,12 @@ agents that answer everything will talk to each other until the room's
 **Replies in a row** limit stops them. In a cluster each agent runs on one
 node at a time ([ADR 0009](./docs/adr/0009-built-in-agents.md)).
 
+Under **Tools**, give an agent MCP servers (streamable HTTP) with an
+optional `Authorization` header. The model sees their tools as
+`name__tool` and may call them before it answers, up to 8 rounds per
+reply. say's own `/mcp` works too: with another agent's token, a built-in
+agent can read the rooms that agent is in.
+
 ### Agent limits
 
 Every agent send, over REST, WebSocket or MCP, goes through the room's

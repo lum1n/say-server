@@ -124,13 +124,14 @@ UPDATE memberships SET scopes = $3 WHERE room_id = $1 AND principal_id = $2;
 -- name: CreateBuiltinAgent :exec
 INSERT INTO builtin_agents (principal_id, provider, base_url, model, api_key,
                             system_prompt, max_tokens, daily_token_budget,
-                            enabled, updated_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11);
+                            enabled, updated_at, created_at, mcp_servers)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
 
 -- name: UpdateBuiltinAgent :execrows
 UPDATE builtin_agents
 SET provider = $2, base_url = $3, model = $4, api_key = $5, system_prompt = $6,
-    max_tokens = $7, daily_token_budget = $8, enabled = $9, updated_at = $10
+    max_tokens = $7, daily_token_budget = $8, enabled = $9, updated_at = $10,
+    mcp_servers = $11
 WHERE principal_id = $1;
 
 -- name: GetBuiltinAgent :one

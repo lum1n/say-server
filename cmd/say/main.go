@@ -99,7 +99,7 @@ func serve(args []string) error {
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	slog.Info("say listening", "addr", ln.Addr().String(), "version", version)
-	runner := agents.New(agents.Config{Store: st, Bus: b, Chat: app, Holder: holderName()})
+	runner := agents.New(agents.Config{Store: st, Bus: b, Chat: app, Holder: holderName(), Version: version})
 	agentsCtx, stopAgents := context.WithCancel(ctx)
 	agentsDone := make(chan struct{})
 	go func() {

@@ -39,6 +39,8 @@ type Config struct {
 	Holder string
 	// NewProvider makes an agent's model client; nil is llm.New.
 	NewProvider func(llm.Config) (llm.Provider, error)
+	// Version is the server's, told to the agents' MCP servers.
+	Version string
 }
 
 // Timings; tests shorten them.

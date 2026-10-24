@@ -195,8 +195,8 @@ func (q *Queries) ClaimSetup(ctx context.Context, value string) (int64, error) {
 const createBuiltinAgent = `-- name: CreateBuiltinAgent :exec
 INSERT INTO builtin_agents (principal_id, provider, base_url, model, api_key,
                             system_prompt, max_tokens, daily_token_budget,
-                            enabled, updated_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                            enabled, updated_at, created_at, mcp_servers)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 `
 
 type CreateBuiltinAgentParams struct {
@@ -211,6 +211,7 @@ type CreateBuiltinAgentParams struct {
 	Enabled          int32
 	UpdatedAt        int64
 	CreatedAt        int64
+	McpServers       string
 }
 
 func (q *Queries) CreateBuiltinAgent(ctx context.Context, arg CreateBuiltinAgentParams) error {
@@ -226,6 +227,7 @@ func (q *Queries) CreateBuiltinAgent(ctx context.Context, arg CreateBuiltinAgent
 		arg.Enabled,
 		arg.UpdatedAt,
 		arg.CreatedAt,
+		arg.McpServers,
 	)
 	return err
 }
@@ -478,7 +480,7 @@ func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]E
 }
 
 const getBuiltinAgent = `-- name: GetBuiltinAgent :one
-SELECT principal_id, provider, base_url, model, api_key, system_prompt, max_tokens, daily_token_budget, enabled, last_error, last_error_at, updated_at, created_at FROM builtin_agents WHERE principal_id = $1
+SELECT principal_id, provider, base_url, model, api_key, system_prompt, max_tokens, daily_token_budget, enabled, last_error, last_error_at, updated_at, created_at, mcp_servers FROM builtin_agents WHERE principal_id = $1
 `
 
 func (q *Queries) GetBuiltinAgent(ctx context.Context, principalID string) (BuiltinAgent, error) {
@@ -498,6 +500,7 @@ func (q *Queries) GetBuiltinAgent(ctx context.Context, principalID string) (Buil
 		&i.LastErrorAt,
 		&i.UpdatedAt,
 		&i.CreatedAt,
+		&i.McpServers,
 	)
 	return i, err
 }
@@ -648,7 +651,7 @@ func (q *Queries) InsertOutbox(ctx context.Context, arg InsertOutboxParams) erro
 }
 
 const listBuiltinAgents = `-- name: ListBuiltinAgents :many
-SELECT principal_id, provider, base_url, model, api_key, system_prompt, max_tokens, daily_token_budget, enabled, last_error, last_error_at, updated_at, created_at FROM builtin_agents ORDER BY created_at, principal_id
+SELECT principal_id, provider, base_url, model, api_key, system_prompt, max_tokens, daily_token_budget, enabled, last_error, last_error_at, updated_at, created_at, mcp_servers FROM builtin_agents ORDER BY created_at, principal_id
 `
 
 func (q *Queries) ListBuiltinAgents(ctx context.Context) ([]BuiltinAgent, error) {
@@ -674,6 +677,7 @@ func (q *Queries) ListBuiltinAgents(ctx context.Context) ([]BuiltinAgent, error)
 			&i.LastErrorAt,
 			&i.UpdatedAt,
 			&i.CreatedAt,
+			&i.McpServers,
 		); err != nil {
 			return nil, err
 		}
@@ -974,7 +978,8 @@ func (q *Queries) SetupDone(ctx context.Context) (int64, error) {
 const updateBuiltinAgent = `-- name: UpdateBuiltinAgent :execrows
 UPDATE builtin_agents
 SET provider = $2, base_url = $3, model = $4, api_key = $5, system_prompt = $6,
-    max_tokens = $7, daily_token_budget = $8, enabled = $9, updated_at = $10
+    max_tokens = $7, daily_token_budget = $8, enabled = $9, updated_at = $10,
+    mcp_servers = $11
 WHERE principal_id = $1
 `
 
@@ -989,6 +994,7 @@ type UpdateBuiltinAgentParams struct {
 	DailyTokenBudget int64
 	Enabled          int32
 	UpdatedAt        int64
+	McpServers       string
 }
 
 func (q *Queries) UpdateBuiltinAgent(ctx context.Context, arg UpdateBuiltinAgentParams) (int64, error) {
@@ -1003,6 +1009,7 @@ func (q *Queries) UpdateBuiltinAgent(ctx context.Context, arg UpdateBuiltinAgent
 		arg.DailyTokenBudget,
 		arg.Enabled,
 		arg.UpdatedAt,
+		arg.McpServers,
 	)
 	if err != nil {
 		return 0, err

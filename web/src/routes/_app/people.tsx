@@ -8,6 +8,7 @@ import {
   type CreatedPrincipal,
   listBuiltinAgents,
   type LLMProvider,
+  type MCPServerSettings,
   updateBuiltinAgent,
 } from "@say/sdk";
 import { type FormEvent, type ReactNode, useState } from "react";
@@ -175,6 +176,7 @@ function BuiltinAgentRow({ agent: a }: { agent: BuiltinAgent }) {
         <span className="muted">
           · {count.format(a.tokens_today)}
           {a.daily_token_budget > 0 && ` of ${count.format(a.daily_token_budget)}`} tokens today
+          {a.mcp_servers.length > 0 && ` · tools from ${a.mcp_servers.map((m) => m.name).join(", ")}`}
         </span>{" "}
         <button type="button" className="link" disabled={save.isPending} onClick={() => save.mutate({ enabled: !a.enabled })}>
           {a.enabled ? "Turn off" : "Turn on"}
@@ -259,6 +261,9 @@ function AgentSettingsForm({
   const [prompt, setPrompt] = useState(agent?.system_prompt ?? "");
   const [maxTokens, setMaxTokens] = useState(String(agent?.max_tokens ?? 1024));
   const [budget, setBudget] = useState(String(agent?.daily_token_budget ?? 0));
+  const [servers, setServers] = useState<ServerRow[]>(
+    () => agent?.mcp_servers.map((m) => ({ key: nextRow++, name: m.name, url: m.url, auth: "", keep: m.has_authorization })) ?? [],
+  );
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const body: BuiltinAgentSettings = {
@@ -268,6 +273,12 @@ function AgentSettingsForm({
       system_prompt: prompt,
       max_tokens: Number(maxTokens),
       daily_token_budget: Number(budget),
+      mcp_servers: servers.map((r): MCPServerSettings => {
+        const m: MCPServerSettings = { name: r.name, url: r.url };
+        // Left out, the server keeps a stored header for the same name and URL.
+        if (r.auth || !r.keep) m.authorization = r.auth;
+        return m;
+      }),
     };
     if (apiKey) body.api_key = apiKey;
     onSubmit(body);
@@ -317,10 +328,81 @@ function AgentSettingsForm({
       <Field label="Tokens per day" hint="Input and output together, per UTC day; 0 is no limit">
         <input type="number" min={0} required value={budget} onChange={(e) => setBudget(e.target.value)} />
       </Field>
+      <MCPServers rows={servers} onChange={setServers} />
       <FormError error={error} />
       <button type="submit" disabled={pending}>
         {submitLabel}
       </button>
     </form>
+  );
+}
+
+type ServerRow = { key: number; name: string; url: string; auth: string; keep: boolean };
+let nextRow = 0;
+
+// MCPServers edits the MCP servers whose tools an agent may call. A stored
+// Authorization header is never shown; it is kept unless replaced or
+// forgotten.
+function MCPServers({ rows, onChange }: { rows: ServerRow[]; onChange: (rows: ServerRow[]) => void }) {
+  const set = (key: number, change: Partial<ServerRow>) =>
+    onChange(rows.map((r) => (r.key === key ? { ...r, ...change } : r)));
+  return (
+    <fieldset className="mcp-servers">
+      <legend>Tools</legend>
+      <p className="muted">
+        MCP servers (streamable HTTP) whose tools the agent may call. It sees them as <code>name__tool</code>.
+      </p>
+      {rows.map((r) => (
+        <div key={r.key} className="mcp-server">
+          <input
+            aria-label="Server name"
+            placeholder="name"
+            value={r.name}
+            onChange={(e) => set(r.key, { name: e.target.value })}
+            required
+            pattern="[a-zA-Z0-9_\-]{1,32}"
+            title="1 to 32 letters, digits, _ or -"
+            autoComplete="off"
+          />
+          <input
+            aria-label="Server URL"
+            type="url"
+            placeholder="https://example.com/mcp"
+            value={r.url}
+            onChange={(e) => set(r.key, { url: e.target.value })}
+            required
+            autoComplete="off"
+          />
+          <input
+            aria-label="Authorization header"
+            type="password"
+            placeholder={r.keep ? "Header stored" : "Authorization"}
+            title={r.keep ? "A header is stored; leave empty to keep it" : "Sent as the Authorization header, e.g. Bearer …"}
+            value={r.auth}
+            onChange={(e) => set(r.key, { auth: e.target.value })}
+            autoComplete="new-password"
+          />
+          <span className="mcp-actions">
+            {r.keep && (
+              <button type="button" className="link" onClick={() => set(r.key, { keep: false })}>
+                Forget header
+              </button>
+            )}
+            <button type="button" className="link" onClick={() => onChange(rows.filter((x) => x.key !== r.key))}>
+              Remove
+            </button>
+          </span>
+        </div>
+      ))}
+      {rows.length < 8 && (
+        <button
+          type="button"
+          className="link"
+          onClick={() => onChange([...rows, { key: nextRow++, name: "", url: "", auth: "", keep: false }])}
+        >
+          Add MCP server
+        </button>
+      )}
+    </fieldset>
   );
 }

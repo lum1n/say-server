@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -52,7 +53,7 @@ func TestAnthropic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != (Response{Text: "4", InputTokens: 12, OutputTokens: 3}) {
+	if !reflect.DeepEqual(got, Response{Text: "4", InputTokens: 12, OutputTokens: 3}) {
 		t.Fatalf("got %+v", got)
 	}
 	if k := header.Get("X-Api-Key"); k != "k" {
@@ -97,7 +98,7 @@ func TestOpenAICompatible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != (Response{Text: "4", InputTokens: 20, OutputTokens: 1}) {
+	if !reflect.DeepEqual(got, Response{Text: "4", InputTokens: 20, OutputTokens: 1}) {
 		t.Fatalf("got %+v", got)
 	}
 	if a := header.Get("Authorization"); a != "Bearer none" {
@@ -110,6 +111,98 @@ func TestOpenAICompatible(t *testing.T) {
 	msgs := b["messages"].([]any)
 	if len(msgs) != 4 || msgs[0].(map[string]any)["role"] != "system" {
 		t.Errorf("messages = %v", msgs)
+	}
+}
+
+// withTools is a transcript in which the model called a tool and got its
+// result.
+var withTools = Request{
+	MaxTokens: 100,
+	Tools: []Tool{{
+		Name:        "wx__forecast",
+		Description: "Weather for a city",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{"city": map[string]any{"type": "string"}},
+			"required":             []any{"city"},
+			"additionalProperties": false,
+		},
+	}},
+	Messages: []Message{
+		{Role: "user", Text: "ada: weather in Oslo?"},
+		{Role: "assistant", Text: "Checking.", ToolCalls: []ToolCall{{ID: "call_1", Name: "wx__forecast", Input: json.RawMessage(`{"city":"Oslo"}`)}}},
+		{Role: "user", ToolResults: []ToolResult{{CallID: "call_1", Content: "rain", IsError: true}}},
+	},
+}
+
+func TestAnthropicTools(t *testing.T) {
+	srv, body, _ := record(t, "/v1/messages", `{
+		"id": "msg_1", "type": "message", "role": "assistant", "model": "claude-test",
+		"content": [
+			{"type": "text", "text": "Again."},
+			{"type": "tool_use", "id": "toolu_2", "name": "wx__forecast", "input": {"city": "Bergen"}}
+		],
+		"stop_reason": "tool_use",
+		"usage": {"input_tokens": 30, "output_tokens": 9}
+	}`)
+	p, _ := New(Config{Provider: ProviderAnthropic, BaseURL: srv.URL, APIKey: "k", Model: "claude-test"})
+	got, err := p.Complete(context.Background(), withTools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Text != "Again." || len(got.ToolCalls) != 1 || got.ToolCalls[0].ID != "toolu_2" ||
+		got.ToolCalls[0].Name != "wx__forecast" || string(got.ToolCalls[0].Input) != `{"city": "Bergen"}` {
+		t.Fatalf("got %+v", got)
+	}
+	b := *body
+	tool := b["tools"].([]any)[0].(map[string]any)
+	schema := tool["input_schema"].(map[string]any)
+	if tool["name"] != "wx__forecast" || tool["description"] != "Weather for a city" || schema["type"] != "object" ||
+		schema["required"].([]any)[0] != "city" || schema["additionalProperties"] != false || schema["properties"] == nil {
+		t.Errorf("tool = %v", tool)
+	}
+	msgs := b["messages"].([]any)
+	use := msgs[1].(map[string]any)["content"].([]any)
+	if len(use) != 2 || use[1].(map[string]any)["type"] != "tool_use" || use[1].(map[string]any)["input"].(map[string]any)["city"] != "Oslo" {
+		t.Errorf("assistant turn = %v", use)
+	}
+	res := msgs[2].(map[string]any)["content"].([]any)[0].(map[string]any)
+	if res["type"] != "tool_result" || res["tool_use_id"] != "call_1" || res["is_error"] != true {
+		t.Errorf("result turn = %v", res)
+	}
+}
+
+func TestOpenAITools(t *testing.T) {
+	srv, body, _ := record(t, "/chat/completions", `{
+		"id": "c1", "object": "chat.completion", "created": 1, "model": "llama",
+		"choices": [{"index": 0, "finish_reason": "tool_calls", "message": {"role": "assistant", "content": null,
+			"tool_calls": [{"id": "call_2", "type": "function", "function": {"name": "wx__forecast", "arguments": "{\"city\":\"Bergen\"}"}}]}}],
+		"usage": {"prompt_tokens": 40, "completion_tokens": 8, "total_tokens": 48}
+	}`)
+	p, _ := New(Config{Provider: ProviderOpenAI, BaseURL: srv.URL, Model: "llama"})
+	got, err := p.Complete(context.Background(), withTools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ToolCall{{ID: "call_2", Name: "wx__forecast", Input: json.RawMessage(`{"city":"Bergen"}`)}}
+	if got.Text != "" || !reflect.DeepEqual(got.ToolCalls, want) {
+		t.Fatalf("got %+v", got)
+	}
+	b := *body
+	fn := b["tools"].([]any)[0].(map[string]any)["function"].(map[string]any)
+	if fn["name"] != "wx__forecast" || fn["parameters"].(map[string]any)["required"].([]any)[0] != "city" {
+		t.Errorf("tool = %v", fn)
+	}
+	msgs := b["messages"].([]any)
+	if len(msgs) != 3 {
+		t.Fatalf("messages = %v", msgs)
+	}
+	call := msgs[1].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
+	if call["id"] != "call_1" || call["function"].(map[string]any)["arguments"] != `{"city":"Oslo"}` {
+		t.Errorf("assistant turn = %v", msgs[1])
+	}
+	if res := msgs[2].(map[string]any); res["role"] != "tool" || res["tool_call_id"] != "call_1" || res["content"] != "Error: rain" {
+		t.Errorf("result turn = %v", res)
 	}
 }
 

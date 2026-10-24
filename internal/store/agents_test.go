@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -31,11 +32,13 @@ func TestBuiltinAgents(t *testing.T) {
 			t.Fatal("a human became a built-in agent")
 		}
 		got, err := s.GetBuiltinAgent(ctx, p.ID)
-		if err != nil || got.APIKey != "secret" || got.MaxTokens != 500 || !got.Enabled || got.CreatedAt.IsZero() || !got.LastErrorAt.IsZero() {
+		if err != nil || got.APIKey != "secret" || got.MaxTokens != 500 || !got.Enabled || got.CreatedAt.IsZero() || !got.LastErrorAt.IsZero() || len(got.MCPServers) != 0 {
 			t.Fatalf("GetBuiltinAgent = %+v, %v", got, err)
 		}
 		got.Enabled = false
 		got.Model = "m2"
+		servers := []MCPServer{{Name: "wx", URL: "https://wx.example/mcp", Authorization: "Bearer t"}, {Name: "kb", URL: "http://kb/mcp"}}
+		got.MCPServers = servers
 		if err := s.UpdateBuiltinAgent(ctx, got); err != nil {
 			t.Fatal(err)
 		}
@@ -43,7 +46,8 @@ func TestBuiltinAgents(t *testing.T) {
 			t.Fatal(err)
 		}
 		all, err := s.BuiltinAgents(ctx)
-		if err != nil || len(all) != 1 || all[0].Model != "m2" || all[0].Enabled || all[0].LastError != "boom" || all[0].LastErrorAt.IsZero() {
+		if err != nil || len(all) != 1 || all[0].Model != "m2" || all[0].Enabled || all[0].LastError != "boom" || all[0].LastErrorAt.IsZero() ||
+			!reflect.DeepEqual(all[0].MCPServers, servers) {
 			t.Fatalf("BuiltinAgents = %+v, %v", all, err)
 		}
 		if _, err := s.GetBuiltinAgent(ctx, "nope"); !errors.Is(err, ErrNotFound) {

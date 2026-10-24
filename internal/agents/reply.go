@@ -28,21 +28,80 @@ func (w *worker) reply(ctx context.Context, room core.Room, trigger core.Event) 
 		slog.Debug("built-in agent: hop limit reached", "agent", w.me.ID, "room", room.ID)
 		return
 	}
-	if budget := w.cfg.DailyTokenBudget; budget > 0 {
-		used, err := w.c.Store.AgentUsage(ctx, w.me.ID, time.Now())
-		if err != nil {
-			w.warn(ctx, "read usage", err)
-			return
-		}
-		if used.Total() >= budget {
-			w.fail(ctx, fmt.Errorf("the daily budget of %d tokens is spent", budget))
-			return
-		}
-	}
 	req, err := w.request(ctx, room, trigger)
 	if err != nil {
 		w.warn(ctx, "read history", err)
 		return
+	}
+	var toolErr error
+	if len(w.cfg.MCPServers) > 0 {
+		var tools *toolbox
+		tools, toolErr = openTools(ctx, w.c.Version, w.cfg.MCPServers)
+		defer tools.close()
+		req.Tools = tools.list()
+		// Ask the model, and run the tools it calls, until it answers.
+		for round := 1; ; round++ {
+			resp, ok := w.complete(ctx, req)
+			if !ok {
+				return
+			}
+			if len(resp.ToolCalls) == 0 {
+				req.Messages = append(req.Messages, llm.Message{Role: "assistant", Text: resp.Text})
+				break
+			}
+			if round == maxToolRounds {
+				w.fail(ctx, fmt.Errorf("the model still called tools after %d rounds", maxToolRounds))
+				return
+			}
+			req.Messages = append(req.Messages, llm.Message{Role: "assistant", Text: resp.Text, ToolCalls: resp.ToolCalls})
+			results := make([]llm.ToolResult, len(resp.ToolCalls))
+			for i, c := range resp.ToolCalls {
+				results[i] = tools.call(ctx, c)
+				slog.Info("built-in agent called a tool", "agent", w.me.DisplayName, "tool", c.Name, "failed", results[i].IsError)
+			}
+			req.Messages = append(req.Messages, llm.Message{Role: "user", ToolResults: results})
+			// Tools take time; the room may have been paused meanwhile.
+			if room, err := w.c.Store.GetRoom(ctx, room.ID); err != nil || w.c.Chat.AgentPolicy(room).Paused {
+				return
+			}
+		}
+	} else {
+		resp, ok := w.complete(ctx, req)
+		if !ok {
+			return
+		}
+		req.Messages = append(req.Messages, llm.Message{Role: "assistant", Text: resp.Text})
+	}
+	text := req.Messages[len(req.Messages)-1].Text
+	if text == "" {
+		return
+	}
+	// The key makes the reply to a message unique, so two nodes that both
+	// think they hold the agent during a lease handover send it once.
+	if _, err := w.c.Chat.SendText(ctx, w.me, room.ID, text, trigger.ID, "builtin:"+trigger.ID); err != nil {
+		w.fail(ctx, err)
+		return
+	}
+	// A server that could not be reached stays on record after a reply.
+	if toolErr != nil {
+		toolErr = fmt.Errorf("replied without some tools: %w", toolErr)
+	}
+	w.fail(ctx, toolErr)
+}
+
+// complete makes one model call within the daily budget and records its
+// usage. It reports false, having recorded why, when there is no answer.
+func (w *worker) complete(ctx context.Context, req llm.Request) (llm.Response, bool) {
+	if budget := w.cfg.DailyTokenBudget; budget > 0 {
+		used, err := w.c.Store.AgentUsage(ctx, w.me.ID, time.Now())
+		if err != nil {
+			w.warn(ctx, "read usage", err)
+			return llm.Response{}, false
+		}
+		if used.Total() >= budget {
+			w.fail(ctx, fmt.Errorf("the daily budget of %d tokens is spent", budget))
+			return llm.Response{}, false
+		}
 	}
 	cctx, cancel := context.WithTimeout(ctx, replyTimeout)
 	resp, err := w.llm.Complete(cctx, req)
@@ -57,18 +116,9 @@ func (w *worker) reply(ctx context.Context, room core.Room, trigger core.Event) 
 		if ctx.Err() == nil {
 			w.fail(ctx, err)
 		}
-		return
+		return llm.Response{}, false
 	}
-	if resp.Text == "" {
-		return
-	}
-	// The key makes the reply to a message unique, so two nodes that both
-	// think they hold the agent during a lease handover send it once.
-	if _, err := w.c.Chat.SendText(ctx, w.me, room.ID, resp.Text, trigger.ID, "builtin:"+trigger.ID); err != nil {
-		w.fail(ctx, err)
-		return
-	}
-	w.fail(ctx, nil)
+	return resp, true
 }
 
 // request builds the model input: the agent's instructions and the room's

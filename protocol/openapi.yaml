@@ -912,6 +912,42 @@ components:
           minimum: 0
         enabled:
           type: boolean
+        mcp_servers:
+          type: array
+          description: |
+            Replaces the MCP servers whose tools the agent may call. A server
+            without `authorization` keeps the header it had, as long as its
+            name and URL are unchanged.
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/MCPServerSettings"
+    MCPServerSettings:
+      type: object
+      required: [name, url]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: Prefixes the server's tool names, as `name__tool`.
+          pattern: "^[a-zA-Z0-9_-]{1,32}$"
+        url:
+          type: string
+          description: The server's streamable HTTP endpoint.
+          maxLength: 2000
+        authorization:
+          type: string
+          description: Write-only. Sent as the Authorization header, e.g. `Bearer …`. Empty sends none.
+          maxLength: 2000
+    MCPServer:
+      type: object
+      required: [name, url, has_authorization]
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        has_authorization:
+          type: boolean
     CreateBuiltinAgent:
       allOf:
         - $ref: "#/components/schemas/BuiltinAgentSettings"
@@ -923,7 +959,7 @@ components:
               maxLength: 100
     BuiltinAgent:
       type: object
-      required: [principal, provider, base_url, model, has_api_key, system_prompt, max_tokens, daily_token_budget, tokens_today, enabled]
+      required: [principal, provider, base_url, model, has_api_key, system_prompt, max_tokens, daily_token_budget, tokens_today, enabled, mcp_servers]
       properties:
         principal:
           $ref: "#/components/schemas/Principal"
@@ -948,6 +984,10 @@ components:
           description: Tokens used so far today (UTC).
         enabled:
           type: boolean
+        mcp_servers:
+          type: array
+          items:
+            $ref: "#/components/schemas/MCPServer"
         last_error:
           type: string
           description: Why the agent last failed to reply, until it next succeeds.

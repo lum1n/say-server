@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ const (
 	maxMaxTokens      = 64000
 	maxSystemPrompt   = 20000
 	maxAgentFieldSize = 2000
+	maxMCPServers     = 8
 )
 
 // SendText is how built-in agents write: the same send path as REST, the
@@ -39,18 +41,27 @@ func (s *Server) SendText(ctx context.Context, me core.Principal, roomID, text, 
 }
 
 type wireBuiltinAgent struct {
-	Principal        wirePrincipal `json:"principal"`
-	Provider         string        `json:"provider"`
-	BaseURL          string        `json:"base_url"`
-	Model            string        `json:"model"`
-	HasAPIKey        bool          `json:"has_api_key"`
-	SystemPrompt     string        `json:"system_prompt"`
-	MaxTokens        int           `json:"max_tokens"`
-	DailyTokenBudget int64         `json:"daily_token_budget"`
-	TokensToday      int64         `json:"tokens_today"`
-	Enabled          bool          `json:"enabled"`
-	LastError        string        `json:"last_error,omitempty"`
-	LastErrorAt      *time.Time    `json:"last_error_at,omitempty"`
+	Principal        wirePrincipal   `json:"principal"`
+	Provider         string          `json:"provider"`
+	BaseURL          string          `json:"base_url"`
+	Model            string          `json:"model"`
+	HasAPIKey        bool            `json:"has_api_key"`
+	SystemPrompt     string          `json:"system_prompt"`
+	MaxTokens        int             `json:"max_tokens"`
+	DailyTokenBudget int64           `json:"daily_token_budget"`
+	TokensToday      int64           `json:"tokens_today"`
+	Enabled          bool            `json:"enabled"`
+	MCPServers       []wireMCPServer `json:"mcp_servers"`
+	LastError        string          `json:"last_error,omitempty"`
+	LastErrorAt      *time.Time      `json:"last_error_at,omitempty"`
+}
+
+// wireMCPServer is an agent's MCP server as admins see it: the
+// Authorization header is write-only.
+type wireMCPServer struct {
+	Name             string `json:"name"`
+	URL              string `json:"url"`
+	HasAuthorization bool   `json:"has_authorization"`
 }
 
 func (s *Server) toBuiltinAgent(ctx context.Context, a store.BuiltinAgent) (wireBuiltinAgent, error) {
@@ -73,7 +84,11 @@ func (s *Server) toBuiltinAgent(ctx context.Context, a store.BuiltinAgent) (wire
 		DailyTokenBudget: a.DailyTokenBudget,
 		TokensToday:      used.Total(),
 		Enabled:          a.Enabled,
+		MCPServers:       []wireMCPServer{},
 		LastError:        a.LastError,
+	}
+	for _, m := range a.MCPServers {
+		out.MCPServers = append(out.MCPServers, wireMCPServer{Name: m.Name, URL: m.URL, HasAuthorization: m.Authorization != ""})
 	}
 	if !a.LastErrorAt.IsZero() {
 		at := a.LastErrorAt.UTC()
@@ -121,6 +136,54 @@ type builtinAgentPatch struct {
 	MaxTokens        *int    `json:"max_tokens"`
 	DailyTokenBudget *int64  `json:"daily_token_budget"`
 	Enabled          *bool   `json:"enabled"`
+	// MCPServers replaces the agent's list. A server that leaves out
+	// authorization keeps the one it had, if its name and URL are the same.
+	MCPServers *[]mcpServerPatch `json:"mcp_servers"`
+}
+
+type mcpServerPatch struct {
+	Name          string  `json:"name"`
+	URL           string  `json:"url"`
+	Authorization *string `json:"authorization"`
+}
+
+var mcpServerName = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
+
+func httpURL(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
+}
+
+// applyMCPServers checks a new list of servers and carries over the
+// Authorization headers it leaves out.
+func applyMCPServers(old []store.MCPServer, patch []mcpServerPatch) ([]store.MCPServer, error) {
+	if len(patch) > maxMCPServers {
+		return nil, errorf(http.StatusUnprocessableEntity, "invalid", "an agent has at most %d MCP servers", maxMCPServers)
+	}
+	out := []store.MCPServer{}
+	for _, p := range patch {
+		m := store.MCPServer{Name: strings.TrimSpace(p.Name), URL: strings.TrimSpace(p.URL)}
+		if !mcpServerName.MatchString(m.Name) {
+			return nil, errorf(http.StatusUnprocessableEntity, "invalid", "an MCP server name is 1 to 32 letters, digits, _ or -")
+		}
+		if slices.ContainsFunc(out, func(o store.MCPServer) bool { return o.Name == m.Name }) {
+			return nil, errorf(http.StatusUnprocessableEntity, "invalid", "two MCP servers are called %q", m.Name)
+		}
+		if len(m.URL) > maxAgentFieldSize || !httpURL(m.URL) {
+			return nil, errorf(http.StatusUnprocessableEntity, "invalid", "MCP server %q needs an http or https URL", m.Name)
+		}
+		if p.Authorization != nil {
+			if len(*p.Authorization) > maxAgentFieldSize {
+				return nil, errorf(http.StatusUnprocessableEntity, "invalid", "authorization is longer than %d bytes", maxAgentFieldSize)
+			}
+			m.Authorization = strings.TrimSpace(*p.Authorization)
+		} else if i := slices.IndexFunc(old, func(o store.MCPServer) bool { return o.Name == m.Name && o.URL == m.URL }); i >= 0 {
+			// Only to the same URL, so a secret is never sent somewhere new.
+			m.Authorization = old[i].Authorization
+		}
+		out = append(out, m)
+	}
+	return out, nil
 }
 
 func (p builtinAgentPatch) apply(a store.BuiltinAgent) (store.BuiltinAgent, error) {
@@ -158,11 +221,8 @@ func (p builtinAgentPatch) apply(a store.BuiltinAgent) (store.BuiltinAgent, erro
 	if a.Model == "" {
 		a.Model = llm.DefaultModel[a.Provider]
 	}
-	if a.BaseURL != "" {
-		u, err := url.Parse(a.BaseURL)
-		if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
-			return a, errorf(http.StatusUnprocessableEntity, "invalid", "base_url must be an http or https URL")
-		}
+	if a.BaseURL != "" && !httpURL(a.BaseURL) {
+		return a, errorf(http.StatusUnprocessableEntity, "invalid", "base_url must be an http or https URL")
 	}
 	if p.MaxTokens != nil {
 		a.MaxTokens = *p.MaxTokens
@@ -181,6 +241,13 @@ func (p builtinAgentPatch) apply(a store.BuiltinAgent) (store.BuiltinAgent, erro
 	}
 	if p.Enabled != nil {
 		a.Enabled = *p.Enabled
+	}
+	if p.MCPServers != nil {
+		servers, err := applyMCPServers(a.MCPServers, *p.MCPServers)
+		if err != nil {
+			return a, err
+		}
+		a.MCPServers = servers
 	}
 	return a, nil
 }

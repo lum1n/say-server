@@ -28,11 +28,22 @@ type BuiltinAgent struct {
 	// no cap.
 	DailyTokenBudget int64
 	Enabled          bool
+	// MCPServers are the servers whose tools the agent may call.
+	MCPServers []MCPServer
 	// LastError is the latest failure to reply, for the admin to see.
 	LastError   string
 	LastErrorAt time.Time
 	UpdatedAt   time.Time
 	CreatedAt   time.Time
+}
+
+// MCPServer is an MCP server a built-in agent uses over streamable HTTP.
+// Name prefixes its tools' names. Authorization, sent as the
+// Authorization header, is never shown again once set.
+type MCPServer struct {
+	Name          string `json:"name"`
+	URL           string `json:"url"`
+	Authorization string `json:"authorization,omitempty"`
 }
 
 // Usage is the tokens an agent used on one day.
@@ -71,6 +82,10 @@ func (s *sqlStore) CreateBuiltinAgent(ctx context.Context, p core.Principal, a B
 }
 
 func createBuiltinAgent(ctx context.Context, q *db.Queries, a BuiltinAgent) error {
+	servers, err := json.Marshal(nonNilServers(a.MCPServers))
+	if err != nil {
+		return err
+	}
 	return q.CreateBuiltinAgent(ctx, db.CreateBuiltinAgentParams{
 		PrincipalID:      a.PrincipalID,
 		Provider:         a.Provider,
@@ -83,10 +98,22 @@ func createBuiltinAgent(ctx context.Context, q *db.Queries, a BuiltinAgent) erro
 		Enabled:          flag(a.Enabled),
 		UpdatedAt:        millis(a.UpdatedAt),
 		CreatedAt:        millis(a.CreatedAt),
+		McpServers:       string(servers),
 	})
 }
 
+func nonNilServers(s []MCPServer) []MCPServer {
+	if s == nil {
+		return []MCPServer{}
+	}
+	return s
+}
+
 func (s *sqlStore) UpdateBuiltinAgent(ctx context.Context, a BuiltinAgent) error {
+	servers, err := json.Marshal(nonNilServers(a.MCPServers))
+	if err != nil {
+		return err
+	}
 	n, err := s.q().UpdateBuiltinAgent(ctx, db.UpdateBuiltinAgentParams{
 		PrincipalID:      a.PrincipalID,
 		Provider:         a.Provider,
@@ -98,6 +125,7 @@ func (s *sqlStore) UpdateBuiltinAgent(ctx context.Context, a BuiltinAgent) error
 		DailyTokenBudget: a.DailyTokenBudget,
 		Enabled:          flag(a.Enabled),
 		UpdatedAt:        millis(a.UpdatedAt),
+		McpServers:       string(servers),
 	})
 	if err != nil {
 		return err
@@ -113,7 +141,7 @@ func (s *sqlStore) GetBuiltinAgent(ctx context.Context, principalID string) (Bui
 	if err != nil {
 		return BuiltinAgent{}, notFound(err)
 	}
-	return builtinAgent(row), nil
+	return builtinAgent(row)
 }
 
 func (s *sqlStore) BuiltinAgents(ctx context.Context) ([]BuiltinAgent, error) {
@@ -123,12 +151,14 @@ func (s *sqlStore) BuiltinAgents(ctx context.Context) ([]BuiltinAgent, error) {
 	}
 	out := make([]BuiltinAgent, len(rows))
 	for i, row := range rows {
-		out[i] = builtinAgent(row)
+		if out[i], err = builtinAgent(row); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
 
-func builtinAgent(row db.BuiltinAgent) BuiltinAgent {
+func builtinAgent(row db.BuiltinAgent) (BuiltinAgent, error) {
 	a := BuiltinAgent{
 		PrincipalID:      row.PrincipalID,
 		Provider:         row.Provider,
@@ -146,7 +176,10 @@ func builtinAgent(row db.BuiltinAgent) BuiltinAgent {
 	if row.LastErrorAt != 0 {
 		a.LastErrorAt = time.UnixMilli(row.LastErrorAt)
 	}
-	return a
+	if err := json.Unmarshal([]byte(row.McpServers), &a.MCPServers); err != nil {
+		return a, fmt.Errorf("store: built-in agent %s: mcp_servers: %w", row.PrincipalID, err)
+	}
+	return a, nil
 }
 
 func (s *sqlStore) SetBuiltinAgentError(ctx context.Context, principalID, msg string) error {

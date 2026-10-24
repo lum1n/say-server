@@ -31,6 +31,7 @@ type BuiltinAgent struct {
 	LastErrorAt      int64
 	UpdatedAt        int64
 	CreatedAt        int64
+	McpServers       string
 }
 
 type Event struct {

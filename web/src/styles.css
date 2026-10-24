@@ -342,6 +342,40 @@ a {
   resize: vertical;
 }
 
+.mcp-servers {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin: 0 0 12px;
+  padding: 8px 12px 12px;
+}
+
+.mcp-servers p {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+
+.mcp-server {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(5em, 1fr) minmax(10em, 3fr) minmax(8em, 2fr) auto;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.mcp-actions {
+  display: flex;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .mcp-server {
+    grid-template-columns: 1fr;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
 .token code {
   display: block;
   word-break: break-all;

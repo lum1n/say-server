@@ -25,10 +25,11 @@ func TestMain(m *testing.M) {
 }
 
 // fakeLLM answers every request with a numbered line naming the agent,
-// and remembers what it was asked.
+// or with what script returns, and remembers what it was asked.
 type fakeLLM struct {
-	mu    sync.Mutex
-	calls []llm.Request
+	mu     sync.Mutex
+	calls  []llm.Request
+	script func(llm.Request) llm.Response
 }
 
 func (f *fakeLLM) provider(c llm.Config) (llm.Provider, error) {
@@ -44,6 +45,11 @@ func (p fakeProvider) Complete(_ context.Context, req llm.Request) (llm.Response
 	p.f.mu.Lock()
 	defer p.f.mu.Unlock()
 	p.f.calls = append(p.f.calls, req)
+	if p.f.script != nil {
+		resp := p.f.script(req)
+		resp.InputTokens, resp.OutputTokens = 10, 5
+		return resp, nil
+	}
 	return llm.Response{Text: fmt.Sprintf("%s says %d", p.model, len(p.f.calls)), InputTokens: 10, OutputTokens: 5}, nil
 }
 
@@ -110,10 +116,10 @@ func (e *env) runner(holder string) (stop func()) {
 }
 
 // agent creates a built-in agent whose replies start with its name.
-func (e *env) agent(name string, budget int64) core.Principal {
+func (e *env) agent(name string, budget int64, servers ...store.MCPServer) core.Principal {
 	e.t.Helper()
 	p := core.Principal{ID: core.NewID(), Kind: core.PrincipalAgent, DisplayName: name, CreatedAt: time.Now()}
-	a := store.BuiltinAgent{Provider: llm.ProviderAnthropic, Model: name, MaxTokens: 100, DailyTokenBudget: budget, Enabled: true, SystemPrompt: "Be " + name + "."}
+	a := store.BuiltinAgent{Provider: llm.ProviderAnthropic, Model: name, MaxTokens: 100, DailyTokenBudget: budget, Enabled: true, SystemPrompt: "Be " + name + ".", MCPServers: servers}
 	if err := e.store.CreateBuiltinAgent(context.Background(), p, a); err != nil {
 		e.t.Fatal(err)
 	}

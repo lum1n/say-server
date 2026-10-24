@@ -98,6 +98,74 @@ func TestBuiltinAgentsAPI(t *testing.T) {
 	}
 }
 
+func TestBuiltinAgentMCPServers(t *testing.T) {
+	e := newEnv(t)
+	_, admin := e.admin("Root")
+	var a wireBuiltinAgent
+	code := e.do("POST", "/builtin-agents", admin, map[string]any{
+		"display_name": "Helper", "provider": "anthropic",
+		"mcp_servers": []map[string]any{
+			{"name": "wx", "url": "https://wx.example/mcp", "authorization": "Bearer wx"},
+			{"name": "kb", "url": "http://kb.local/mcp"},
+		},
+	}, &a)
+	if code != 201 || len(a.MCPServers) != 2 || !a.MCPServers[0].HasAuthorization || a.MCPServers[1].HasAuthorization {
+		t.Fatalf("create = %d %+v", code, a.MCPServers)
+	}
+	id := a.Principal.ID
+	auth := func() []string {
+		stored, _ := e.store.GetBuiltinAgent(context.Background(), id)
+		var out []string
+		for _, m := range stored.MCPServers {
+			out = append(out, m.Name+"="+m.Authorization)
+		}
+		return out
+	}
+
+	// Left out, the header stays for the same name and URL; a new URL
+	// drops it, and an empty one clears it.
+	code = e.do("PATCH", "/builtin-agents/"+id, admin, map[string]any{"mcp_servers": []map[string]any{
+		{"name": "kb", "url": "http://kb.local/mcp", "authorization": "Bearer kb"},
+		{"name": "wx", "url": "https://wx.example/mcp"},
+	}}, &a)
+	if code != 200 || !slices.Equal(auth(), []string{"kb=Bearer kb", "wx=Bearer wx"}) {
+		t.Fatalf("reorder = %d %v", code, auth())
+	}
+	e.do("PATCH", "/builtin-agents/"+id, admin, map[string]any{"mcp_servers": []map[string]any{
+		{"name": "kb", "url": "http://kb.local/mcp", "authorization": ""},
+		{"name": "wx", "url": "https://evil.example/mcp"},
+	}}, &a)
+	if !slices.Equal(auth(), []string{"kb=", "wx="}) {
+		t.Fatalf("moved = %v", auth())
+	}
+	// Other changes keep the list.
+	e.do("PATCH", "/builtin-agents/"+id, admin, map[string]any{"enabled": false}, &a)
+	if len(a.MCPServers) != 2 {
+		t.Fatalf("after enabled = %+v", a.MCPServers)
+	}
+	e.do("PATCH", "/builtin-agents/"+id, admin, map[string]any{"mcp_servers": []any{}}, &a)
+	if a.MCPServers == nil || len(a.MCPServers) != 0 {
+		t.Fatalf("cleared = %+v", a.MCPServers)
+	}
+
+	server := func(name, url string) map[string]any { return map[string]any{"name": name, "url": url} }
+	for _, c := range []struct {
+		name    string
+		servers []map[string]any
+	}{
+		{"bad name", []map[string]any{server("a b", "http://x")}},
+		{"empty name", []map[string]any{server("", "http://x")}},
+		{"same name", []map[string]any{server("a", "http://x"), server("a", "http://y")}},
+		{"bad url", []map[string]any{server("a", "file:///etc/passwd")}},
+		{"too many", slices.Repeat([]map[string]any{server("a", "http://x")}, maxMCPServers+1)},
+	} {
+		var ae apiError
+		if code := e.do("PATCH", "/builtin-agents/"+id, admin, map[string]any{"mcp_servers": c.servers}, &ae); code != 422 {
+			t.Errorf("%s: %d %+v", c.name, code, ae)
+		}
+	}
+}
+
 func TestResponderSwitch(t *testing.T) {
 	e := newEnv(t)
 	_, ada := e.user("Ada", core.PrincipalHuman)

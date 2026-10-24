@@ -522,6 +522,25 @@ export interface components {
              */
             daily_token_budget?: number;
             enabled?: boolean;
+            /**
+             * @description Replaces the MCP servers whose tools the agent may call. A server
+             *     without `authorization` keeps the header it had, as long as its
+             *     name and URL are unchanged.
+             */
+            mcp_servers?: components["schemas"]["MCPServerSettings"][];
+        };
+        MCPServerSettings: {
+            /** @description Prefixes the server's tool names, as `name__tool`. */
+            name: string;
+            /** @description The server's streamable HTTP endpoint. */
+            url: string;
+            /** @description Write-only. Sent as the Authorization header, e.g. `Bearer …`. Empty sends none. */
+            authorization?: string;
+        };
+        MCPServer: {
+            name: string;
+            url: string;
+            has_authorization: boolean;
         };
         CreateBuiltinAgent: components["schemas"]["BuiltinAgentSettings"] & {
             display_name: string;
@@ -542,6 +561,7 @@ export interface components {
              */
             tokens_today: number;
             enabled: boolean;
+            mcp_servers: components["schemas"]["MCPServer"][];
             /** @description Why the agent last failed to reply, until it next succeeds. */
             last_error?: string;
             /** Format: date-time */
