@@ -61,6 +61,19 @@ read another visitor's chat.
   ghosts) or read the directory, so member lists now carry each member's
   name and kind.
 
+- **Visitors can be erased** (added 2026-10-25). The visitor, with its
+  own token (`DELETE /embed/{key}/session`), or an instance admin
+  (`DELETE /visitors/{id}`), deletes the visitor in one transaction: its
+  thread with every event, member, agent cursor and bridge link, the
+  messages it wrote in any other room it was added to, its tokens, and
+  its guest principal. Nothing is kept, so a verified visitor who comes
+  back is a new visitor with a new thread. The transaction first locks
+  the thread's row, as an append does, so an agent reply that is being
+  written finishes first and one that comes later finds no room.
+- **The embed shows every part kind** (added 2026-10-25), like the app:
+  text, a tool call as its name and status only (its arguments and errors
+  are for the team), and other kinds as a placeholder.
+
 ## Consequences
 
 - The widget secret is stored in plain text, like model API keys
@@ -78,3 +91,7 @@ read another visitor's chat.
 - Firefox has no `location.ancestorOrigins`, so there the embed page reads
   its parent's origin from the referrer. A host page whose referrer policy
   is `no-referrer` shows "not set up for this site" in Firefox.
+- Erasing a visitor cannot reach networks a room was bridged to: a
+  message already mirrored there stays there.
+- Markdown and attachments show as plain text and placeholders in the
+  embed, as they do in the app, until the app renders them.

@@ -266,6 +266,11 @@ a JWT with HS256 and the widget's secret, with `sub` (your user id), `exp`
 `identity` attribute. A signed-in visitor then has the same thread on
 every device ([ADR 0012](./docs/adr/0012-widget.md)).
 
+A visitor can press **Delete chat** to erase their thread, their messages
+and themselves; the next message starts a new chat. When a visitor asks
+you to delete their data, an instance admin can do the same from the
+thread's page (**Delete visitor**) or with `DELETE /api/v1/visitors/{id}`.
+
 ### Accounts on other networks
 
 On the **Accounts** page, anyone connects their own account on another

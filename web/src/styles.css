@@ -516,6 +516,8 @@ a {
 
 .embed-header {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
@@ -526,6 +528,32 @@ a {
 .embed-header h1 {
   font-size: 16px;
   margin: 0;
+}
+
+.embed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: end;
+  font-size: 13px;
+}
+
+.embed-delete,
+.embed-confirm button {
+  background: none;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 13px;
+}
+
+.embed-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 .embed-close {
@@ -563,6 +591,27 @@ a {
   align-self: flex-end;
   background: var(--accent);
   color: var(--bg);
+}
+
+.embed-msg > .embed-text,
+.embed-msg > .embed-tool,
+.embed-msg > .embed-other {
+  display: block;
+}
+
+.embed-tool,
+.embed-other {
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.embed-tool::before {
+  content: "⚙ ";
+}
+
+.embed-tool.failed {
+  color: crimson;
+  opacity: 1;
 }
 
 .embed-name {

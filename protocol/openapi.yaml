@@ -875,6 +875,50 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteEmbedSession
+      summary: Delete the visitor's chat
+      description: |
+        The visitor, with its own token, erases itself: its thread with
+        every message in it, what it wrote in other rooms, its tokens and
+        its guest principal. The token stops working; the next session is a
+        new visitor. Messages already mirrored to a bridged network stay
+        there.
+      security:
+        - bearer: []
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /visitors/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The visitor's guest principal id.
+        schema:
+          type: string
+    delete:
+      operationId: deleteVisitor
+      summary: Delete a widget visitor and its thread
+      description: |
+        Instance admins only. Erases the same as `DELETE
+        /embed/{key}/session`, for a visitor who asked to have their data
+        deleted. A verified visitor who comes back is a new visitor.
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /hooks/{id}:
     parameters:
       - name: id

@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   addMember,
   type AgentPolicy,
+  deleteVisitor,
   type Delivery,
   type Event,
   getMe,
@@ -41,6 +42,7 @@ function RoomPage() {
         <h1>{room.data ? room.data.name || "Untitled room" : "…"}</h1>
         {room.data?.bridges?.map((b) => <BridgeChip key={b.bridge_id} bridge={b} />)}
         {room.data && <PauseAgents room={room.data} />}
+        {room.data?.kind === "widget-thread" && <DeleteVisitor roomId={roomId} />}
       </header>
       {/* key: a fresh log, composer and member list per room */}
       <Log key={`log-${roomId}`} roomId={roomId} bridges={room.data?.bridges ?? []} />
@@ -392,6 +394,47 @@ function PauseAgents({ room }: { room: Room }) {
         </button>
       )}
       {update.error && <span role="alert"> {update.error.message}</span>}
+    </span>
+  );
+}
+
+// DeleteVisitor lets instance admins erase a widget thread's visitor, with
+// the thread and everything the visitor wrote, such as when the visitor
+// asks for their data to be deleted.
+function DeleteVisitor({ roomId }: { roomId: string }) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const me = useQuery({ queryKey: keys.me, queryFn: () => getMe() });
+  const members = useQuery({ queryKey: keys.members(roomId), queryFn: () => listMembers(roomId) });
+  const visitor = members.data?.find((m) => m.kind === "guest");
+  const [asking, setAsking] = useState(false);
+  const erase = useMutation({
+    mutationFn: (id: string) => deleteVisitor(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: keys.rooms });
+      queryClient.removeQueries({ queryKey: keys.room(roomId) });
+      navigate({ to: "/" });
+    },
+  });
+  if (!me.data?.admin || !visitor) return null;
+  return (
+    <span className="agents-switch">
+      {!asking ? (
+        <button type="button" className="link" onClick={() => setAsking(true)} title="Erase the visitor, this thread and its messages">
+          Delete visitor
+        </button>
+      ) : (
+        <>
+          Delete {visitor.display_name || "the visitor"} and this thread for good?{" "}
+          <button type="button" className="link" disabled={erase.isPending} onClick={() => erase.mutate(visitor.principal_id)}>
+            Delete
+          </button>{" "}
+          <button type="button" className="link" disabled={erase.isPending} onClick={() => setAsking(false)}>
+            Cancel
+          </button>
+        </>
+      )}
+      {erase.error && <span role="alert"> {erase.error.message}</span>}
     </span>
   );
 }

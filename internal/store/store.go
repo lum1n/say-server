@@ -194,6 +194,11 @@ type Store interface {
 	CreateVisitor(ctx context.Context, guest core.Principal, room core.Room, members []core.Membership, v Visitor) error
 	VisitorByPrincipal(ctx context.Context, principalID string) (Visitor, error)
 	VisitorBySubject(ctx context.Context, widgetID, subject string) (Visitor, error)
+	// DeleteVisitor erases a visitor in one transaction: its thread with
+	// every event and member, the messages it wrote in other rooms, its
+	// memberships and tokens, and its guest principal. An unknown visitor
+	// is ErrNotFound.
+	DeleteVisitor(ctx context.Context, principalID string) error
 
 	// CreateBridge and UpdateBridge write a bridge; UpdateBridge changes
 	// only its name, config and enabled switch.
