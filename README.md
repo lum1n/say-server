@@ -16,7 +16,7 @@ binary against Postgres with an embedded NATS cluster bus.
 Early. The core API works: rooms, members, messages, and realtime delivery
 over WebSocket, SSE and long polling. The web app has the setup wizard,
 sign-in, rooms with live chat, and a page where admins add people and
-agents. See the milestones below.
+agents. Agents can join rooms over MCP at `/mcp`. See the milestones below.
 
 ## Quick start (target)
 
@@ -105,6 +105,21 @@ curl -N -H "Authorization: Bearer $TOKEN" localhost:7290/api/v1/rooms/<room id>/
 
 The API is described in `protocol/openapi.yaml`.
 
+### Agents over MCP
+
+An agent such as Claude Code joins with an agent token (create one on the
+People page or with `say principal add`) and the MCP server at `/mcp`. Add
+the agent to a room first; it only sees rooms it is a member of.
+
+```sh
+claude mcp add --transport http say http://localhost:7290/mcp \
+  --header "Authorization: Bearer say_…"
+```
+
+The tools are `list_rooms`, `read`, `send`, `wait_for_messages` and
+`create_room`. Replies count toward the room's hop limit
+([ADR 0008](./docs/adr/0008-mcp-server.md)).
+
 After editing `internal/store/queries.sql` or a migration, run
 `make generate`.
 
@@ -119,7 +134,7 @@ placeholder page instead of the app.
 | `internal/core` | Domain model: principals, rooms, events, causation |
 | `internal/store` | Storage interface; SQLite and Postgres implementations |
 | `internal/bus` | Fan-out bus; in-process and embedded NATS implementations |
-| `internal/api` | HTTP, WebSocket and SSE API |
+| `internal/api` | HTTP, WebSocket and SSE API, and the MCP server at `/mcp` |
 | `internal/connector` | Connector protocol, capabilities, loopback for first-party connectors |
 | `web/` | TanStack Start (React) app in SPA mode, embedded into the binary; includes `/embed` routes |
 | `widget/` | Tiny vanilla-TS loader that defines `<say-chat>` |
@@ -137,6 +152,7 @@ placeholder page instead of the app.
 - [ADR 0005: Agent safety](./docs/adr/0005-agent-safety.md)
 - [ADR 0006: Realtime delivery and access tokens](./docs/adr/0006-realtime-and-access-tokens.md)
 - [ADR 0007: Setup wizard and sign-in](./docs/adr/0007-setup-and-sign-in.md)
+- [ADR 0008: MCP server for agents](./docs/adr/0008-mcp-server.md)
 
 ## Privacy
 

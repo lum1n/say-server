@@ -86,6 +86,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/rooms/{id}/events/stream", s.authed(s.stream))
 	mux.HandleFunc("POST /api/v1/rooms/{id}/messages", s.authed(s.postMessage))
 	mux.HandleFunc("GET /api/v1/ws", s.authed(s.ws))
+	mux.Handle("/mcp", s.mcpHandler())
 	mux.Handle("/api/", http.NotFoundHandler())
 	mux.HandleFunc("/", s.app)
 	return mux

@@ -49,23 +49,30 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request, me core.Prin
 		writeError(w, err)
 		return
 	}
-	body.Name = strings.TrimSpace(body.Name)
-	if !creatableRooms[body.Kind] {
-		writeError(w, errorf(http.StatusUnprocessableEntity, "invalid", "kind must be dm, group or channel"))
-		return
-	}
-	if len(body.Name) > 200 {
-		writeError(w, errorf(http.StatusUnprocessableEntity, "invalid", "name is longer than 200 bytes"))
-		return
-	}
-	room := core.Room{ID: core.NewID(), Kind: body.Kind, Name: body.Name, CreatedAt: time.Now().Truncate(time.Millisecond)}
-	owner := core.Membership{RoomID: room.ID, PrincipalID: me.ID, Role: core.RoleOwner}
-	if err := s.store.CreateRoom(r.Context(), room, owner); err != nil {
+	room, err := s.newRoom(r.Context(), me, body.Kind, body.Name)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
-	s.notifyRooms(r.Context(), me.ID)
 	writeJSON(w, http.StatusCreated, toRoom(room))
+}
+
+// newRoom creates a room owned by me.
+func (s *Server) newRoom(ctx context.Context, me core.Principal, kind core.RoomKind, name string) (core.Room, error) {
+	name = strings.TrimSpace(name)
+	if !creatableRooms[kind] {
+		return core.Room{}, errorf(http.StatusUnprocessableEntity, "invalid", "kind must be dm, group or channel")
+	}
+	if len(name) > 200 {
+		return core.Room{}, errorf(http.StatusUnprocessableEntity, "invalid", "name is longer than 200 bytes")
+	}
+	room := core.Room{ID: core.NewID(), Kind: kind, Name: name, CreatedAt: time.Now().Truncate(time.Millisecond)}
+	owner := core.Membership{RoomID: room.ID, PrincipalID: me.ID, Role: core.RoleOwner}
+	if err := s.store.CreateRoom(ctx, room, owner); err != nil {
+		return core.Room{}, err
+	}
+	s.notifyRooms(ctx, me.ID)
+	return room, nil
 }
 
 func (s *Server) getRoom(w http.ResponseWriter, r *http.Request, me core.Principal) {
