@@ -13,6 +13,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppAccountsRouteImport } from './routes/_app/accounts'
 import { Route as AppPeopleRouteImport } from './routes/_app/people'
 import { Route as AppWidgetsRouteImport } from './routes/_app/widgets'
 import { Route as EmbedWidgetIdRouteImport } from './routes/embed/$widgetId'
@@ -35,6 +36,11 @@ const SetupRoute = SetupRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccountsRoute = AppAccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
   getParentRoute: () => AppRoute,
 } as any)
 const AppPeopleRoute = AppPeopleRouteImport.update({
@@ -62,6 +68,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/accounts': typeof AppAccountsRoute
   '/people': typeof AppPeopleRoute
   '/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
@@ -70,6 +77,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/accounts': typeof AppAccountsRoute
   '/people': typeof AppPeopleRoute
   '/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
@@ -81,6 +89,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/_app/accounts': typeof AppAccountsRoute
   '/_app/people': typeof AppPeopleRoute
   '/_app/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
@@ -93,6 +102,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/setup'
+    | '/accounts'
     | '/people'
     | '/widgets'
     | '/embed/$widgetId'
@@ -101,6 +111,7 @@ export interface FileRouteTypes {
   to:
     | '/login'
     | '/setup'
+    | '/accounts'
     | '/people'
     | '/widgets'
     | '/embed/$widgetId'
@@ -111,6 +122,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/setup'
+    | '/_app/accounts'
     | '/_app/people'
     | '/_app/widgets'
     | '/embed/$widgetId'
@@ -155,6 +167,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/accounts': {
+      id: '/_app/accounts'
+      path: '/accounts'
+      fullPath: '/accounts'
+      preLoaderRoute: typeof AppAccountsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/people': {
       id: '/_app/people'
       path: '/people'
@@ -187,6 +206,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppAccountsRoute: typeof AppAccountsRoute
   AppPeopleRoute: typeof AppPeopleRoute
   AppWidgetsRoute: typeof AppWidgetsRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -194,6 +214,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAccountsRoute: AppAccountsRoute,
   AppPeopleRoute: AppPeopleRoute,
   AppWidgetsRoute: AppWidgetsRoute,
   AppIndexRoute: AppIndexRoute,

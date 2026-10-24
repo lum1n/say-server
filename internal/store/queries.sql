@@ -98,16 +98,6 @@ WHERE room_id = $1 AND seq < $2
 ORDER BY seq DESC
 LIMIT $3;
 
--- name: InsertOutbox :exec
-INSERT INTO outbox (event_id, room_id, seq, created_at)
-VALUES ($1, $2, $3, $4);
-
--- name: PendingOutbox :many
-SELECT * FROM outbox ORDER BY created_at, room_id, seq LIMIT $1;
-
--- name: DeleteOutbox :exec
-DELETE FROM outbox WHERE event_id = $1;
-
 -- name: CreateToken :exec
 INSERT INTO tokens (hash, principal_id, name, expires_at, created_at)
 VALUES ($1, $2, $3, $4, $5);
@@ -248,3 +238,90 @@ SELECT * FROM widget_visitors WHERE widget_id = $1 AND subject = $2;
 
 -- name: DeleteTokensNamed :exec
 DELETE FROM tokens WHERE principal_id = $1 AND name = $2;
+
+-- name: CreateBridge :exec
+INSERT INTO bridges (id, owner_id, mode, network, name, config, enabled, updated_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9);
+
+-- name: UpdateBridge :execrows
+UPDATE bridges SET name = $2, config = $3, enabled = $4, updated_at = $5
+WHERE id = $1;
+
+-- name: GetBridge :one
+SELECT * FROM bridges WHERE id = $1;
+
+-- name: ListBridges :many
+SELECT * FROM bridges ORDER BY created_at, id;
+
+-- name: SetBridgeError :exec
+UPDATE bridges SET last_error = $2 WHERE id = $1;
+
+-- name: SetBridgeState :exec
+UPDATE bridges SET state = $2 WHERE id = $1;
+
+-- name: SetBridgePrompt :exec
+UPDATE bridges SET prompt = $2 WHERE id = $1;
+
+-- name: SetBridgeSeen :exec
+UPDATE bridges SET seen_at = $2 WHERE id = $1;
+
+-- name: CreateBridgeLink :execrows
+INSERT INTO bridge_links (id, bridge_id, room_id, remote_id, remote_name, cursor, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (bridge_id, remote_id) DO NOTHING;
+
+-- name: DeleteBridgeLink :execrows
+DELETE FROM bridge_links WHERE id = $1 AND bridge_id = $2;
+
+-- name: DeleteBridgeLinkMessages :exec
+DELETE FROM bridge_messages WHERE link_id = $1;
+
+-- name: GetBridgeLink :one
+SELECT * FROM bridge_links WHERE id = $1;
+
+-- name: BridgeLinkByRemote :one
+SELECT * FROM bridge_links WHERE bridge_id = $1 AND remote_id = $2;
+
+-- name: BridgeLinks :many
+SELECT * FROM bridge_links WHERE bridge_id = $1 ORDER BY created_at, id;
+
+-- name: RoomBridgeLinks :many
+SELECT * FROM bridge_links WHERE room_id = $1 ORDER BY created_at, id;
+
+-- name: SetBridgeLinkCursor :exec
+UPDATE bridge_links SET cursor = $2 WHERE id = $1 AND cursor < $2;
+
+-- name: CreateBridgeGhost :execrows
+INSERT INTO bridge_ghosts (bridge_id, remote_user_id, principal_id, created_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (bridge_id, remote_user_id) DO NOTHING;
+
+-- name: GetBridgeGhost :one
+SELECT * FROM bridge_ghosts WHERE bridge_id = $1 AND remote_user_id = $2;
+
+-- name: BridgeGhostByPrincipal :one
+SELECT * FROM bridge_ghosts WHERE principal_id = $1;
+
+-- name: StartBridgeMessage :execrows
+INSERT INTO bridge_messages (link_id, event_id, remote_id, direction, state, updated_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $6)
+ON CONFLICT DO NOTHING;
+
+-- name: FinishBridgeMessage :exec
+UPDATE bridge_messages SET state = $3, remote_id = $4, error = $5, updated_at = $6
+WHERE link_id = $1 AND event_id = $2;
+
+-- name: BridgeMessageByRemote :one
+SELECT * FROM bridge_messages WHERE link_id = $1 AND remote_id = $2;
+
+-- name: GetBridgeMessage :one
+SELECT * FROM bridge_messages WHERE link_id = $1 AND event_id = $2;
+
+-- name: MarkBridgeSendsUnknown :exec
+UPDATE bridge_messages SET state = 'unknown', updated_at = $2
+WHERE state = 'sending' AND link_id IN (SELECT id FROM bridge_links WHERE bridge_id = $1);
+
+-- name: OutgoingBridgeMessages :many
+SELECT m.* FROM bridge_messages m
+JOIN events e ON e.id = m.event_id
+WHERE e.room_id = @room_id AND e.seq >= @from_seq AND e.seq <= @to_seq AND m.direction = 'out';

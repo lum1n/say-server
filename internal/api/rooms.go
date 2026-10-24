@@ -33,6 +33,10 @@ func (s *Server) listRooms(w http.ResponseWriter, r *http.Request, me core.Princ
 	out := make([]wireRoom, len(rooms))
 	for i, room := range rooms {
 		out[i] = s.toRoom(room)
+		if out[i].Bridges, err = s.roomBridges(r.Context(), room.ID); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rooms": out})
 }
@@ -90,7 +94,12 @@ func (s *Server) getRoom(w http.ResponseWriter, r *http.Request, me core.Princip
 		writeError(w, roomErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, s.toRoom(room))
+	out := s.toRoom(room)
+	if out.Bridges, err = s.roomBridges(r.Context(), id); err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request, me core.Principal) {
@@ -205,7 +214,14 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, me core.Prin
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": toEvents(events)})
+	deliveries := []wireDelivery{}
+	if len(events) > 0 {
+		if deliveries, err = s.deliveries(r.Context(), id, events[0].Seq, events[len(events)-1].Seq); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": toEvents(events), "deliveries": deliveries})
 }
 
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request, me core.Principal) {
@@ -230,6 +246,12 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request, me core.Pri
 // created is false when idempotencyKey repeats an earlier send, in which
 // case the earlier event is returned.
 func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg sendMessage, idempotencyKey string) (e core.Event, created bool, err error) {
+	return s.sendAt(ctx, me, roomID, msg, idempotencyKey, "", time.Time{})
+}
+
+// sendAt is send with the new event's id and creation time chosen by the
+// caller; empty ones are filled in.
+func (s *Server) sendAt(ctx context.Context, me core.Principal, roomID string, msg sendMessage, idempotencyKey, id string, at time.Time) (e core.Event, created bool, err error) {
 	m, err := s.member(ctx, me, roomID)
 	if err != nil {
 		return core.Event{}, false, err
@@ -281,7 +303,9 @@ func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg
 	// Before the append, so that the agent never sees the message as
 	// one it should answer.
 	s.handoffOnReply(ctx, me, room)
-	id := core.NewID()
+	if id == "" {
+		id = core.NewID()
+	}
 	e, err = s.store.AppendEvent(ctx, core.Event{
 		ID:        id,
 		RoomID:    roomID,
@@ -290,6 +314,7 @@ func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg
 		Causation: causation,
 		Parts:     parts,
 		Stream:    stream,
+		CreatedAt: at,
 	}, store.AppendOptions{
 		IdempotencyKey: idempotencyKey,
 		Automated:      automated,

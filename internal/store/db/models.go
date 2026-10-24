@@ -18,6 +18,50 @@ type AgentUsage struct {
 	Cost         int64
 }
 
+type Bridge struct {
+	ID        string
+	OwnerID   string
+	Mode      string
+	Network   string
+	Name      string
+	Config    string
+	State     string
+	Prompt    string
+	Enabled   int32
+	LastError string
+	SeenAt    int64
+	UpdatedAt int64
+	CreatedAt int64
+}
+
+type BridgeGhost struct {
+	BridgeID     string
+	RemoteUserID string
+	PrincipalID  string
+	CreatedAt    int64
+}
+
+type BridgeLink struct {
+	ID         string
+	BridgeID   string
+	RoomID     string
+	RemoteID   string
+	RemoteName string
+	Cursor     int64
+	CreatedAt  int64
+}
+
+type BridgeMessage struct {
+	LinkID    string
+	EventID   string
+	RemoteID  string
+	Direction string
+	State     string
+	Error     string
+	UpdatedAt int64
+	CreatedAt int64
+}
+
 type BuiltinAgent struct {
 	PrincipalID      string
 	Provider         string
@@ -89,13 +133,6 @@ type Membership struct {
 	PrincipalID string
 	Role        string
 	Scopes      string
-}
-
-type Outbox struct {
-	EventID   string
-	RoomID    string
-	Seq       int64
-	CreatedAt int64
 }
 
 type Principal struct {

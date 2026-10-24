@@ -407,12 +407,17 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [events]
+                required: [events, deliveries]
                 properties:
                   events:
                     type: array
                     items:
                       $ref: "#/components/schemas/Event"
+                  deliveries:
+                    description: How the page's messages went out to the room's bridges.
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Delivery"
         "400":
           $ref: "#/components/responses/Error"
         "401":
@@ -618,7 +623,10 @@ paths:
         or created one); reread `GET /rooms`. A client that offered the
         subprotocols `say.v1` and `say.token.<token>` is answered with
         `say.v1`. Like event notifications it
-        is a hint, so also reread the list after reconnecting. A client that falls too far behind is
+        is a hint, so also reread the list after reconnecting. It also
+        comes when a bridge of the caller or of one of its rooms changes
+        state. A push `{id, type: "delivery", payload: DeliveryPush}` on a
+        subscribed room says how a message went out to its bridges. A client that falls too far behind is
         closed with code 1008 and should reconnect and resubscribe from its
         cursors.
       responses:
@@ -867,6 +875,225 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+  /networks:
+    get:
+      operationId: listNetworks
+      summary: The networks this server bridges to, with their settings
+      responses:
+        "200":
+          description: The networks, by name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [networks]
+                properties:
+                  networks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Network"
+        "401":
+          $ref: "#/components/responses/Error"
+  /bridges:
+    get:
+      operationId: listBridges
+      summary: Your accounts on other networks, and relay bots for admins
+      responses:
+        "200":
+          description: The bridges the caller manages, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bridges]
+                properties:
+                  bridges:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Bridge"
+        "401":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createBridge
+      summary: Connect your account on a network, or add a relay bot
+      description: |
+        In `account` mode (the default; people only) the account's chats
+        become rooms of the caller, and what the caller writes there goes
+        out as them. `bot` mode (instance admins only) adds a relay bot
+        that rooms are linked to with `POST /bridges/{id}/links`. The
+        bridge starts at once; a login step it needs shows as `prompt`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BridgeSettings"
+      responses:
+        "201":
+          description: The bridge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bridge"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /bridges/{id}:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+    get:
+      operationId: getBridge
+      summary: A bridge the caller manages
+      responses:
+        "200":
+          description: The bridge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bridge"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateBridge
+      summary: Change a bridge's name, settings or switch; it restarts
+      description: |
+        Absent fields stay as they are. In `config`, a setting set to ""
+        is cleared and a secret left out keeps its value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BridgeSettings"
+      responses:
+        "200":
+          description: The bridge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bridge"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /bridges/{id}/answer:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+    post:
+      operationId: answerBridge
+      summary: Answer the bridge's login prompt (its owner only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+                  maxLength: 4096
+      responses:
+        "204":
+          description: Passed to the node running the bridge
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: The bridge is not waiting for an answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bridges/{id}/links:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+    get:
+      operationId: listBridgeLinks
+      summary: The rooms a bridge mirrors, and the remote chats they mirror
+      responses:
+        "200":
+          description: The links, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [links]
+                properties:
+                  links:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BridgeLink"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createBridgeLink
+      summary: Link a room to a remote channel of a relay bot
+      description: |
+        The caller must own or administer the room. Delivery starts from
+        now; the room's history is not sent. Accounts make their links
+        themselves, one room per chat (409).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBridgeLink"
+      responses:
+        "201":
+          description: The link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeLink"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /bridges/{id}/links/{link_id}:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+      - name: link_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      operationId: deleteBridgeLink
+      summary: Stop mirroring a room; the room and its log stay
+      responses:
+        "204":
+          description: Unlinked
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
 components:
   securitySchemes:
     bearer:
@@ -877,6 +1104,12 @@ components:
       in: cookie
       name: say_token
   parameters:
+    BridgeID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
     WidgetKey:
       name: key
       in: path
@@ -1039,6 +1272,11 @@ components:
           type: string
         agents:
           $ref: "#/components/schemas/AgentPolicy"
+        bridges:
+          description: The networks the room is mirrored to; only in `GET /rooms` and `GET /rooms/{id}`, and absent when none.
+          type: array
+          items:
+            $ref: "#/components/schemas/RoomBridge"
         created_at:
           type: string
           format: date-time
@@ -1398,6 +1636,206 @@ components:
     Reachability:
       type: string
       enum: [live, offline, unlinked]
+    BridgeMode:
+      type: string
+      enum: [account, bot]
+    BridgeState:
+      description: |
+        `live` while the node running it is connected; `login` while it
+        waits for its owner (`prompt`); `error` when its connection fails
+        (`error`); `offline` when no node runs it; `disabled`.
+      type: string
+      enum: [live, login, error, offline, disabled]
+    NetworkField:
+      type: object
+      required: [key, label, kind]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        kind:
+          description: A `secret` is write-only.
+          type: string
+          enum: [text, secret, number, bool]
+        required:
+          type: boolean
+        placeholder:
+          type: string
+        help:
+          type: string
+        modes:
+          description: The modes the field applies in; absent is all.
+          type: array
+          items:
+            $ref: "#/components/schemas/BridgeMode"
+    Network:
+      type: object
+      required: [name, title, modes, fields, capabilities]
+      properties:
+        name:
+          type: string
+        title:
+          type: string
+        modes:
+          type: array
+          items:
+            $ref: "#/components/schemas/BridgeMode"
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/NetworkField"
+        capabilities:
+          type: array
+          items:
+            type: string
+    BridgeSettings:
+      type: object
+      properties:
+        network:
+          description: Required to create; can't change.
+          type: string
+        mode:
+          $ref: "#/components/schemas/BridgeMode"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        config:
+          description: Values for the network's fields, by key.
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+    BridgePrompt:
+      description: A login step only the owner can do.
+      type: object
+      required: [kind, text]
+      properties:
+        kind:
+          type: string
+          enum: [code, password, text, qr]
+        text:
+          type: string
+        data:
+          description: What to show, such as a QR code's contents.
+          type: string
+    Bridge:
+      type: object
+      required: [id, owner_id, mode, network, name, config, secrets_set, enabled, state, created_at]
+      properties:
+        id:
+          type: string
+        owner_id:
+          type: string
+        mode:
+          $ref: "#/components/schemas/BridgeMode"
+        network:
+          type: string
+        name:
+          type: string
+        config:
+          description: The settings without secrets.
+          type: object
+          additionalProperties: true
+        secrets_set:
+          description: The secrets that are set.
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
+        state:
+          $ref: "#/components/schemas/BridgeState"
+        error:
+          type: string
+        prompt:
+          $ref: "#/components/schemas/BridgePrompt"
+        seen_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    BridgeLink:
+      type: object
+      required: [id, bridge_id, room_id, room_name, remote_id, remote_name, created_at]
+      properties:
+        id:
+          type: string
+        bridge_id:
+          type: string
+        room_id:
+          type: string
+        room_name:
+          type: string
+        remote_id:
+          type: string
+        remote_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateBridgeLink:
+      type: object
+      required: [room_id, remote_id]
+      properties:
+        room_id:
+          type: string
+        remote_id:
+          description: The channel on the network, such as "#say" on IRC.
+          type: string
+          minLength: 1
+          maxLength: 500
+        remote_name:
+          type: string
+          maxLength: 200
+    RoomBridge:
+      type: object
+      required: [bridge_id, network, name, mode, remote_name, state]
+      properties:
+        bridge_id:
+          type: string
+        network:
+          type: string
+        name:
+          type: string
+        mode:
+          $ref: "#/components/schemas/BridgeMode"
+        remote_name:
+          type: string
+        state:
+          $ref: "#/components/schemas/BridgeState"
+    DeliveryState:
+      description: |
+        `unknown` is a send under way when its node stopped; it is never
+        retried. `expired` waited longer than ten minutes for its bridge.
+      type: string
+      enum: [sending, sent, unknown, failed, expired]
+    Delivery:
+      type: object
+      required: [event_id, bridge_id, state]
+      properties:
+        event_id:
+          type: string
+        bridge_id:
+          type: string
+        state:
+          $ref: "#/components/schemas/DeliveryState"
+        error:
+          type: string
+    DeliveryPush:
+      type: object
+      required: [room_id, event_id, deliveries]
+      properties:
+        room_id:
+          type: string
+        event_id:
+          type: string
+        deliveries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Delivery"
     Causation:
       type: object
       required: [hop_count]

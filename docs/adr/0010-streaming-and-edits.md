@@ -10,8 +10,8 @@ on messages (`streaming → final`) and an `edit` event type (GLOSSARY), but
 every send was final and nothing could change a message.
 
 Logging every chunk as an event would fill the room's log with dozens of
-edits per reply. Each would take a seq, reach every connector through the
-outbox, and be replayed to every client that reconnects. Chunks are only
+edits per reply. Each would take a seq, reach every connector that reads
+the log, and be replayed to every client that reconnects. Chunks are only
 worth something while the message is being written.
 
 ## Decision
@@ -73,7 +73,7 @@ worth something while the message is being written.
 - A message from an external sender that never ends its stream stays
   `streaming`; only built-in agents are cleaned up. Agents do not answer
   it.
-- Connectors see the start of a stream and its end through the outbox,
-  never the chunks. That suits networks that cannot edit often.
+- Connectors see the start of a stream and its end in the log, never the
+  chunks; bridges send a message once its stream ends (ADR 0014). That suits networks that cannot edit often.
 - There is no edit history: the log keeps each edit's parts, but the UI
   shows only the latest.

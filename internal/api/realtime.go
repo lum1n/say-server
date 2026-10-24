@@ -518,9 +518,20 @@ func (c *wsConn) followRoom(ctx context.Context, roomID string, cursor int64, bo
 		stop()
 		return err
 	}
+	unsubscribeDelivery, err := c.s.bus.Subscribe(bus.RoomDeliverySubject(roomID), func(_ string, data []byte) {
+		if sctx.Err() == nil {
+			c.pushFrame(envelope{ID: core.NewID(), Type: "delivery", Payload: data})
+		}
+	})
+	if err != nil {
+		unsubscribe()
+		stop()
+		return err
+	}
 	c.subs[roomID] = stop
 	go func() {
 		defer unsubscribe()
+		defer unsubscribeDelivery()
 		triggered := map[string]bool{}
 		err := c.s.follow(sctx, roomID, cursor, func(e core.Event) error {
 			data, err := json.Marshal(toEvent(e))

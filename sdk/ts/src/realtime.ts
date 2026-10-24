@@ -1,6 +1,7 @@
 import type { components } from "./schema.gen.ts";
 
 type Event = components["schemas"]["Event"];
+type DeliveryPush = components["schemas"]["DeliveryPush"];
 
 export type RealtimeStatus = "connecting" | "open" | "closed";
 
@@ -26,6 +27,11 @@ export interface RealtimeOptions {
    * missed that. Reread the list when it fires.
    */
   onRoomsChanged?: () => void;
+  /**
+   * onDelivery says how a message in a followed room went out to the
+   * room's bridges. Like onStream it is not replayed.
+   */
+  onDelivery?: (push: DeliveryPush) => void;
   onStatus?: (status: RealtimeStatus) => void;
 }
 
@@ -105,6 +111,11 @@ export class Realtime {
     if (env.status) return;
     if (env.type === "rooms") {
       this.opts.onRoomsChanged?.();
+      return;
+    }
+    if (env.type === "delivery") {
+      const push = env.payload as DeliveryPush;
+      if (this.cursors.has(push.room_id)) this.opts.onDelivery?.(push);
       return;
     }
     if (env.type === "stream") {

@@ -657,3 +657,65 @@ a {
   border: 1px solid var(--line);
   border-radius: 6px;
 }
+
+/* Bridges: a room's networks, a message's delivery, the Accounts page. */
+.bridge-chip {
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+.bridge-chip.live::before,
+.state.live::before {
+  content: "●";
+  margin-right: 4px;
+  color: light-dark(#17803d, #4ade80);
+}
+
+.bridge-chip:not(.live),
+.state:not(.live) {
+  color: light-dark(#a15c00, #fbbf24);
+}
+
+.delivery {
+  display: block;
+  font-size: 12px;
+  color: light-dark(#a15c00, #fbbf24);
+}
+
+.delivery.sending {
+  color: var(--muted);
+}
+
+.state {
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.accounts .prompt {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0;
+}
+
+.accounts .qr {
+  width: 220px;
+  max-width: 100%;
+  background: #fff;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+.accounts .qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.accounts .chats {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}

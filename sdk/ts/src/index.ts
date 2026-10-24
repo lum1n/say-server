@@ -53,6 +53,19 @@ export type WidgetSettings = Schemas["WidgetSettings"];
 export type EmbedConfig = Schemas["EmbedConfig"];
 export type EmbedSession = Schemas["EmbedSession"];
 export type EmbedSessionRequest = Schemas["EmbedSessionRequest"];
+export type Network = Schemas["Network"];
+export type NetworkField = Schemas["NetworkField"];
+export type Bridge = Schemas["Bridge"];
+export type BridgeMode = Schemas["BridgeMode"];
+export type BridgeState = Schemas["BridgeState"];
+export type BridgeSettings = Schemas["BridgeSettings"];
+export type BridgePrompt = Schemas["BridgePrompt"];
+export type BridgeLink = Schemas["BridgeLink"];
+export type CreateBridgeLink = Schemas["CreateBridgeLink"];
+export type RoomBridge = Schemas["RoomBridge"];
+export type Delivery = Schemas["Delivery"];
+export type DeliveryState = Schemas["DeliveryState"];
+export type DeliveryPush = Schemas["DeliveryPush"];
 
 /**
  * createSayClient makes a REST client. In the browser the session cookie
@@ -202,9 +215,18 @@ export async function listEvents(
   query: { after?: number; before?: number; limit?: number; wait?: number } = {},
   client = defaultClient,
 ): Promise<Event[]> {
+  return (await listEventPage(id, query, client)).events;
+}
+
+/** listEventPage is listEvents with how the page's messages went out to the room's bridges. */
+export async function listEventPage(
+  id: string,
+  query: { after?: number; before?: number; limit?: number; wait?: number } = {},
+  client = defaultClient,
+): Promise<{ events: Event[]; deliveries: Delivery[] }> {
   const { data, error, response } = await client.GET("/rooms/{id}/events", { params: { path: { id }, query } });
   if (!data) fail(response, error);
-  return data.events;
+  return data;
 }
 
 /**
@@ -289,4 +311,55 @@ export async function createEmbedSession(
   const { data, error, response } = await client.POST("/embed/{key}/session", { params: { path: { key } }, body });
   if (!data) fail(response, error);
   return data;
+}
+
+export async function listNetworks(client = defaultClient): Promise<Network[]> {
+  const { data, error, response } = await client.GET("/networks");
+  if (!data) fail(response, error);
+  return data.networks;
+}
+
+/** listBridges returns the caller's accounts, and relay bots for admins. */
+export async function listBridges(client = defaultClient): Promise<Bridge[]> {
+  const { data, error, response } = await client.GET("/bridges");
+  if (!data) fail(response, error);
+  return data.bridges;
+}
+
+export async function createBridge(body: BridgeSettings, client = defaultClient): Promise<Bridge> {
+  const { data, error, response } = await client.POST("/bridges", { body });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/** updateBridge changes the fields given; secrets left out keep their value. */
+export async function updateBridge(id: string, body: BridgeSettings, client = defaultClient): Promise<Bridge> {
+  const { data, error, response } = await client.PATCH("/bridges/{id}", { params: { path: { id } }, body });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/** answerBridge answers a bridge's login prompt. */
+export async function answerBridge(id: string, value: string, client = defaultClient): Promise<void> {
+  const { error, response } = await client.POST("/bridges/{id}/answer", { params: { path: { id } }, body: { value } });
+  if (!response.ok) fail(response, error);
+}
+
+export async function listBridgeLinks(id: string, client = defaultClient): Promise<BridgeLink[]> {
+  const { data, error, response } = await client.GET("/bridges/{id}/links", { params: { path: { id } } });
+  if (!data) fail(response, error);
+  return data.links;
+}
+
+export async function createBridgeLink(id: string, body: CreateBridgeLink, client = defaultClient): Promise<BridgeLink> {
+  const { data, error, response } = await client.POST("/bridges/{id}/links", { params: { path: { id } }, body });
+  if (!data) fail(response, error);
+  return data;
+}
+
+export async function deleteBridgeLink(id: string, linkId: string, client = defaultClient): Promise<void> {
+  const { error, response } = await client.DELETE("/bridges/{id}/links/{link_id}", {
+    params: { path: { id, link_id: linkId } },
+  });
+  if (!response.ok) fail(response, error);
 }

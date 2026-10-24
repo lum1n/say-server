@@ -1,6 +1,6 @@
 // Package say runs a say node inside another program: a mobile app, a TUI
 // or a server (docs/adr/0013-embedding.md). A node is the whole core
-// (store, bus, API and built-in agents) in this process.
+// (store, bus, API, built-in agents and bridges) in this process.
 //
 // Programs talk to it with the same REST and WebSocket protocol as any
 // remote client (protocol/), over an in-memory connection: HTTPClient
@@ -30,6 +30,8 @@ import (
 
 	"github.com/vegard/say-v2/internal/agents"
 	"github.com/vegard/say-v2/internal/api"
+	"github.com/vegard/say-v2/internal/bridge"
+	_ "github.com/vegard/say-v2/internal/bridge/networks" // registers every network
 	"github.com/vegard/say-v2/internal/bus"
 	"github.com/vegard/say-v2/internal/core"
 	"github.com/vegard/say-v2/internal/password"
@@ -69,6 +71,7 @@ type Node struct {
 	mem      *memListener
 	client   *http.Client
 	agents   chan struct{} // closed when the agent runner has stopped
+	bridges  chan struct{} // closed when the bridge runner has stopped
 	setup    string
 	mu       sync.Mutex
 	servers  []*http.Server
@@ -113,13 +116,14 @@ func Open(ctx context.Context, c Config) (*Node, error) {
 	}
 	nctx, cancel := context.WithCancel(context.Background())
 	n := &Node{
-		ctx:    nctx,
-		cancel: cancel,
-		store:  st,
-		bus:    b,
-		mem:    newMemListener(),
-		agents: make(chan struct{}),
-		setup:  code,
+		ctx:     nctx,
+		cancel:  cancel,
+		store:   st,
+		bus:     b,
+		mem:     newMemListener(),
+		agents:  make(chan struct{}),
+		bridges: make(chan struct{}),
+		setup:   code,
 	}
 	n.api = api.New(api.Config{Version: c.Version, Store: st, Bus: b, SetupCode: code})
 	n.handler = n.api.Handler()
@@ -133,6 +137,11 @@ func Open(ctx context.Context, c Config) (*Node, error) {
 	go func() {
 		defer close(n.agents)
 		runner.Run(nctx)
+	}()
+	bridges := bridge.New(bridge.Config{Store: st, Bus: b, Chat: n.api, Holder: c.Holder})
+	go func() {
+		defer close(n.bridges)
+		bridges.Run(nctx)
 	}()
 	return n, nil
 }
@@ -295,8 +304,8 @@ func (n *Node) createLocal(ctx context.Context, username, displayName string) (c
 	return p, nil
 }
 
-// Close stops the node: its listeners, open streams and agents, then the
-// store and bus.
+// Close stops the node: its listeners, open streams, agents and bridges,
+// then the store and bus.
 func (n *Node) Close() error {
 	n.closed.Do(func() {
 		n.cancel()
@@ -312,9 +321,10 @@ func (n *Node) Close() error {
 		}
 		n.mem.Close()
 		n.client.CloseIdleConnections()
-		// The runner releases its agents' leases on the way out, so the
-		// store must still be open.
+		// The runners release their leases on the way out, so the store
+		// must still be open.
 		<-n.agents
+		<-n.bridges
 		n.closeErr = errors.Join(n.closeErr, n.store.Close(), n.bus.Close())
 	})
 	return n.closeErr

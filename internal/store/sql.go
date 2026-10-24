@@ -362,9 +362,9 @@ func (s *sqlStore) AppendEvent(ctx context.Context, e core.Event, opts AppendOpt
 	return e, nil
 }
 
-// insertEvent writes e, with its seq allocated, and its outbox entry.
+// insertEvent writes e, with its seq allocated.
 func insertEvent(ctx context.Context, q *db.Queries, e core.Event, parts string, opts AppendOptions) error {
-	err := q.InsertEvent(ctx, db.InsertEventParams{
+	return q.InsertEvent(ctx, db.InsertEventParams{
 		ID:             e.ID,
 		RoomID:         e.RoomID,
 		Seq:            e.Seq,
@@ -378,15 +378,6 @@ func insertEvent(ctx context.Context, q *db.Queries, e core.Event, parts string,
 		Automated:      flag(opts.Automated),
 		Edits:          e.Edits,
 		CreatedAt:      millis(e.CreatedAt),
-	})
-	if err != nil {
-		return err
-	}
-	return q.InsertOutbox(ctx, db.InsertOutboxParams{
-		EventID:   e.ID,
-		RoomID:    e.RoomID,
-		Seq:       e.Seq,
-		CreatedAt: millis(e.CreatedAt),
 	})
 }
 
@@ -547,22 +538,6 @@ func events(rows []db.Event) ([]core.Event, error) {
 		}
 	}
 	return events, nil
-}
-
-func (s *sqlStore) PendingOutbox(ctx context.Context, limit int) ([]OutboxEntry, error) {
-	rows, err := s.q().PendingOutbox(ctx, int32(limit))
-	if err != nil {
-		return nil, err
-	}
-	entries := make([]OutboxEntry, len(rows))
-	for i, row := range rows {
-		entries[i] = OutboxEntry{EventID: row.EventID, RoomID: row.RoomID, Seq: row.Seq}
-	}
-	return entries, nil
-}
-
-func (s *sqlStore) AckOutbox(ctx context.Context, eventID string) error {
-	return s.q().DeleteOutbox(ctx, eventID)
 }
 
 func event(row db.Event) (core.Event, error) {

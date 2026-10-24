@@ -47,11 +47,14 @@ func toPrincipal(p core.Principal) wirePrincipal {
 }
 
 type wireRoom struct {
-	ID        string          `json:"id"`
-	Kind      core.RoomKind   `json:"kind"`
-	Name      string          `json:"name"`
-	Agents    wireAgentPolicy `json:"agents"`
-	CreatedAt time.Time       `json:"created_at"`
+	ID     string          `json:"id"`
+	Kind   core.RoomKind   `json:"kind"`
+	Name   string          `json:"name"`
+	Agents wireAgentPolicy `json:"agents"`
+	// Bridges are the networks the room is mirrored to; only in room
+	// lists and lookups.
+	Bridges   []wireRoomBridge `json:"bridges,omitempty"`
+	CreatedAt time.Time        `json:"created_at"`
 }
 
 // wireAgentPolicy shows the limits that apply in a room, the server's

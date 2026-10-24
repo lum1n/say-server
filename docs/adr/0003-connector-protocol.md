@@ -38,10 +38,15 @@ language and runnable behind NAT.
 
 - Client idempotency keys on every send.
 - Commands are written to an outbox in the same transaction as the message.
+  *Superseded by [ADR 0014](./0014-bridges.md): the room log is the outbox,
+  read by each bridge link from a cursor.*
 - Inbound bridged messages are deduplicated on `(link, remote_msg_id)`.
 - A send with an uncertain outcome becomes `unknown` and is never
   auto-retried.
 - Connector reachability (`live`, `offline`, `unlinked`) is visible.
   Sending to an offline connector returns `409` instead of queueing silently.
+  *For bridges, [ADR 0014](./0014-bridges.md) replaces this: the room shows
+  the bridge as offline, and messages under ten minutes old go out when it
+  is back.*
 - Push notifications carry no message content.
 - Retention is configurable per room or instance.

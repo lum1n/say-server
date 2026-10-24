@@ -22,8 +22,9 @@ as built-in agents on Anthropic or any OpenAI-compatible model, within each
 room's agent limits. Their replies stream into the room as they are
 written. say also runs inside other programs: as a Go package, in iOS and
 Android apps, through a C library, and as `say tui` in the terminal.
-Sites can also put a chat widget on their pages. See the milestones
-below.
+Sites can also put a chat widget on their pages. People connect their own
+accounts on Matrix, Slack, IRC, email, Telegram and Signal, and chat there
+from say. See the milestones below.
 
 ## Quick start (target)
 
@@ -265,6 +266,36 @@ a JWT with HS256 and the widget's secret, with `sub` (your user id), `exp`
 `identity` attribute. A signed-in visitor then has the same thread on
 every device ([ADR 0012](./docs/adr/0012-widget.md)).
 
+### Accounts on other networks
+
+On the **Accounts** page, anyone connects their own account on another
+network. Its chats show up as rooms, people there show up by name, and
+what you write in those rooms goes out as you. Nobody else in the room,
+person or agent, can write as you; their messages stay in say. Messages
+you send from your phone or other apps show up as yours.
+
+| Network | What you need |
+|---|---|
+| Matrix | Homeserver URL, user ID, and a password or access token |
+| Slack | A Slack app with user scopes and Socket Mode: its user token (`xoxp-…`) and app token (`xapp-…`) |
+| IRC | Server, nick, channels; SASL or server password if needed |
+| Email | IMAP and SMTP servers, address and password |
+| Telegram | `api_id` and `api_hash` from my.telegram.org, and your phone number; the code Telegram sends is asked on the page |
+| Signal | `signal-cli` on the server; scan the QR code on the page with Signal on your phone (Settings → Linked devices) |
+
+Chats active in the last 30 days are brought in with their latest
+messages. A room shows its network in the header, and whether it is
+connected. If a network is down, what you write is sent when it is back,
+if within ten minutes; otherwise the message says it was not sent. A send
+that was cut off says it "may not have reached" the network, and is never
+repeated by itself ([ADR 0014](./docs/adr/0014-bridges.md)).
+
+Only official routes are used: no personal WhatsApp, no Discord user
+accounts, no Slack web-session tokens ([ADR
+0004](./docs/adr/0004-bridge-risk-policy.md)). The server holds your
+credentials and reads these messages; bridged messages are never
+end-to-end encrypted, and Matrix's encrypted rooms aren't readable yet.
+
 After editing `internal/store/queries.sql` or a migration, run
 `make generate`.
 
@@ -286,6 +317,7 @@ placeholder page instead of the app.
 | `internal/api` | HTTP, WebSocket and SSE API, bot sessions, and the MCP server at `/mcp` |
 | `internal/agents` | Runs built-in agents, one node per agent through a lease |
 | `internal/llm` | Model providers for built-in agents: Anthropic and OpenAI-compatible |
+| `internal/bridge` | Bridges to other networks: accounts, relay bots, delivery from the log; one package per network |
 | `internal/connector` | Connector protocol, capabilities, loopback for first-party connectors |
 | `web/` | TanStack Start (React) app in SPA mode, embedded into the binary; includes `/embed` routes |
 | `widget/` | Tiny vanilla-TS loader that defines `<say-chat>` |
@@ -310,6 +342,7 @@ placeholder page instead of the app.
 - [ADR 0011: Bot sessions on the WebSocket](./docs/adr/0011-bot-api.md)
 - [ADR 0012: The chat widget](./docs/adr/0012-widget.md)
 - [ADR 0013: Embedding say in apps](./docs/adr/0013-embedding.md)
+- [ADR 0014: Bridges — your own accounts first](./docs/adr/0014-bridges.md)
 
 ## Privacy
 
@@ -325,9 +358,10 @@ bridged messages are never end-to-end encrypted. Transport is TLS.
 - **M2 Embedding (done):** the node as a Go package, iOS and Android
   bindings, a C library and a terminal client. Also a chat widget for
   other sites: `<say-chat>`, guest and verified visitors, handoff.
-- **M3 Simple bridges:** webhooks, email, IRC, Matrix, Discord, Slack,
-  Telegram bot.
-- **M4 Stateful bridges:** Telegram user, Signal, WhatsApp Cloud, on leases.
+- **M3 Bridges:** your own accounts on Matrix, Slack, IRC, email,
+  Telegram and Signal, whose chats become rooms (done); relay bots for
+  Discord, the Telegram Bot API and webhooks.
+- **M4:** WhatsApp Cloud.
 - **M5:** A2A, WASM hooks, connector registry.
 
 ## License

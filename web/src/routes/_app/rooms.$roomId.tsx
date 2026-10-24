@@ -3,14 +3,16 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   addMember,
   type AgentPolicy,
+  type Delivery,
   type Event,
   getMe,
   getRoom,
-  listEvents,
+  listEventPage,
   listMembers,
   type Member,
   type Principal,
   type Room,
+  type RoomBridge,
   SayError,
   sendMessage,
   type ToolCallPartData,
@@ -18,7 +20,8 @@ import {
   updateRoom,
 } from "@say/sdk";
 import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { keys, mergeEvents, Online, useDirectory, useRealtime } from "../../chat";
+import { type Deliveries, keys, mergeDeliveries, mergeEvents, Online, useDirectory, useRealtime } from "../../chat";
+import { networkTitle } from "../../networks";
 import { FormError } from "../../components/form";
 
 export const Route = createFileRoute("/_app/rooms/$roomId")({
@@ -36,10 +39,11 @@ function RoomPage() {
       <header className="room-header">
         <Link to="/" className="back">‹ Rooms</Link>
         <h1>{room.data ? room.data.name || "Untitled room" : "…"}</h1>
+        {room.data?.bridges?.map((b) => <BridgeChip key={b.bridge_id} bridge={b} />)}
         {room.data && <PauseAgents room={room.data} />}
       </header>
       {/* key: a fresh log, composer and member list per room */}
-      <Log key={`log-${roomId}`} roomId={roomId} />
+      <Log key={`log-${roomId}`} roomId={roomId} bridges={room.data?.bridges ?? []} />
       <Members key={`members-${roomId}`} roomId={roomId} room={room.data} />
     </main>
   );
@@ -48,13 +52,26 @@ function RoomPage() {
 // Log shows the room's events and the composer. The latest page is read
 // over HTTP; the socket then follows the room from its last seq and keeps
 // the cache current, so the query itself never refetches.
-function Log({ roomId }: { roomId: string }) {
+function Log({ roomId, bridges }: { roomId: string; bridges: RoomBridge[] }) {
   const queryClient = useQueryClient();
   const rt = useRealtime();
   const dir = useDirectory();
+  // A page's deliveries go to their own cache, which the socket updates.
+  const readPage = async (query: { before?: number; limit: number }) => {
+    const page = await listEventPage(roomId, query);
+    queryClient.setQueryData<Deliveries>(keys.deliveries(roomId), (map) => mergeDeliveries(map, page.deliveries));
+    return page.events;
+  };
   const events = useQuery({
     queryKey: keys.events(roomId),
-    queryFn: async () => mergeEvents(queryClient.getQueryData(keys.events(roomId)), await listEvents(roomId, { limit: pageSize })),
+    queryFn: async () => mergeEvents(queryClient.getQueryData(keys.events(roomId)), await readPage({ limit: pageSize })),
+    staleTime: Infinity,
+  });
+  // Filled by readPage and the socket, never fetched by itself.
+  const deliveries = useQuery<Deliveries>({
+    queryKey: keys.deliveries(roomId),
+    queryFn: () => ({}),
+    initialData: {},
     staleTime: Infinity,
   });
   const loaded = events.isSuccess;
@@ -72,7 +89,7 @@ function Log({ roomId }: { roomId: string }) {
   }, [unknown]);
 
   const earlier = useMutation({
-    mutationFn: (before: number) => listEvents(roomId, { before, limit: pageSize }),
+    mutationFn: (before: number) => readPage({ before, limit: pageSize }),
     onSuccess: (page) => queryClient.setQueryData<Event[]>(keys.events(roomId), (log) => mergeEvents(log, page)),
   });
 
@@ -116,7 +133,14 @@ function Log({ roomId }: { roomId: string }) {
         {events.isError && <p className="muted">{events.error.message}</p>}
         {loaded && messages.length === 0 && <p className="muted">No messages yet. Say something.</p>}
         {messages.map((e, i) => (
-          <Message key={e.seq} event={e} sender={dir.byId.get(e.sender_id)} grouped={sameSpeaker(messages[i - 1], e)} />
+          <Message
+            key={e.seq}
+            event={e}
+            sender={dir.byId.get(e.sender_id)}
+            grouped={sameSpeaker(messages[i - 1], e)}
+            bridges={bridges}
+            deliveries={deliveries.data?.[e.id]}
+          />
         ))}
       </div>
       <Composer roomId={roomId} onSent={() => (atBottom.current = true)} />
@@ -135,7 +159,19 @@ function sameSpeaker(prev: Event | undefined, e: Event) {
 
 const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
 
-function Message({ event, sender, grouped }: { event: Event; sender?: Principal; grouped: boolean }) {
+function Message({
+  event,
+  sender,
+  grouped,
+  bridges,
+  deliveries,
+}: {
+  event: Event;
+  sender?: Principal;
+  grouped: boolean;
+  bridges: RoomBridge[];
+  deliveries?: Delivery[];
+}) {
   const streaming = event.stream === "streaming";
   return (
     <article className={["msg", grouped && "grouped", streaming && "streaming"].filter(Boolean).join(" ")} aria-busy={streaming}>
@@ -143,6 +179,7 @@ function Message({ event, sender, grouped }: { event: Event; sender?: Principal;
         <header>
           <strong>{sender?.display_name ?? "…"}</strong>
           {sender?.kind === "agent" && <span className="badge">agent</span>}
+          {sender?.kind === "ghost" && bridges.length === 1 && <span className="badge">{networkTitle(bridges[0].network)}</span>}
           <time dateTime={event.created_at}>{time.format(new Date(event.created_at))}</time>
         </header>
       )}
@@ -165,7 +202,47 @@ function Message({ event, sender, grouped }: { event: Event; sender?: Principal;
           edited
         </span>
       )}
+      {deliveries?.map((d) => <DeliveryMark key={d.bridge_id} delivery={d} bridges={bridges} />)}
     </article>
+  );
+}
+
+// What a delivery state tells the sender. Sent messages need no mark.
+const deliveryText: Record<string, (net: string) => string> = {
+  sending: (net) => `Sending to ${net}…`,
+  unknown: (net) => `May not have reached ${net}`,
+  failed: (net) => `Not sent to ${net}`,
+  expired: (net) => `Not sent to ${net}: it was offline too long`,
+};
+
+// DeliveryMark says when a message did not surely reach a bridged network.
+function DeliveryMark({ delivery: d, bridges }: { delivery: Delivery; bridges: RoomBridge[] }) {
+  const text = deliveryText[d.state];
+  if (!text) return null;
+  const b = bridges.find((x) => x.bridge_id === d.bridge_id);
+  return (
+    <span className={`delivery ${d.state}`} title={d.error}>
+      {text(b ? networkTitle(b.network) : "the other network")}
+    </span>
+  );
+}
+
+// BridgeChip shows a network the room is mirrored to, and whether it is
+// reachable now.
+function BridgeChip({ bridge: b }: { bridge: RoomBridge }) {
+  const net = networkTitle(b.network);
+  const hint: Record<string, string> = {
+    live: `Mirrored to ${b.remote_name} on ${net}`,
+    login: `${net} needs you to log in again (Accounts)`,
+    error: `${net} can't connect; your messages are sent when it's back, if within 10 minutes`,
+    offline: `${net} is offline; your messages are sent when it's back, if within 10 minutes`,
+    disabled: `${net} is switched off; messages here stay in say`,
+  };
+  return (
+    <span className={`bridge-chip ${b.state}`} title={hint[b.state]}>
+      {net}
+      {b.state !== "live" && ` · ${b.state}`}
+    </span>
   );
 }
 

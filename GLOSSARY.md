@@ -92,19 +92,40 @@
   bot's stored cursor, so events after it come again after a reconnect.
 
 **Bridge**
-: A connector that mirrors rooms to an external network.
+: A connector that mirrors rooms to an external network. In `account` mode
+  it is a person's own account there; in `bot` mode, a relay bot an admin
+  runs.
+
+**Account**
+: A bridge in account mode: someone's own account on another network. Its
+  chats become rooms of that person, and only their messages go out, as
+  them.
+
+**Portal**
+: A room that mirrors one chat of an account, made when the chat is first
+  seen.
 
 **BridgeLink**
-: Ties one room to one remote channel on one bridge.
+: Ties one room to one remote chat or channel on one bridge, with the
+  cursor its delivery has reached.
 
 **IdentityLink**
 : Maps a remote user on a network to a ghost principal. Merging ghosts into
   one person is manual or opt-in.
 
+**Ghost**
+: A principal for someone on another network, seen through a bridge. It
+  never signs in.
+
+**Prompt**
+: A login step a bridge needs from its owner: a code, a password, or a QR
+  code to scan. It shows on the Accounts page until answered.
+
 **Reachability**
-: A connector's state: `live`, `offline` or `unlinked`. Sending to an
-  offline connector fails with `409`. For bots it is shown as "online"
-  while a bot session is open.
+: A connector's state. For bots it is shown as "online" while a bot
+  session is open. A bridge is `live`, `login` (waiting for a prompt),
+  `error`, `offline` or `disabled`; messages sent while it is down go out
+  when it is back, within ten minutes.
 
 **Lease**
 : A database row that grants one node the right to run something stateful,
@@ -112,13 +133,15 @@
   Its generation counter goes up each time it changes hands, so a stale
   holder can be fenced.
 
-**Outbox**
-: Commands written in the same transaction as the message that caused them,
-  delivered afterwards.
-
 **Unknown (send state)**
 : A send whose outcome could not be confirmed. It is never retried
   automatically.
+
+**Delivery**
+: How a message went out to a bridge: `sending`, `sent`, `failed` (the
+  network refused it), `unknown` (cut off; never retried) or `expired`
+  (the bridge was offline for more than ten minutes). The room log is the
+  outbox: each link reads it from a cursor.
 
 **Node**
 : One running say: store, bus, API and built-in agents. `say serve` runs

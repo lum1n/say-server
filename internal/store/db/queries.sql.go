@@ -172,6 +172,106 @@ func (q *Queries) AutomatedFromSenderAt(ctx context.Context, arg AutomatedFromSe
 	return created_at, err
 }
 
+const bridgeGhostByPrincipal = `-- name: BridgeGhostByPrincipal :one
+SELECT bridge_id, remote_user_id, principal_id, created_at FROM bridge_ghosts WHERE principal_id = $1
+`
+
+func (q *Queries) BridgeGhostByPrincipal(ctx context.Context, principalID string) (BridgeGhost, error) {
+	row := q.db.QueryRowContext(ctx, bridgeGhostByPrincipal, principalID)
+	var i BridgeGhost
+	err := row.Scan(
+		&i.BridgeID,
+		&i.RemoteUserID,
+		&i.PrincipalID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const bridgeLinkByRemote = `-- name: BridgeLinkByRemote :one
+SELECT id, bridge_id, room_id, remote_id, remote_name, cursor, created_at FROM bridge_links WHERE bridge_id = $1 AND remote_id = $2
+`
+
+type BridgeLinkByRemoteParams struct {
+	BridgeID string
+	RemoteID string
+}
+
+func (q *Queries) BridgeLinkByRemote(ctx context.Context, arg BridgeLinkByRemoteParams) (BridgeLink, error) {
+	row := q.db.QueryRowContext(ctx, bridgeLinkByRemote, arg.BridgeID, arg.RemoteID)
+	var i BridgeLink
+	err := row.Scan(
+		&i.ID,
+		&i.BridgeID,
+		&i.RoomID,
+		&i.RemoteID,
+		&i.RemoteName,
+		&i.Cursor,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const bridgeLinks = `-- name: BridgeLinks :many
+SELECT id, bridge_id, room_id, remote_id, remote_name, cursor, created_at FROM bridge_links WHERE bridge_id = $1 ORDER BY created_at, id
+`
+
+func (q *Queries) BridgeLinks(ctx context.Context, bridgeID string) ([]BridgeLink, error) {
+	rows, err := q.db.QueryContext(ctx, bridgeLinks, bridgeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BridgeLink
+	for rows.Next() {
+		var i BridgeLink
+		if err := rows.Scan(
+			&i.ID,
+			&i.BridgeID,
+			&i.RoomID,
+			&i.RemoteID,
+			&i.RemoteName,
+			&i.Cursor,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const bridgeMessageByRemote = `-- name: BridgeMessageByRemote :one
+SELECT link_id, event_id, remote_id, direction, state, error, updated_at, created_at FROM bridge_messages WHERE link_id = $1 AND remote_id = $2
+`
+
+type BridgeMessageByRemoteParams struct {
+	LinkID   string
+	RemoteID string
+}
+
+func (q *Queries) BridgeMessageByRemote(ctx context.Context, arg BridgeMessageByRemoteParams) (BridgeMessage, error) {
+	row := q.db.QueryRowContext(ctx, bridgeMessageByRemote, arg.LinkID, arg.RemoteID)
+	var i BridgeMessage
+	err := row.Scan(
+		&i.LinkID,
+		&i.EventID,
+		&i.RemoteID,
+		&i.Direction,
+		&i.State,
+		&i.Error,
+		&i.UpdatedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const bumpSeq = `-- name: BumpSeq :one
 UPDATE rooms SET last_seq = last_seq + 1 WHERE id = $1 RETURNING last_seq
 `
@@ -231,6 +331,96 @@ func (q *Queries) ConnectorSessions(ctx context.Context, seenAt int64) ([]Connec
 		return nil, err
 	}
 	return items, nil
+}
+
+const createBridge = `-- name: CreateBridge :exec
+INSERT INTO bridges (id, owner_id, mode, network, name, config, enabled, updated_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+`
+
+type CreateBridgeParams struct {
+	ID        string
+	OwnerID   string
+	Mode      string
+	Network   string
+	Name      string
+	Config    string
+	Enabled   int32
+	UpdatedAt int64
+	CreatedAt int64
+}
+
+func (q *Queries) CreateBridge(ctx context.Context, arg CreateBridgeParams) error {
+	_, err := q.db.ExecContext(ctx, createBridge,
+		arg.ID,
+		arg.OwnerID,
+		arg.Mode,
+		arg.Network,
+		arg.Name,
+		arg.Config,
+		arg.Enabled,
+		arg.UpdatedAt,
+		arg.CreatedAt,
+	)
+	return err
+}
+
+const createBridgeGhost = `-- name: CreateBridgeGhost :execrows
+INSERT INTO bridge_ghosts (bridge_id, remote_user_id, principal_id, created_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (bridge_id, remote_user_id) DO NOTHING
+`
+
+type CreateBridgeGhostParams struct {
+	BridgeID     string
+	RemoteUserID string
+	PrincipalID  string
+	CreatedAt    int64
+}
+
+func (q *Queries) CreateBridgeGhost(ctx context.Context, arg CreateBridgeGhostParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createBridgeGhost,
+		arg.BridgeID,
+		arg.RemoteUserID,
+		arg.PrincipalID,
+		arg.CreatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const createBridgeLink = `-- name: CreateBridgeLink :execrows
+INSERT INTO bridge_links (id, bridge_id, room_id, remote_id, remote_name, cursor, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (bridge_id, remote_id) DO NOTHING
+`
+
+type CreateBridgeLinkParams struct {
+	ID         string
+	BridgeID   string
+	RoomID     string
+	RemoteID   string
+	RemoteName string
+	Cursor     int64
+	CreatedAt  int64
+}
+
+func (q *Queries) CreateBridgeLink(ctx context.Context, arg CreateBridgeLinkParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createBridgeLink,
+		arg.ID,
+		arg.BridgeID,
+		arg.RoomID,
+		arg.RemoteID,
+		arg.RemoteName,
+		arg.Cursor,
+		arg.CreatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const createBuiltinAgent = `-- name: CreateBuiltinAgent :exec
@@ -443,21 +633,38 @@ func (q *Queries) CreateWidget(ctx context.Context, arg CreateWidgetParams) erro
 	return err
 }
 
+const deleteBridgeLink = `-- name: DeleteBridgeLink :execrows
+DELETE FROM bridge_links WHERE id = $1 AND bridge_id = $2
+`
+
+type DeleteBridgeLinkParams struct {
+	ID       string
+	BridgeID string
+}
+
+func (q *Queries) DeleteBridgeLink(ctx context.Context, arg DeleteBridgeLinkParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteBridgeLink, arg.ID, arg.BridgeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteBridgeLinkMessages = `-- name: DeleteBridgeLinkMessages :exec
+DELETE FROM bridge_messages WHERE link_id = $1
+`
+
+func (q *Queries) DeleteBridgeLinkMessages(ctx context.Context, linkID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBridgeLinkMessages, linkID)
+	return err
+}
+
 const deleteConnectorSession = `-- name: DeleteConnectorSession :exec
 DELETE FROM connector_sessions WHERE id = $1
 `
 
 func (q *Queries) DeleteConnectorSession(ctx context.Context, id string) error {
 	_, err := q.db.ExecContext(ctx, deleteConnectorSession, id)
-	return err
-}
-
-const deleteOutbox = `-- name: DeleteOutbox :exec
-DELETE FROM outbox WHERE event_id = $1
-`
-
-func (q *Queries) DeleteOutbox(ctx context.Context, eventID string) error {
-	_, err := q.db.ExecContext(ctx, deleteOutbox, eventID)
 	return err
 }
 
@@ -617,6 +824,122 @@ func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]E
 		return nil, err
 	}
 	return items, nil
+}
+
+const finishBridgeMessage = `-- name: FinishBridgeMessage :exec
+UPDATE bridge_messages SET state = $3, remote_id = $4, error = $5, updated_at = $6
+WHERE link_id = $1 AND event_id = $2
+`
+
+type FinishBridgeMessageParams struct {
+	LinkID    string
+	EventID   string
+	State     string
+	RemoteID  string
+	Error     string
+	UpdatedAt int64
+}
+
+func (q *Queries) FinishBridgeMessage(ctx context.Context, arg FinishBridgeMessageParams) error {
+	_, err := q.db.ExecContext(ctx, finishBridgeMessage,
+		arg.LinkID,
+		arg.EventID,
+		arg.State,
+		arg.RemoteID,
+		arg.Error,
+		arg.UpdatedAt,
+	)
+	return err
+}
+
+const getBridge = `-- name: GetBridge :one
+SELECT id, owner_id, mode, network, name, config, state, prompt, enabled, last_error, seen_at, updated_at, created_at FROM bridges WHERE id = $1
+`
+
+func (q *Queries) GetBridge(ctx context.Context, id string) (Bridge, error) {
+	row := q.db.QueryRowContext(ctx, getBridge, id)
+	var i Bridge
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Mode,
+		&i.Network,
+		&i.Name,
+		&i.Config,
+		&i.State,
+		&i.Prompt,
+		&i.Enabled,
+		&i.LastError,
+		&i.SeenAt,
+		&i.UpdatedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getBridgeGhost = `-- name: GetBridgeGhost :one
+SELECT bridge_id, remote_user_id, principal_id, created_at FROM bridge_ghosts WHERE bridge_id = $1 AND remote_user_id = $2
+`
+
+type GetBridgeGhostParams struct {
+	BridgeID     string
+	RemoteUserID string
+}
+
+func (q *Queries) GetBridgeGhost(ctx context.Context, arg GetBridgeGhostParams) (BridgeGhost, error) {
+	row := q.db.QueryRowContext(ctx, getBridgeGhost, arg.BridgeID, arg.RemoteUserID)
+	var i BridgeGhost
+	err := row.Scan(
+		&i.BridgeID,
+		&i.RemoteUserID,
+		&i.PrincipalID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getBridgeLink = `-- name: GetBridgeLink :one
+SELECT id, bridge_id, room_id, remote_id, remote_name, cursor, created_at FROM bridge_links WHERE id = $1
+`
+
+func (q *Queries) GetBridgeLink(ctx context.Context, id string) (BridgeLink, error) {
+	row := q.db.QueryRowContext(ctx, getBridgeLink, id)
+	var i BridgeLink
+	err := row.Scan(
+		&i.ID,
+		&i.BridgeID,
+		&i.RoomID,
+		&i.RemoteID,
+		&i.RemoteName,
+		&i.Cursor,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getBridgeMessage = `-- name: GetBridgeMessage :one
+SELECT link_id, event_id, remote_id, direction, state, error, updated_at, created_at FROM bridge_messages WHERE link_id = $1 AND event_id = $2
+`
+
+type GetBridgeMessageParams struct {
+	LinkID  string
+	EventID string
+}
+
+func (q *Queries) GetBridgeMessage(ctx context.Context, arg GetBridgeMessageParams) (BridgeMessage, error) {
+	row := q.db.QueryRowContext(ctx, getBridgeMessage, arg.LinkID, arg.EventID)
+	var i BridgeMessage
+	err := row.Scan(
+		&i.LinkID,
+		&i.EventID,
+		&i.RemoteID,
+		&i.Direction,
+		&i.State,
+		&i.Error,
+		&i.UpdatedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const getBuiltinAgent = `-- name: GetBuiltinAgent :one
@@ -797,26 +1120,45 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 	return err
 }
 
-const insertOutbox = `-- name: InsertOutbox :exec
-INSERT INTO outbox (event_id, room_id, seq, created_at)
-VALUES ($1, $2, $3, $4)
+const listBridges = `-- name: ListBridges :many
+SELECT id, owner_id, mode, network, name, config, state, prompt, enabled, last_error, seen_at, updated_at, created_at FROM bridges ORDER BY created_at, id
 `
 
-type InsertOutboxParams struct {
-	EventID   string
-	RoomID    string
-	Seq       int64
-	CreatedAt int64
-}
-
-func (q *Queries) InsertOutbox(ctx context.Context, arg InsertOutboxParams) error {
-	_, err := q.db.ExecContext(ctx, insertOutbox,
-		arg.EventID,
-		arg.RoomID,
-		arg.Seq,
-		arg.CreatedAt,
-	)
-	return err
+func (q *Queries) ListBridges(ctx context.Context) ([]Bridge, error) {
+	rows, err := q.db.QueryContext(ctx, listBridges)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Bridge
+	for rows.Next() {
+		var i Bridge
+		if err := rows.Scan(
+			&i.ID,
+			&i.OwnerID,
+			&i.Mode,
+			&i.Network,
+			&i.Name,
+			&i.Config,
+			&i.State,
+			&i.Prompt,
+			&i.Enabled,
+			&i.LastError,
+			&i.SeenAt,
+			&i.UpdatedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listBuiltinAgents = `-- name: ListBuiltinAgents :many
@@ -951,6 +1293,21 @@ func (q *Queries) LoginByUsername(ctx context.Context, username string) (Login, 
 	return i, err
 }
 
+const markBridgeSendsUnknown = `-- name: MarkBridgeSendsUnknown :exec
+UPDATE bridge_messages SET state = 'unknown', updated_at = $2
+WHERE state = 'sending' AND link_id IN (SELECT id FROM bridge_links WHERE bridge_id = $1)
+`
+
+type MarkBridgeSendsUnknownParams struct {
+	BridgeID  string
+	UpdatedAt int64
+}
+
+func (q *Queries) MarkBridgeSendsUnknown(ctx context.Context, arg MarkBridgeSendsUnknownParams) error {
+	_, err := q.db.ExecContext(ctx, markBridgeSendsUnknown, arg.BridgeID, arg.UpdatedAt)
+	return err
+}
+
 const members = `-- name: Members :many
 SELECT room_id, principal_id, role, scopes FROM memberships WHERE room_id = $1 ORDER BY principal_id
 `
@@ -983,23 +1340,35 @@ func (q *Queries) Members(ctx context.Context, roomID string) ([]Membership, err
 	return items, nil
 }
 
-const pendingOutbox = `-- name: PendingOutbox :many
-SELECT event_id, room_id, seq, created_at FROM outbox ORDER BY created_at, room_id, seq LIMIT $1
+const outgoingBridgeMessages = `-- name: OutgoingBridgeMessages :many
+SELECT m.link_id, m.event_id, m.remote_id, m.direction, m.state, m.error, m.updated_at, m.created_at FROM bridge_messages m
+JOIN events e ON e.id = m.event_id
+WHERE e.room_id = $1 AND e.seq >= $2 AND e.seq <= $3 AND m.direction = 'out'
 `
 
-func (q *Queries) PendingOutbox(ctx context.Context, limit int32) ([]Outbox, error) {
-	rows, err := q.db.QueryContext(ctx, pendingOutbox, limit)
+type OutgoingBridgeMessagesParams struct {
+	RoomID  string
+	FromSeq int64
+	ToSeq   int64
+}
+
+func (q *Queries) OutgoingBridgeMessages(ctx context.Context, arg OutgoingBridgeMessagesParams) ([]BridgeMessage, error) {
+	rows, err := q.db.QueryContext(ctx, outgoingBridgeMessages, arg.RoomID, arg.FromSeq, arg.ToSeq)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Outbox
+	var items []BridgeMessage
 	for rows.Next() {
-		var i Outbox
+		var i BridgeMessage
 		if err := rows.Scan(
+			&i.LinkID,
 			&i.EventID,
-			&i.RoomID,
-			&i.Seq,
+			&i.RemoteID,
+			&i.Direction,
+			&i.State,
+			&i.Error,
+			&i.UpdatedAt,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -1097,6 +1466,41 @@ func (q *Queries) ReplaceMessage(ctx context.Context, arg ReplaceMessageParams) 
 		arg.EditedAt,
 	)
 	return err
+}
+
+const roomBridgeLinks = `-- name: RoomBridgeLinks :many
+SELECT id, bridge_id, room_id, remote_id, remote_name, cursor, created_at FROM bridge_links WHERE room_id = $1 ORDER BY created_at, id
+`
+
+func (q *Queries) RoomBridgeLinks(ctx context.Context, roomID string) ([]BridgeLink, error) {
+	rows, err := q.db.QueryContext(ctx, roomBridgeLinks, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BridgeLink
+	for rows.Next() {
+		var i BridgeLink
+		if err := rows.Scan(
+			&i.ID,
+			&i.BridgeID,
+			&i.RoomID,
+			&i.RemoteID,
+			&i.RemoteName,
+			&i.Cursor,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const roomsFor = `-- name: RoomsFor :many
@@ -1218,6 +1622,76 @@ func (q *Queries) SetAgentPolicy(ctx context.Context, arg SetAgentPolicyParams) 
 	return result.RowsAffected()
 }
 
+const setBridgeError = `-- name: SetBridgeError :exec
+UPDATE bridges SET last_error = $2 WHERE id = $1
+`
+
+type SetBridgeErrorParams struct {
+	ID        string
+	LastError string
+}
+
+func (q *Queries) SetBridgeError(ctx context.Context, arg SetBridgeErrorParams) error {
+	_, err := q.db.ExecContext(ctx, setBridgeError, arg.ID, arg.LastError)
+	return err
+}
+
+const setBridgeLinkCursor = `-- name: SetBridgeLinkCursor :exec
+UPDATE bridge_links SET cursor = $2 WHERE id = $1 AND cursor < $2
+`
+
+type SetBridgeLinkCursorParams struct {
+	ID     string
+	Cursor int64
+}
+
+func (q *Queries) SetBridgeLinkCursor(ctx context.Context, arg SetBridgeLinkCursorParams) error {
+	_, err := q.db.ExecContext(ctx, setBridgeLinkCursor, arg.ID, arg.Cursor)
+	return err
+}
+
+const setBridgePrompt = `-- name: SetBridgePrompt :exec
+UPDATE bridges SET prompt = $2 WHERE id = $1
+`
+
+type SetBridgePromptParams struct {
+	ID     string
+	Prompt string
+}
+
+func (q *Queries) SetBridgePrompt(ctx context.Context, arg SetBridgePromptParams) error {
+	_, err := q.db.ExecContext(ctx, setBridgePrompt, arg.ID, arg.Prompt)
+	return err
+}
+
+const setBridgeSeen = `-- name: SetBridgeSeen :exec
+UPDATE bridges SET seen_at = $2 WHERE id = $1
+`
+
+type SetBridgeSeenParams struct {
+	ID     string
+	SeenAt int64
+}
+
+func (q *Queries) SetBridgeSeen(ctx context.Context, arg SetBridgeSeenParams) error {
+	_, err := q.db.ExecContext(ctx, setBridgeSeen, arg.ID, arg.SeenAt)
+	return err
+}
+
+const setBridgeState = `-- name: SetBridgeState :exec
+UPDATE bridges SET state = $2 WHERE id = $1
+`
+
+type SetBridgeStateParams struct {
+	ID    string
+	State string
+}
+
+func (q *Queries) SetBridgeState(ctx context.Context, arg SetBridgeStateParams) error {
+	_, err := q.db.ExecContext(ctx, setBridgeState, arg.ID, arg.State)
+	return err
+}
+
 const setBuiltinAgentError = `-- name: SetBuiltinAgentError :exec
 UPDATE builtin_agents SET last_error = $2, last_error_at = $3
 WHERE principal_id = $1
@@ -1263,6 +1737,36 @@ func (q *Queries) SetupDone(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const startBridgeMessage = `-- name: StartBridgeMessage :execrows
+INSERT INTO bridge_messages (link_id, event_id, remote_id, direction, state, updated_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $6)
+ON CONFLICT DO NOTHING
+`
+
+type StartBridgeMessageParams struct {
+	LinkID    string
+	EventID   string
+	RemoteID  string
+	Direction string
+	State     string
+	UpdatedAt int64
+}
+
+func (q *Queries) StartBridgeMessage(ctx context.Context, arg StartBridgeMessageParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, startBridgeMessage,
+		arg.LinkID,
+		arg.EventID,
+		arg.RemoteID,
+		arg.Direction,
+		arg.State,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const streamingFrom = `-- name: StreamingFrom :many
 SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events WHERE sender_id = $1 AND stream = 'streaming'
 ORDER BY created_at, id
@@ -1304,6 +1808,33 @@ func (q *Queries) StreamingFrom(ctx context.Context, senderID string) ([]Event, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateBridge = `-- name: UpdateBridge :execrows
+UPDATE bridges SET name = $2, config = $3, enabled = $4, updated_at = $5
+WHERE id = $1
+`
+
+type UpdateBridgeParams struct {
+	ID        string
+	Name      string
+	Config    string
+	Enabled   int32
+	UpdatedAt int64
+}
+
+func (q *Queries) UpdateBridge(ctx context.Context, arg UpdateBridgeParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateBridge,
+		arg.ID,
+		arg.Name,
+		arg.Config,
+		arg.Enabled,
+		arg.UpdatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const updateBuiltinAgent = `-- name: UpdateBuiltinAgent :execrows

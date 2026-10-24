@@ -368,7 +368,10 @@ export interface paths {
          *     or created one); reread `GET /rooms`. A client that offered the
          *     subprotocols `say.v1` and `say.token.<token>` is answered with
          *     `say.v1`. Like event notifications it
-         *     is a hint, so also reread the list after reconnecting. A client that falls too far behind is
+         *     is a hint, so also reread the list after reconnecting. It also
+         *     comes when a bridge of the caller or of one of its rooms changes
+         *     state. A push `{id, type: "delivery", payload: DeliveryPush}` on a
+         *     subscribed room says how a message went out to its bridges. A client that falls too far behind is
          *     closed with code 1008 and should reconnect and resubscribe from its
          *     cursors.
          */
@@ -540,6 +543,136 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/networks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The networks this server bridges to, with their settings */
+        get: operations["listNetworks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bridges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your accounts on other networks, and relay bots for admins */
+        get: operations["listBridges"];
+        put?: never;
+        /**
+         * Connect your account on a network, or add a relay bot
+         * @description In `account` mode (the default; people only) the account's chats
+         *     become rooms of the caller, and what the caller writes there goes
+         *     out as them. `bot` mode (instance admins only) adds a relay bot
+         *     that rooms are linked to with `POST /bridges/{id}/links`. The
+         *     bridge starts at once; a login step it needs shows as `prompt`.
+         */
+        post: operations["createBridge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bridges/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        /** A bridge the caller manages */
+        get: operations["getBridge"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a bridge's name, settings or switch; it restarts
+         * @description Absent fields stay as they are. In `config`, a setting set to ""
+         *     is cleared and a secret left out keeps its value.
+         */
+        patch: operations["updateBridge"];
+        trace?: never;
+    };
+    "/bridges/{id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer the bridge's login prompt (its owner only) */
+        post: operations["answerBridge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bridges/{id}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        /** The rooms a bridge mirrors, and the remote chats they mirror */
+        get: operations["listBridgeLinks"];
+        put?: never;
+        /**
+         * Link a room to a remote channel of a relay bot
+         * @description The caller must own or administer the room. Delivery starts from
+         *     now; the room's history is not sent. Accounts make their links
+         *     themselves, one room per chat (409).
+         */
+        post: operations["createBridgeLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bridges/{id}/links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Stop mirroring a room; the room and its log stay */
+        delete: operations["deleteBridgeLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -622,6 +755,8 @@ export interface components {
             kind: components["schemas"]["RoomKind"];
             name: string;
             agents: components["schemas"]["AgentPolicy"];
+            /** @description The networks the room is mirrored to; only in `GET /rooms` and `GET /rooms/{id}`, and absent when none. */
+            bridges?: components["schemas"]["RoomBridge"][];
             /** Format: date-time */
             created_at: string;
         };
@@ -825,6 +960,117 @@ export interface components {
         };
         /** @enum {string} */
         Reachability: "live" | "offline" | "unlinked";
+        /** @enum {string} */
+        BridgeMode: "account" | "bot";
+        /**
+         * @description `live` while the node running it is connected; `login` while it
+         *     waits for its owner (`prompt`); `error` when its connection fails
+         *     (`error`); `offline` when no node runs it; `disabled`.
+         * @enum {string}
+         */
+        BridgeState: "live" | "login" | "error" | "offline" | "disabled";
+        NetworkField: {
+            key: string;
+            label: string;
+            /**
+             * @description A `secret` is write-only.
+             * @enum {string}
+             */
+            kind: "text" | "secret" | "number" | "bool";
+            required?: boolean;
+            placeholder?: string;
+            help?: string;
+            /** @description The modes the field applies in; absent is all. */
+            modes?: components["schemas"]["BridgeMode"][];
+        };
+        Network: {
+            name: string;
+            title: string;
+            modes: components["schemas"]["BridgeMode"][];
+            fields: components["schemas"]["NetworkField"][];
+            capabilities: string[];
+        };
+        BridgeSettings: {
+            /** @description Required to create; can't change. */
+            network?: string;
+            mode?: components["schemas"]["BridgeMode"];
+            name?: string;
+            /** @description Values for the network's fields, by key. */
+            config?: {
+                [key: string]: unknown;
+            };
+            enabled?: boolean;
+        };
+        /** @description A login step only the owner can do. */
+        BridgePrompt: {
+            /** @enum {string} */
+            kind: "code" | "password" | "text" | "qr";
+            text: string;
+            /** @description What to show, such as a QR code's contents. */
+            data?: string;
+        };
+        Bridge: {
+            id: string;
+            owner_id: string;
+            mode: components["schemas"]["BridgeMode"];
+            network: string;
+            name: string;
+            /** @description The settings without secrets. */
+            config: {
+                [key: string]: unknown;
+            };
+            /** @description The secrets that are set. */
+            secrets_set: string[];
+            enabled: boolean;
+            state: components["schemas"]["BridgeState"];
+            error?: string;
+            prompt?: components["schemas"]["BridgePrompt"];
+            /** Format: date-time */
+            seen_at?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        BridgeLink: {
+            id: string;
+            bridge_id: string;
+            room_id: string;
+            room_name: string;
+            remote_id: string;
+            remote_name: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        CreateBridgeLink: {
+            room_id: string;
+            /** @description The channel on the network, such as "#say" on IRC. */
+            remote_id: string;
+            remote_name?: string;
+        };
+        RoomBridge: {
+            bridge_id: string;
+            network: string;
+            name: string;
+            mode: components["schemas"]["BridgeMode"];
+            remote_name: string;
+            state: components["schemas"]["BridgeState"];
+        };
+        /**
+         * @description `unknown` is a send under way when its node stopped; it is never
+         *     retried. `expired` waited longer than ten minutes for its bridge.
+         * @enum {string}
+         */
+        DeliveryState: "sending" | "sent" | "unknown" | "failed" | "expired";
+        Delivery: {
+            event_id: string;
+            bridge_id: string;
+            state: components["schemas"]["DeliveryState"];
+            error?: string;
+        };
+        DeliveryPush: {
+            room_id: string;
+            event_id: string;
+            deliveries: components["schemas"]["Delivery"][];
+        };
         Causation: {
             /** @description Id of the event that triggered this one. */
             caused_by?: string;
@@ -993,6 +1239,7 @@ export interface components {
         };
     };
     parameters: {
+        BridgeID: string;
         /** @description The widget's public key (pk_…) */
         WidgetKey: string;
         RoomID: string;
@@ -1410,6 +1657,8 @@ export interface operations {
                 content: {
                     "application/json": {
                         events: components["schemas"]["Event"][];
+                        /** @description How the page's messages went out to the room's bridges. */
+                        deliveries: components["schemas"]["Delivery"][];
                     };
                 };
             };
@@ -1836,6 +2085,254 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listNetworks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The networks, by name */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        networks: components["schemas"]["Network"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    listBridges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bridges the caller manages, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        bridges: components["schemas"]["Bridge"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    createBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BridgeSettings"];
+            };
+        };
+        responses: {
+            /** @description The bridge */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Bridge"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bridge */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Bridge"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BridgeSettings"];
+            };
+        };
+        responses: {
+            /** @description The bridge */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Bridge"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    answerBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    value: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Passed to the node running the bridge */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The bridge is not waiting for an answer */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listBridgeLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The links, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        links: components["schemas"]["BridgeLink"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createBridgeLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBridgeLink"];
+            };
+        };
+        responses: {
+            /** @description The link */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BridgeLink"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    deleteBridgeLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
         };

@@ -11,6 +11,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -119,8 +120,8 @@ type Store interface {
 	// SetMemberScopes replaces a membership's scopes.
 	SetMemberScopes(ctx context.Context, roomID, principalID string, scopes []string) error
 
-	// AppendEvent allocates the next seq for e.RoomID and writes the event
-	// and its outbox entry in one transaction. An empty e.ID or e.CreatedAt
+	// AppendEvent allocates the next seq for e.RoomID and writes the
+	// event. An empty e.ID or e.CreatedAt
 	// is filled in. The budgets are checked under the room's lock, so they
 	// hold across the nodes of a cluster; a spent one is a *BudgetError.
 	AppendEvent(ctx context.Context, e core.Event, opts AppendOptions) (core.Event, error)
@@ -148,11 +149,6 @@ type Store interface {
 	// EventsBefore returns the last limit events of room with seq < before,
 	// in seq order.
 	EventsBefore(ctx context.Context, roomID string, before int64, limit int) ([]core.Event, error)
-
-	// PendingOutbox returns up to limit outbox entries, oldest first.
-	// AckOutbox removes one once it has been delivered.
-	PendingOutbox(ctx context.Context, limit int) ([]OutboxEntry, error)
-	AckOutbox(ctx context.Context, eventID string) error
 
 	// CreateBuiltinAgent writes agent principal p and its settings in one
 	// transaction; a.PrincipalID is ignored. UpdateBuiltinAgent replaces
@@ -199,6 +195,60 @@ type Store interface {
 	VisitorByPrincipal(ctx context.Context, principalID string) (Visitor, error)
 	VisitorBySubject(ctx context.Context, widgetID, subject string) (Visitor, error)
 
+	// CreateBridge and UpdateBridge write a bridge; UpdateBridge changes
+	// only its name, config and enabled switch.
+	CreateBridge(ctx context.Context, b Bridge) error
+	UpdateBridge(ctx context.Context, b Bridge) error
+	GetBridge(ctx context.Context, id string) (Bridge, error)
+	// Bridges returns every bridge, oldest first.
+	Bridges(ctx context.Context) ([]Bridge, error)
+	// SetBridgeError records the bridge's latest failure; an empty msg
+	// clears it. SetBridgeSeen records that its node runs it, or with a
+	// zero at that none does.
+	SetBridgeError(ctx context.Context, id, msg string) error
+	SetBridgeSeen(ctx context.Context, id string, at time.Time) error
+	// SetBridgeState replaces what the running node keeps; SetBridgePrompt
+	// sets the login step waiting for the owner, or clears it when empty.
+	SetBridgeState(ctx context.Context, id string, state json.RawMessage) error
+	SetBridgePrompt(ctx context.Context, id string, prompt json.RawMessage) error
+
+	// CreateBridgeLink returns ErrLinkExists if the bridge already links
+	// l.RemoteID. DeleteBridgeLink deletes the link and its messages.
+	CreateBridgeLink(ctx context.Context, l BridgeLink) error
+	// CreatePortal writes a room, its members and the link that mirrors
+	// it in one transaction; ErrLinkExists leaves nothing behind.
+	CreatePortal(ctx context.Context, r core.Room, members []core.Membership, l BridgeLink) error
+	DeleteBridgeLink(ctx context.Context, bridgeID, linkID string) error
+	GetBridgeLink(ctx context.Context, id string) (BridgeLink, error)
+	BridgeLinkByRemote(ctx context.Context, bridgeID, remoteID string) (BridgeLink, error)
+	// BridgeLinks returns a bridge's links and RoomBridgeLinks a room's,
+	// oldest first.
+	BridgeLinks(ctx context.Context, bridgeID string) ([]BridgeLink, error)
+	RoomBridgeLinks(ctx context.Context, roomID string) ([]BridgeLink, error)
+	// SetBridgeLinkCursor only moves a link's cursor forward.
+	SetBridgeLinkCursor(ctx context.Context, linkID string, seq int64) error
+
+	// EnsureGhost returns the ghost principal of a remote user of a
+	// bridge, made on first sight, and renames it to a changed non-empty
+	// name.
+	EnsureGhost(ctx context.Context, bridgeID, remoteUserID, name string) (core.Principal, error)
+	BridgeGhostByPrincipal(ctx context.Context, principalID string) (BridgeGhost, error)
+
+	// StartBridgeMessage records a message crossing a link. It returns
+	// false, writing nothing, when the link already has a row for the
+	// event or for m.RemoteID.
+	StartBridgeMessage(ctx context.Context, m BridgeMessage) (bool, error)
+	// FinishBridgeMessage sets the outcome of an outgoing message.
+	FinishBridgeMessage(ctx context.Context, linkID, eventID, state, remoteID, errMsg string) error
+	BridgeMessageByRemote(ctx context.Context, linkID, remoteID string) (BridgeMessage, error)
+	GetBridgeMessage(ctx context.Context, linkID, eventID string) (BridgeMessage, error)
+	// MarkBridgeSendsUnknown turns the bridge's sends still marked
+	// sending, left by a node that stopped, to unknown.
+	MarkBridgeSendsUnknown(ctx context.Context, bridgeID string) error
+	// OutgoingBridgeMessages returns the outgoing rows of the room's
+	// events with seq in [fromSeq, toSeq].
+	OutgoingBridgeMessages(ctx context.Context, roomID string, fromSeq, toSeq int64) ([]BridgeMessage, error)
+
 	// AcquireLease takes or renews the named lease for holder until ttl
 	// from now. ok is false while another holder's lease is unexpired.
 	// The generation goes up each time the lease changes hands.
@@ -208,13 +258,6 @@ type Store interface {
 	ReleaseLease(ctx context.Context, name, holder string) error
 
 	Close() error
-}
-
-// OutboxEntry points at an event that connectors have not yet been handed.
-type OutboxEntry struct {
-	EventID string
-	RoomID  string
-	Seq     int64
 }
 
 // Open opens and migrates the store named by dsn. A postgres:// or

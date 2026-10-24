@@ -432,9 +432,6 @@ func TestStreamingAndEdits(t *testing.T) {
 		if err != nil || len(log) != 3 || log[2].ID != edit2.ID || log[2].Edits != msg.ID {
 			t.Fatalf("log = %+v, %v", log, err)
 		}
-		if pending, _ := s.PendingOutbox(ctx, 10); len(pending) != 3 {
-			t.Fatalf("outbox = %+v", pending)
-		}
 	})
 }
 
@@ -459,9 +456,9 @@ func TestIdempotencyKey(t *testing.T) {
 		if c.Seq != a.Seq+1 {
 			t.Fatalf("seq after a deduplicated retry = %d, want %d", c.Seq, a.Seq+1)
 		}
-		pending, err := s.PendingOutbox(ctx, 10)
-		if err != nil || len(pending) != 2 {
-			t.Fatalf("outbox after retry = %+v, %v", pending, err)
+		log, err := s.EventsAfter(ctx, r.ID, 0, 10)
+		if err != nil || len(log) != 2 {
+			t.Fatalf("log after retry = %+v, %v", log, err)
 		}
 	})
 }
@@ -654,32 +651,6 @@ func TestConcurrentAppends(t *testing.T) {
 			if e.Seq != int64(i+1) {
 				t.Fatalf("event %d has seq %d; seqs must be gapless", i, e.Seq)
 			}
-		}
-	})
-}
-
-func TestOutbox(t *testing.T) {
-	eachEngine(t, func(t *testing.T, s Store) {
-		ctx := context.Background()
-		p, r := seed(t, s)
-		var ids []string
-		for range 3 {
-			e, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID}, AppendOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
-			ids = append(ids, e.ID)
-		}
-		pending, err := s.PendingOutbox(ctx, 10)
-		if err != nil || len(pending) != 3 || pending[0].EventID != ids[0] || pending[0].Seq != 1 || pending[0].RoomID != r.ID {
-			t.Fatalf("PendingOutbox = %+v, %v", pending, err)
-		}
-		if err := s.AckOutbox(ctx, ids[0]); err != nil {
-			t.Fatal(err)
-		}
-		pending, err = s.PendingOutbox(ctx, 10)
-		if err != nil || len(pending) != 2 || pending[0].EventID != ids[1] {
-			t.Fatalf("after ack = %+v, %v", pending, err)
 		}
 	})
 }

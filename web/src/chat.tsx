@@ -1,5 +1,5 @@
 import { type QueryClient, useQuery } from "@tanstack/react-query";
-import { type Event, listPrincipals, type Principal, Realtime } from "@say/sdk";
+import { type Delivery, type Event, listPrincipals, type Principal, Realtime } from "@say/sdk";
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 
 // Query keys shared by the chat routes.
@@ -9,10 +9,24 @@ export const keys = {
   principals: ["principals"] as const,
   builtinAgents: ["builtin-agents"] as const,
   widgets: ["widgets"] as const,
+  bridges: ["bridges"] as const,
+  networks: ["networks"] as const,
   room: (id: string) => ["room", id] as const,
   members: (id: string) => ["members", id] as const,
   events: (id: string) => ["events", id] as const,
+  deliveries: (id: string) => ["deliveries", id] as const,
 };
+
+/** Deliveries are how a room's messages went out to its bridges, by event id. */
+export type Deliveries = Record<string, Delivery[]>;
+
+/** mergeDeliveries replaces the deliveries of the events they name. */
+export function mergeDeliveries(map: Deliveries | undefined, list: Delivery[], eventIds?: string[]): Deliveries {
+  const next = { ...map };
+  for (const id of eventIds ?? []) delete next[id];
+  for (const d of list) next[d.event_id] = [...(next[d.event_id] ?? []).filter((x) => x.bridge_id !== d.bridge_id), d];
+  return next;
+}
 
 /**
  * mergeEvents adds events to a room's log, keeping seq order without
@@ -55,8 +69,9 @@ const RealtimeContext = createContext<Realtime | null>(null);
 /**
  * RealtimeProvider opens one socket for the signed-in app and pushes every
  * event it receives, and every change to a streaming message, into that
- * room's ["events", id] cache. It also
- * rereads the room list when the server says it changed.
+ * room's ["events", id] cache, and how messages went out to bridges into
+ * ["deliveries", id]. It also rereads the room list and bridges when the
+ * server says they changed.
  */
 export function RealtimeProvider({ queryClient, children }: { queryClient: QueryClient; children: ReactNode }) {
   const [rt, setRt] = useState<Realtime | null>(null);
@@ -64,8 +79,12 @@ export function RealtimeProvider({ queryClient, children }: { queryClient: Query
     const r = new Realtime({
       onEvent: (e) => queryClient.setQueryData<Event[]>(keys.events(e.room_id), (log) => applyLive(log, e)),
       onStream: (m) => queryClient.setQueryData<Event[]>(keys.events(m.room_id), (log) => applyStream(log, m)),
+      onDelivery: (p) =>
+        queryClient.setQueryData<Deliveries>(keys.deliveries(p.room_id), (map) => mergeDeliveries(map, p.deliveries, [p.event_id])),
       onRoomsChanged: () => {
         queryClient.invalidateQueries({ queryKey: keys.rooms });
+        // A bridge of mine or of a room changed state.
+        queryClient.invalidateQueries({ queryKey: keys.bridges });
         // A room's agent settings changed, or its membership did.
         queryClient.invalidateQueries({ queryKey: ["room"] });
         queryClient.invalidateQueries({ queryKey: ["members"] });

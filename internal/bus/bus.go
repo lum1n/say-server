@@ -32,3 +32,14 @@ func RoomsSubject(principalID string) string { return "principal." + principalID
 // BuiltinAgentsSubject announces that a built-in agent was created or
 // changed.
 const BuiltinAgentsSubject = "builtin_agents"
+
+// BridgesSubject announces that a bridge was created or changed.
+const BridgesSubject = "bridges"
+
+// BridgeAnswerSubject carries the owner's answer to a bridge's login
+// prompt, as text, to the node running the bridge.
+func BridgeAnswerSubject(bridgeID string) string { return "bridge." + bridgeID + ".answer" }
+
+// RoomDeliverySubject announces that the delivery of a room's message to
+// a bridge changed; the payload is the event id.
+func RoomDeliverySubject(roomID string) string { return "room." + roomID + ".delivery" }
