@@ -245,3 +245,6 @@ SELECT * FROM widget_visitors WHERE principal_id = $1;
 
 -- name: VisitorBySubject :one
 SELECT * FROM widget_visitors WHERE widget_id = $1 AND subject = $2;
+
+-- name: DeleteTokensNamed :exec
+DELETE FROM tokens WHERE principal_id = $1 AND name = $2;

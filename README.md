@@ -20,8 +20,9 @@ agents. Agents can join rooms over MCP at `/mcp` or as bots on the
 WebSocket, or run inside the server
 as built-in agents on Anthropic or any OpenAI-compatible model, within each
 room's agent limits. Their replies stream into the room as they are
-written. Sites can embed a chat widget whose visitors talk to an agent, to
-people, or to an agent that hands over to people. See the milestones
+written. say also runs inside other programs: as a Go package, in iOS and
+Android apps, through a C library, and as `say tui` in the terminal.
+Sites can also put a chat widget on their pages. See the milestones
 below.
 
 ## Quick start (target)
@@ -195,6 +196,47 @@ People who own or run a room set these in its member panel, or with
 `PATCH /api/v1/rooms/{id}`. Agents cannot change them, even in rooms they
 own. People are never limited.
 
+### Embedding say in apps
+
+A program can run a whole say node inside itself, with no server: rooms,
+the log, built-in agents and bots all live in its process and its SQLite
+file. It speaks the same REST and WebSocket API as any client, over an
+in-memory connection, so nothing listens on a port unless you ask
+([ADR 0013](./docs/adr/0013-embedding.md)).
+
+In Go:
+
+```go
+node, err := say.Open(ctx, say.Config{DB: "notes.db"})
+defer node.Close()
+me, err := node.LocalUser(ctx, "ada", "Ada", "my-app") // no setup wizard
+c := node.Client(me.Token)
+room, err := c.CreateRoom(ctx, "group", "Notes")
+c.Send(ctx, room.ID, []say.Part{say.TextPart("hello")}, "")
+rt, err := c.Realtime(ctx) // pushes from rooms you Subscribe to
+```
+
+`node.Listen("127.0.0.1:0")` also serves the API and the web app on TCP,
+for a WebView or for bots. `say.NewClient(url, token)` is the same client
+for a remote server.
+
+Other languages:
+
+- **Android:** `make android` builds `build/say.aar` (needs the SDK and
+  NDK); **iOS:** `make ios` builds `build/Say.xcframework` on a Mac. Both
+  have `Open`, `localUser`, `request` (REST, JSON strings) and `connect`
+  (a WebSocket session with a listener).
+- **C, Rust, Python, …:** `make libsay` builds `build/libsay.so` (or
+  `.dylib`) and `libsay.h`. See `examples/c/notes.c` and
+  `examples/python/notes.py` (ctypes).
+
+**Terminal:** `say tui` chats in the terminal. It keeps its own node in
+`~/.local/share/say` and signs you in as your login user; `--listen
+127.0.0.1:7290` lets the web app and bots in too, and `--server URL --token
+say_…` uses a remote server instead. `/new NAME` makes a room, `/invite
+NAME` adds someone, Tab moves to the room list and Ctrl+N/Ctrl+P switch
+rooms.
+
 ### Widgets
 
 A widget puts a chat on your own site. Admins add one on the **Widgets**
@@ -233,7 +275,11 @@ placeholder page instead of the app.
 
 | Path | What |
 |---|---|
-| `cmd/say` | The binary |
+| `cmd/say` | The binary: `serve`, `tui`, `principal add` |
+| `say/` | The embeddable node (`say.Open`), its in-memory endpoint and a Go client |
+| `mobile/` | gomobile bindings of the node for iOS and Android |
+| `cmd/libsay` | The node as a C shared library |
+| `internal/tui` | The terminal client |
 | `internal/core` | Domain model: principals, rooms, events, causation |
 | `internal/store` | Storage interface; SQLite and Postgres implementations |
 | `internal/bus` | Fan-out bus; in-process and embedded NATS implementations |
@@ -245,7 +291,7 @@ placeholder page instead of the app.
 | `widget/` | Tiny vanilla-TS loader that defines `<say-chat>` |
 | `protocol/` | The OpenAPI and JSON Schema contract; source of truth for SDKs |
 | `sdk/ts`, `sdk/py` | SDKs generated from `protocol/`; `sdk/ts` also has the `Bot` class |
-| `examples/` | Example bots |
+| `examples/` | An example bot, and libsay from C and Python |
 | `docs/adr` | Architecture decision records |
 
 ## Design
@@ -262,6 +308,8 @@ placeholder page instead of the app.
 - [ADR 0009: Built-in agents](./docs/adr/0009-built-in-agents.md)
 - [ADR 0010: Streaming messages and edits](./docs/adr/0010-streaming-and-edits.md)
 - [ADR 0011: Bot sessions on the WebSocket](./docs/adr/0011-bot-api.md)
+- [ADR 0012: The chat widget](./docs/adr/0012-widget.md)
+- [ADR 0013: Embedding say in apps](./docs/adr/0013-embedding.md)
 
 ## Privacy
 
@@ -274,8 +322,9 @@ bridged messages are never end-to-end encrypted. Transport is TLS.
   app; SQLite and Postgres; in-process and NATS bus; setup wizard; 3-node
   cluster test in CI.
 - **M1 Agents:** bot API, MCP server, built-in LLM agents, loop safety.
-- **M2 Widget (done):** `<say-chat>` loader and `/embed` route, guest and
-  verified identity, handoff.
+- **M2 Embedding (done):** the node as a Go package, iOS and Android
+  bindings, a C library and a terminal client. Also a chat widget for
+  other sites: `<say-chat>`, guest and verified visitors, handoff.
 - **M3 Simple bridges:** webhooks, email, IRC, Matrix, Discord, Slack,
   Telegram bot.
 - **M4 Stateful bridges:** Telegram user, Signal, WhatsApp Cloud, on leases.

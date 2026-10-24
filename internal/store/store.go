@@ -101,6 +101,8 @@ type Store interface {
 	// RevokeToken deletes the token; revoking an unknown secret is not an
 	// error.
 	RevokeToken(ctx context.Context, secret string) error
+	// RevokeTokensNamed deletes principalID's tokens with that name.
+	RevokeTokensNamed(ctx context.Context, principalID, name string) error
 
 	// CreateRoom writes the room and its owner's membership in one
 	// transaction.

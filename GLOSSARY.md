@@ -120,6 +120,19 @@
 : A send whose outcome could not be confirmed. It is never retried
   automatically.
 
+**Node**
+: One running say: store, bus, API and built-in agents. `say serve` runs
+  one as a server; an app runs one inside itself with `say.Open`.
+
+**Embedded node**
+: A node inside another program, reached over an in-memory connection
+  rather than a port.
+
+**Local user**
+: The person at the device of an app that embeds a node. `LocalUser`
+  creates them without the setup wizard and gives each client of theirs
+  one token.
+
 **Widget**
 : An embeddable chat on a third-party site: the `<say-chat>` element, which
   mounts an iframe on `/embed/{key}`. Admins create widgets; each has

@@ -2,7 +2,7 @@ STATIC := internal/api/static
 SQLC := github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build web go generate test image cluster-test clean
+.PHONY: build web go generate test image cluster-test clean libsay android ios
 
 build: web go
 
@@ -25,6 +25,22 @@ test:
 	go test ./...
 	pnpm -r typecheck
 
+# Embedding say in other programs (docs/adr/0013-embedding.md).
+SOEXT := $(if $(filter Darwin,$(shell uname -s)),.dylib,.so)
+libsay:
+	mkdir -p build
+	go build -trimpath -ldflags "-s -w" -buildmode=c-shared -o build/libsay$(SOEXT) ./cmd/libsay
+
+# gomobile needs gobind on PATH; both come from the versions in go.mod.
+# android needs the Android SDK and NDK (ANDROID_HOME, ANDROID_NDK_HOME);
+# ios needs macOS with Xcode.
+ANDROID_TARGETS ?= android/arm64,android/amd64
+MOBILE := GOBIN=$(CURDIR)/build/bin go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind && PATH=$(CURDIR)/build/bin:$$PATH build/bin/gomobile bind
+android:
+	$(MOBILE) -target=$(ANDROID_TARGETS) -androidapi 24 -javapkg dev.say -ldflags "-s -w" -o build/say.aar ./mobile
+ios:
+	$(MOBILE) -target=ios,iossimulator -ldflags "-s -w" -o build/Say.xcframework ./mobile
+
 image:
 	docker build --build-arg VERSION=$(VERSION) -t say:$(VERSION) -t say:latest .
 
@@ -40,5 +56,5 @@ cluster-test:
 	$(CLUSTER) down -v
 
 clean:
-	rm -rf bin web/dist widget/dist
+	rm -rf bin build web/dist widget/dist
 	find $(STATIC) -mindepth 1 ! -name README.md -exec rm -rf {} +

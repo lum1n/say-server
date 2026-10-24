@@ -30,6 +30,12 @@ jobs:
           go-version-file: go.mod
       - run: go vet ./...
       - run: go test -race ./...
+      - name: libsay from C and Python
+        run: |
+          make libsay
+          cc examples/c/notes.c -Wall -Ibuild -Lbuild -lsay -Wl,-rpath,'$ORIGIN' -o build/notes
+          build/notes "$RUNNER_TEMP/notes-c.db"
+          python3 examples/python/notes.py "$RUNNER_TEMP/notes-py.db"
       - name: Generated store code is up to date
         run: |
           cd internal/store && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff

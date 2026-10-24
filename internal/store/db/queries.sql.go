@@ -470,6 +470,20 @@ func (q *Queries) DeleteToken(ctx context.Context, hash string) error {
 	return err
 }
 
+const deleteTokensNamed = `-- name: DeleteTokensNamed :exec
+DELETE FROM tokens WHERE principal_id = $1 AND name = $2
+`
+
+type DeleteTokensNamedParams struct {
+	PrincipalID string
+	Name        string
+}
+
+func (q *Queries) DeleteTokensNamed(ctx context.Context, arg DeleteTokensNamedParams) error {
+	_, err := q.db.ExecContext(ctx, deleteTokensNamed, arg.PrincipalID, arg.Name)
+	return err
+}
+
 const eventByIdempotencyKey = `-- name: EventByIdempotencyKey :one
 SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events
 WHERE room_id = $1 AND sender_id = $2 AND idempotency_key = $3

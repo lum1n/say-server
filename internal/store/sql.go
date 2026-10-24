@@ -176,6 +176,10 @@ func (s *sqlStore) RevokeToken(ctx context.Context, secret string) error {
 	return s.q().DeleteToken(ctx, tokenHash(secret))
 }
 
+func (s *sqlStore) RevokeTokensNamed(ctx context.Context, principalID, name string) error {
+	return s.q().DeleteTokensNamed(ctx, db.DeleteTokensNamedParams{PrincipalID: principalID, Name: name})
+}
+
 func tokenHash(secret string) string {
 	sum := sha256.Sum256([]byte(secret))
 	return hex.EncodeToString(sum[:])

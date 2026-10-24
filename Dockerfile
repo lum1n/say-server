@@ -24,6 +24,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd cmd
 COPY internal internal
+COPY say say
 COPY --from=web /src/internal/api/static internal/api/static
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /say ./cmd/say \
