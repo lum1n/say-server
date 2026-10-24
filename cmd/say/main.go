@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/vegard/say-v2/internal/api"
+	"github.com/lum1n/say-v2/internal/api"
 )
 
 var version = "dev"
