@@ -1,6 +1,8 @@
 import createClient from "openapi-fetch";
 import type { components, paths } from "./schema.gen";
 
+export { Realtime, type RealtimeOptions, type RealtimeStatus } from "./realtime";
+
 type Schemas = components["schemas"];
 export type Health = Schemas["Health"];
 export type PrincipalKind = Schemas["PrincipalKind"];
@@ -16,6 +18,8 @@ export type Member = Schemas["Member"];
 export type Event = Schemas["Event"];
 export type Part = Schemas["Part"];
 export type SendMessage = Schemas["SendMessage"];
+export type CreateRoom = Schemas["CreateRoom"];
+export type AddMember = Schemas["AddMember"];
 export type ApiError = Schemas["Error"];
 export type WsSubscribe = Schemas["WsSubscribe"];
 export type WsUnsubscribe = Schemas["WsUnsubscribe"];
@@ -77,6 +81,81 @@ export async function logout(client = defaultClient): Promise<void> {
 
 export async function getMe(client = defaultClient): Promise<Principal> {
   const { data, error, response } = await client.GET("/me");
+  if (!data) fail(response, error);
+  return data;
+}
+
+export async function listPrincipals(client = defaultClient): Promise<Principal[]> {
+  const { data, error, response } = await client.GET("/principals");
+  if (!data) fail(response, error);
+  return data.principals;
+}
+
+/** createPrincipal adds a person or an agent; an agent's token is only returned here. */
+export async function createPrincipal(body: CreatePrincipal, client = defaultClient): Promise<CreatedPrincipal> {
+  const { data, error, response } = await client.POST("/principals", { body });
+  if (!data) fail(response, error);
+  return data;
+}
+
+export async function listRooms(client = defaultClient): Promise<Room[]> {
+  const { data, error, response } = await client.GET("/rooms");
+  if (!data) fail(response, error);
+  return data.rooms;
+}
+
+export async function createRoom(body: CreateRoom, client = defaultClient): Promise<Room> {
+  const { data, error, response } = await client.POST("/rooms", { body });
+  if (!data) fail(response, error);
+  return data;
+}
+
+export async function getRoom(id: string, client = defaultClient): Promise<Room> {
+  const { data, error, response } = await client.GET("/rooms/{id}", { params: { path: { id } } });
+  if (!data) fail(response, error);
+  return data;
+}
+
+export async function listMembers(id: string, client = defaultClient): Promise<Member[]> {
+  const { data, error, response } = await client.GET("/rooms/{id}/members", { params: { path: { id } } });
+  if (!data) fail(response, error);
+  return data.members;
+}
+
+export async function addMember(id: string, body: AddMember, client = defaultClient): Promise<Member> {
+  const { data, error, response } = await client.POST("/rooms/{id}/members", { params: { path: { id } }, body });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/**
+ * listEvents reads a page of a room's log in seq order: forward from
+ * `after`, or else the page that ends before `before`, or the latest page.
+ */
+export async function listEvents(
+  id: string,
+  query: { after?: number; before?: number; limit?: number; wait?: number } = {},
+  client = defaultClient,
+): Promise<Event[]> {
+  const { data, error, response } = await client.GET("/rooms/{id}/events", { params: { path: { id }, query } });
+  if (!data) fail(response, error);
+  return data.events;
+}
+
+/**
+ * sendMessage posts a message. Retrying with the same idempotencyKey is
+ * safe: the server returns the event the first attempt created.
+ */
+export async function sendMessage(
+  id: string,
+  body: SendMessage,
+  idempotencyKey: string,
+  client = defaultClient,
+): Promise<Event> {
+  const { data, error, response } = await client.POST("/rooms/{id}/messages", {
+    params: { path: { id }, header: { "Idempotency-Key": idempotencyKey } },
+    body,
+  });
   if (!data) fail(response, error);
   return data;
 }

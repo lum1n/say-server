@@ -91,7 +91,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Every principal on the instance, oldest first
+         * @description The directory clients resolve sender and member names from. People
+         *     and agents may read it; guests and ghosts get 403.
+         */
+        get: operations["listPrincipals"];
         put?: never;
         /**
          * Add a person or an agent (instance admins only)
@@ -582,6 +587,30 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Error"];
+        };
+    };
+    listPrincipals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The principals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        principals: components["schemas"]["Principal"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     createPrincipal: {

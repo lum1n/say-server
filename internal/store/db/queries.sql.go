@@ -436,6 +436,39 @@ func (q *Queries) InsertOutbox(ctx context.Context, arg InsertOutboxParams) erro
 	return err
 }
 
+const listPrincipals = `-- name: ListPrincipals :many
+SELECT id, kind, display_name, created_at, admin FROM principals ORDER BY created_at, id
+`
+
+func (q *Queries) ListPrincipals(ctx context.Context) ([]Principal, error) {
+	rows, err := q.db.QueryContext(ctx, listPrincipals)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Principal
+	for rows.Next() {
+		var i Principal
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.DisplayName,
+			&i.CreatedAt,
+			&i.Admin,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const loginByUsername = `-- name: LoginByUsername :one
 SELECT principal_id, username, password_hash, created_at FROM logins WHERE username = $1
 `

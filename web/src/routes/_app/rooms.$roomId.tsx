@@ -1,0 +1,298 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import {
+  addMember,
+  type Event,
+  getMe,
+  getRoom,
+  listEvents,
+  listMembers,
+  type Principal,
+  SayError,
+  sendMessage,
+} from "@say/sdk";
+import { type FormEvent, type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { keys, mergeEvents, useDirectory, useRealtime } from "../../chat";
+import { FormError } from "../../components/form";
+
+export const Route = createFileRoute("/_app/rooms/$roomId")({
+  component: RoomPage,
+});
+
+const pageSize = 50;
+
+function RoomPage() {
+  const { roomId } = Route.useParams();
+  const room = useQuery({ queryKey: keys.room(roomId), queryFn: () => getRoom(roomId), retry: false });
+  if (room.error) return <main className="empty muted">{room.error.message}</main>;
+  return (
+    <main className="room">
+      <header className="room-header">
+        <Link to="/" className="back">‹ Rooms</Link>
+        <h1>{room.data ? room.data.name || "Untitled room" : "…"}</h1>
+      </header>
+      {/* key: a fresh log, composer and member list per room */}
+      <Log key={`log-${roomId}`} roomId={roomId} />
+      <Members key={`members-${roomId}`} roomId={roomId} />
+    </main>
+  );
+}
+
+// Log shows the room's events and the composer. The latest page is read
+// over HTTP; the socket then follows the room from its last seq and keeps
+// the cache current, so the query itself never refetches.
+function Log({ roomId }: { roomId: string }) {
+  const queryClient = useQueryClient();
+  const rt = useRealtime();
+  const dir = useDirectory();
+  const events = useQuery({
+    queryKey: keys.events(roomId),
+    queryFn: async () => mergeEvents(queryClient.getQueryData(keys.events(roomId)), await listEvents(roomId, { limit: pageSize })),
+    staleTime: Infinity,
+  });
+  const loaded = events.isSuccess;
+  useEffect(() => {
+    if (!rt || !loaded) return;
+    const log = queryClient.getQueryData<Event[]>(keys.events(roomId)) ?? [];
+    rt.subscribe(roomId, log.at(-1)?.seq ?? 0);
+    return () => rt.unsubscribe(roomId);
+  }, [rt, loaded, roomId, queryClient]);
+
+  // Someone new spoke: their principal was created after the directory loaded.
+  const unknown = events.data?.some((e) => !dir.byId.has(e.sender_id));
+  useEffect(() => {
+    if (unknown && !dir.isFetching) dir.refetch();
+  }, [unknown]);
+
+  const earlier = useMutation({
+    mutationFn: (before: number) => listEvents(roomId, { before, limit: pageSize }),
+    onSuccess: (page) => queryClient.setQueryData<Event[]>(keys.events(roomId), (log) => mergeEvents(log, page)),
+  });
+
+  const list = events.data ?? [];
+  const first = list[0]?.seq;
+  const scroller = useRef<HTMLDivElement>(null);
+  const atBottom = useRef(true);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight;
+  }, [list.length]);
+
+  return (
+    <>
+      <div
+        className="log"
+        ref={scroller}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        }}
+        role="log"
+        aria-label="Messages"
+      >
+        {first !== undefined && first > 1 && (
+          <button
+            type="button"
+            className="link earlier"
+            onClick={() => {
+              atBottom.current = false;
+              earlier.mutate(first);
+            }}
+            disabled={earlier.isPending}
+          >
+            Load earlier messages
+          </button>
+        )}
+        {events.isError && <p className="muted">{events.error.message}</p>}
+        {loaded && list.length === 0 && <p className="muted">No messages yet. Say something.</p>}
+        {list.map((e, i) => (
+          <Message key={e.seq} event={e} sender={dir.byId.get(e.sender_id)} grouped={sameSpeaker(list[i - 1], e)} />
+        ))}
+      </div>
+      <Composer roomId={roomId} onSent={() => (atBottom.current = true)} />
+    </>
+  );
+}
+
+// sameSpeaker reports whether e continues prev's run of messages.
+function sameSpeaker(prev: Event | undefined, e: Event) {
+  return (
+    prev?.type === "message" &&
+    prev.sender_id === e.sender_id &&
+    Date.parse(e.created_at) - Date.parse(prev.created_at) < 5 * 60_000
+  );
+}
+
+const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+
+function Message({ event, sender, grouped }: { event: Event; sender?: Principal; grouped: boolean }) {
+  if (event.type !== "message") return null;
+  return (
+    <article className={grouped ? "msg grouped" : "msg"}>
+      {!grouped && (
+        <header>
+          <strong>{sender?.display_name ?? "…"}</strong>
+          {sender?.kind === "agent" && <span className="badge">agent</span>}
+          <time dateTime={event.created_at}>{time.format(new Date(event.created_at))}</time>
+        </header>
+      )}
+      {event.parts.map((p, i) =>
+        p.kind === "text" ? (
+          <p key={i} className="text">
+            {String(p.data.text)}
+          </p>
+        ) : (
+          <p key={i} className="muted">
+            [{p.kind}]
+          </p>
+        ),
+      )}
+    </article>
+  );
+}
+
+// A send's state. "unknown" means the request may or may not have reached
+// the server; it is never retried by itself, but retrying by hand reuses
+// the idempotency key, so it cannot post twice.
+type Pending = { key: string; text: string; state: "sending" | "unknown" | "failed"; error?: string };
+
+// newKey makes an idempotency key. crypto.randomUUID needs a secure
+// context, and a LAN instance may be served over plain HTTP.
+function newKey() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function Composer({ roomId, onSent }: { roomId: string; onSent: () => void }) {
+  const queryClient = useQueryClient();
+  const [text, setText] = useState("");
+  const [pending, setPending] = useState<Pending[]>([]);
+  const update = (key: string, p: Partial<Pending> | null) =>
+    setPending((ps) => (p ? ps.map((x) => (x.key === key ? { ...x, ...p } : x)) : ps.filter((x) => x.key !== key)));
+
+  const send = async ({ key, text }: Pending) => {
+    update(key, { state: "sending", error: undefined });
+    try {
+      const e = await sendMessage(roomId, { parts: [{ kind: "text", data: { text } }] }, key);
+      queryClient.setQueryData<Event[]>(keys.events(roomId), (log) => mergeEvents(log, [e]));
+      update(key, null);
+    } catch (err) {
+      // A 4xx was a definite refusal; anything else leaves the outcome open.
+      const refused = err instanceof SayError && err.status >= 400 && err.status < 500;
+      update(key, { state: refused ? "failed" : "unknown", error: err instanceof Error ? err.message : String(err) });
+    }
+  };
+
+  const submit = (e?: FormEvent) => {
+    e?.preventDefault();
+    const body = text.trim();
+    if (!body) return;
+    const p: Pending = { key: newKey(), text: body, state: "sending" };
+    setPending((ps) => [...ps, p]);
+    setText("");
+    onSent();
+    send(p);
+  };
+  const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      submit();
+    }
+  };
+
+  return (
+    <div className="composer">
+      {pending.map((p) => (
+        <div key={p.key} className={`pending ${p.state}`}>
+          <span className="text">{p.text}</span>
+          {p.state === "sending" && <span className="muted">Sending…</span>}
+          {p.state !== "sending" && (
+            <span role="alert">
+              {p.state === "unknown" ? "Not confirmed" : "Not sent"}: {p.error}{" "}
+              {p.state === "unknown" && (
+                <button type="button" className="link" onClick={() => send(p)}>
+                  Retry
+                </button>
+              )}{" "}
+              <button type="button" className="link" onClick={() => update(p.key, null)}>
+                Dismiss
+              </button>
+            </span>
+          )}
+        </div>
+      ))}
+      <form onSubmit={submit}>
+        <textarea
+          aria-label="Message"
+          placeholder="Message"
+          rows={1}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={onKey}
+        />
+        <button type="submit" disabled={!text.trim()}>
+          Send
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function Members({ roomId }: { roomId: string }) {
+  const queryClient = useQueryClient();
+  const dir = useDirectory();
+  const me = useQuery({ queryKey: keys.me, queryFn: () => getMe() });
+  const members = useQuery({ queryKey: keys.members(roomId), queryFn: () => listMembers(roomId) });
+  const [pick, setPick] = useState("");
+  const add = useMutation({
+    mutationFn: () => addMember(roomId, { principal_id: pick, role: "member" }),
+    onSuccess: () => {
+      setPick("");
+      queryClient.invalidateQueries({ queryKey: keys.members(roomId) });
+    },
+  });
+
+  const list = members.data ?? [];
+  const mine = list.find((m) => m.principal_id === me.data?.id);
+  const canAdd = mine?.role === "owner" || mine?.role === "admin";
+  const inRoom = new Set(list.map((m) => m.principal_id));
+  const candidates = dir.list.filter((p) => !inRoom.has(p.id) && (p.kind === "human" || p.kind === "agent"));
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    add.mutate();
+  };
+
+  return (
+    <aside className="members" aria-label="Members">
+      <h2>Members</h2>
+      <ul>
+        {list.map((m) => {
+          const p = dir.byId.get(m.principal_id);
+          return (
+            <li key={m.principal_id}>
+              {p?.display_name ?? "…"}
+              {p?.kind === "agent" && <span className="badge">agent</span>}
+              {m.role !== "member" && <span className="muted"> {m.role}</span>}
+            </li>
+          );
+        })}
+      </ul>
+      {canAdd && candidates.length > 0 && (
+        <form onSubmit={submit}>
+          <select aria-label="Add a member" value={pick} onChange={(e) => setPick(e.target.value)} required>
+            <option value="">Add someone…</option>
+            {candidates.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.display_name}
+                {p.kind === "agent" ? " (agent)" : ""}
+              </option>
+            ))}
+          </select>
+          <button type="submit" disabled={!pick || add.isPending}>
+            Add
+          </button>
+          <FormError error={add.error} />
+        </form>
+      )}
+    </aside>
+  );
+}

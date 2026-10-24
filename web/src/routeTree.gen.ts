@@ -9,14 +9,16 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
+import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppPeopleRouteImport } from './routes/_app/people'
 import { Route as EmbedWidgetIdRouteImport } from './routes/embed/$widgetId'
+import { Route as AppRoomsRoomIdRouteImport } from './routes/_app/rooms.$roomId'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -29,41 +31,83 @@ const SetupRoute = SetupRouteImport.update({
   path: '/setup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPeopleRoute = AppPeopleRouteImport.update({
+  id: '/people',
+  path: '/people',
+  getParentRoute: () => AppRoute,
+} as any)
 const EmbedWidgetIdRoute = EmbedWidgetIdRouteImport.update({
   id: '/embed/$widgetId',
   path: '/embed/$widgetId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppRoomsRoomIdRoute = AppRoomsRoomIdRouteImport.update({
+  id: '/rooms/$roomId',
+  path: '/rooms/$roomId',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/people': typeof AppPeopleRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
+  '/rooms/$roomId': typeof AppRoomsRoomIdRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/people': typeof AppPeopleRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
+  '/': typeof AppIndexRoute
+  '/rooms/$roomId': typeof AppRoomsRoomIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
+  '/_app/people': typeof AppPeopleRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
+  '/_app/': typeof AppIndexRoute
+  '/_app/rooms/$roomId': typeof AppRoomsRoomIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/setup' | '/embed/$widgetId'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/setup'
+    | '/people'
+    | '/embed/$widgetId'
+    | '/rooms/$roomId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/login' | '/setup' | '/embed/$widgetId'
-  id: '__root__' | '/' | '/login' | '/setup' | '/embed/$widgetId'
+  to:
+    | '/login'
+    | '/setup'
+    | '/people'
+    | '/embed/$widgetId'
+    | '/'
+    | '/rooms/$roomId'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/login'
+    | '/setup'
+    | '/_app/people'
+    | '/embed/$widgetId'
+    | '/_app/'
+    | '/_app/rooms/$roomId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
   SetupRoute: typeof SetupRoute
   EmbedWidgetIdRoute: typeof EmbedWidgetIdRoute
@@ -71,11 +115,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
+    '/_app': {
+      id: '/_app'
+      path: ''
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+      preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -92,6 +136,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SetupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/': {
+      id: '/_app/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/people': {
+      id: '/_app/people'
+      path: '/people'
+      fullPath: '/people'
+      preLoaderRoute: typeof AppPeopleRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/embed/$widgetId': {
       id: '/embed/$widgetId'
       path: '/embed/$widgetId'
@@ -99,11 +157,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EmbedWidgetIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/rooms/$roomId': {
+      id: '/_app/rooms/$roomId'
+      path: '/rooms/$roomId'
+      fullPath: '/rooms/$roomId'
+      preLoaderRoute: typeof AppRoomsRoomIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
+interface AppRouteChildren {
+  AppPeopleRoute: typeof AppPeopleRoute
+  AppIndexRoute: typeof AppIndexRoute
+  AppRoomsRoomIdRoute: typeof AppRoomsRoomIdRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppPeopleRoute: AppPeopleRoute,
+  AppIndexRoute: AppIndexRoute,
+  AppRoomsRoomIdRoute: AppRoomsRoomIdRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
   SetupRoute: SetupRoute,
   EmbedWidgetIdRoute: EmbedWidgetIdRoute,

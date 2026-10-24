@@ -138,9 +138,13 @@ func TestPrincipalsRoomsMembers(t *testing.T) {
 			t.Fatalf("GetRoom = %+v, %v", room, err)
 		}
 
-		bot := core.Principal{ID: core.NewID(), Kind: core.PrincipalAgent, DisplayName: "bot"}
+		bot := core.Principal{ID: core.NewID(), Kind: core.PrincipalAgent, DisplayName: "bot", CreatedAt: time.Now().Add(time.Second)}
 		if err := s.CreatePrincipal(ctx, bot); err != nil {
 			t.Fatal(err)
+		}
+		ps, err := s.Principals(ctx)
+		if err != nil || len(ps) != 2 || ps[0].ID != p.ID || ps[1].ID != bot.ID {
+			t.Fatalf("Principals = %+v, %v", ps, err)
 		}
 		if err := s.AddMember(ctx, core.Membership{RoomID: r.ID, PrincipalID: bot.ID, Role: core.RoleMember}); err != nil {
 			t.Fatal(err)

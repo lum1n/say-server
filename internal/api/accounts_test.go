@@ -176,3 +176,30 @@ func TestLoginLogoutAndPrincipals(t *testing.T) {
 		t.Fatalf("other session after logout = %d", res.StatusCode)
 	}
 }
+
+func TestListPrincipals(t *testing.T) {
+	e := newEnv(t)
+	ada, adaTok := e.user("Ada", core.PrincipalHuman)
+	bot, botTok := e.user("bot", core.PrincipalAgent)
+	_, guestTok := e.user("guest", core.PrincipalGuest)
+
+	for _, tok := range []string{adaTok, botTok} {
+		var out struct{ Principals []wirePrincipal }
+		if code := e.do("GET", "/principals", tok, nil, &out); code != 200 || len(out.Principals) != 3 {
+			t.Fatalf("list = %d %+v", code, out)
+		}
+		ids := map[string]string{}
+		for _, p := range out.Principals {
+			ids[p.ID] = p.DisplayName
+		}
+		if ids[ada.ID] != "Ada" || ids[bot.ID] != "bot" {
+			t.Fatalf("directory = %v", ids)
+		}
+	}
+	if code := e.do("GET", "/principals", guestTok, nil, nil); code != 403 {
+		t.Fatalf("guest list = %d", code)
+	}
+	if code := e.do("GET", "/principals", "", nil, nil); code != 401 {
+		t.Fatalf("anonymous list = %d", code)
+	}
+}

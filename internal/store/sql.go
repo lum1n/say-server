@@ -66,6 +66,18 @@ func (s *sqlStore) GetPrincipal(ctx context.Context, id string) (core.Principal,
 	return principal(row), nil
 }
 
+func (s *sqlStore) Principals(ctx context.Context) ([]core.Principal, error) {
+	rows, err := s.q().ListPrincipals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ps := make([]core.Principal, len(rows))
+	for i, row := range rows {
+		ps[i] = principal(row)
+	}
+	return ps, nil
+}
+
 func principal(row db.Principal) core.Principal {
 	return core.Principal{
 		ID:          row.ID,

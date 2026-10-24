@@ -14,8 +14,9 @@ binary against Postgres with an embedded NATS cluster bus.
 ## Status
 
 Early. The core API works: rooms, members, messages, and realtime delivery
-over WebSocket, SSE and long polling. The web app has the setup wizard and
-sign-in, but no chat UI yet. See the milestones below.
+over WebSocket, SSE and long polling. The web app has the setup wizard,
+sign-in, rooms with live chat, and a page where admins add people and
+agents. See the milestones below.
 
 ## Quick start (target)
 
@@ -39,8 +40,8 @@ Open it to create the admin. The code means that whoever reaches a fresh
 public instance first cannot claim it. Set `--setup-code` (or
 `SAY_SETUP_CODE`) to choose the code yourself, for example to give every
 cluster node the same one. Once an admin exists the wizard is closed and
-people sign in at `/login`. Admins add people and agents with
-`POST /api/v1/principals`.
+people sign in at `/login`. Admins add people and agents on the web app's
+People page, or with `POST /api/v1/principals`.
 
 Cluster mode is the same binary:
 

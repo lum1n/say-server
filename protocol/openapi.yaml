@@ -114,6 +114,29 @@ paths:
         "401":
           $ref: "#/components/responses/Error"
   /principals:
+    get:
+      operationId: listPrincipals
+      summary: Every principal on the instance, oldest first
+      description: |
+        The directory clients resolve sender and member names from. People
+        and agents may read it; guests and ghosts get 403.
+      responses:
+        "200":
+          description: The principals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [principals]
+                properties:
+                  principals:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Principal"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
     post:
       operationId: createPrincipal
       summary: Add a person or an agent (instance admins only)

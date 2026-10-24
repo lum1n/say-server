@@ -75,6 +75,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/login", s.login)
 	mux.HandleFunc("POST /api/v1/logout", s.authed(s.logout))
 	mux.HandleFunc("GET /api/v1/me", s.authed(s.me))
+	mux.HandleFunc("GET /api/v1/principals", s.authed(s.listPrincipals))
 	mux.HandleFunc("POST /api/v1/principals", s.authed(s.createPrincipal))
 	mux.HandleFunc("GET /api/v1/rooms", s.authed(s.listRooms))
 	mux.HandleFunc("POST /api/v1/rooms", s.authed(s.createRoom))

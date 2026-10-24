@@ -34,6 +34,8 @@ type Login struct {
 type Store interface {
 	CreatePrincipal(ctx context.Context, p core.Principal) error
 	GetPrincipal(ctx context.Context, id string) (core.Principal, error)
+	// Principals returns every principal, oldest first.
+	Principals(ctx context.Context) ([]core.Principal, error)
 
 	// CreateUser writes a principal and its login in one transaction. It
 	// returns ErrUsernameTaken if another login has l.Username.

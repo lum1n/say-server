@@ -9,6 +9,9 @@ VALUES ($1, $2, $3, $4, $5);
 -- name: GetPrincipal :one
 SELECT * FROM principals WHERE id = $1;
 
+-- name: ListPrincipals :many
+SELECT * FROM principals ORDER BY created_at, id;
+
 -- name: CreateRoom :exec
 INSERT INTO rooms (id, kind, name, created_at)
 VALUES ($1, $2, $3, $4);

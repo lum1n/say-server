@@ -186,6 +186,26 @@ func secure(r *http.Request) bool {
 	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 }
 
+// listPrincipals is the instance directory that clients resolve sender and
+// member names from. Humans and agents see it; guests and bridged ghosts do
+// not.
+func (s *Server) listPrincipals(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	if me.Kind != core.PrincipalHuman && me.Kind != core.PrincipalAgent {
+		writeError(w, errorf(http.StatusForbidden, "forbidden", "only people and agents list principals"))
+		return
+	}
+	ps, err := s.store.Principals(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	out := make([]wirePrincipal, len(ps))
+	for i, p := range ps {
+		out[i] = toPrincipal(p)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"principals": out})
+}
+
 // createPrincipal lets an admin add a human with a login, or an agent with
 // an access token that is returned once.
 func (s *Server) createPrincipal(w http.ResponseWriter, r *http.Request, me core.Principal) {
