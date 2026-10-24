@@ -23,11 +23,23 @@ import (
 
 func subject(roomID string) string { return "room." + roomID }
 
+// roomsSubject is where a principal hears that its set of rooms changed.
+func roomsSubject(principalID string) string { return "principal." + principalID + ".rooms" }
+
 // notify announces new events in room. A failure only delays delivery
 // until the next notification or resync, so it is logged, not returned.
 func (s *Server) notify(ctx context.Context, roomID string) {
-	if err := s.bus.Publish(context.WithoutCancel(ctx), subject(roomID), nil); err != nil {
-		slog.Warn("bus publish failed", "room", roomID, "err", err)
+	s.publish(ctx, subject(roomID))
+}
+
+// notifyRooms tells principal's sockets to reread its room list.
+func (s *Server) notifyRooms(ctx context.Context, principalID string) {
+	s.publish(ctx, roomsSubject(principalID))
+}
+
+func (s *Server) publish(ctx context.Context, subject string) {
+	if err := s.bus.Publish(context.WithoutCancel(ctx), subject, nil); err != nil {
+		slog.Warn("bus publish failed", "subject", subject, "err", err)
 	}
 }
 
@@ -179,7 +191,8 @@ const maxSubscriptions = 1000
 
 // ws serves the client and connector WebSocket. Requests are envelopes
 // with a client-chosen id; the reply echoes the id and type with a status.
-// Events arrive as pushes of type "event" without a status.
+// Events arrive as pushes of type "event" without a status, and a push of
+// type "rooms" says the caller's room list changed.
 func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	// Accept checks that the Origin matches the Host, so another site cannot
 	// open a socket with the user's cookie.
@@ -198,6 +211,17 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	ctx, cancel := context.WithCancel(r.Context())
 	c.cancel = cancel
 	defer cancel()
+	// Like room notifications this is only a hint: a client rereads its
+	// room list on each push and after every reconnect.
+	unsubscribe, err := s.bus.Subscribe(roomsSubject(me.ID), func(string, []byte) {
+		c.push(envelope{ID: core.NewID(), Type: "rooms"})
+	})
+	if err != nil {
+		slog.Error("websocket rooms subscription failed", "err", err)
+		conn.Close(websocket.StatusInternalError, "")
+		return
+	}
+	defer unsubscribe()
 	go c.writeLoop(ctx)
 	go c.pingLoop(ctx)
 	err = c.readLoop(ctx)

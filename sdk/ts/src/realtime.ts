@@ -8,6 +8,12 @@ export interface RealtimeOptions {
   /** WebSocket URL; defaults to /api/v1/ws on the page's host. */
   url?: string;
   onEvent: (event: Event) => void;
+  /**
+   * onRoomsChanged says the caller's room list may have changed: it was
+   * added to a room or created one, or the socket reconnected and may have
+   * missed that. Reread the list when it fires.
+   */
+  onRoomsChanged?: () => void;
   onStatus?: (status: RealtimeStatus) => void;
 }
 
@@ -28,6 +34,7 @@ export class Realtime {
   private backoff = 500;
   private timer?: ReturnType<typeof setTimeout>;
   private closed = false;
+  private opened = false;
 
   constructor(private readonly opts: RealtimeOptions) {
     this.connect();
@@ -61,6 +68,8 @@ export class Realtime {
       this.backoff = 500;
       this.opts.onStatus?.("open");
       for (const [room, after] of this.cursors) this.request("subscribe", { room_id: room, after });
+      if (this.opened) this.opts.onRoomsChanged?.();
+      this.opened = true;
     };
     ws.onmessage = (msg) => this.receive(msg.data);
     ws.onclose = () => {
@@ -78,7 +87,12 @@ export class Realtime {
     } catch {
       return;
     }
-    if (env.type !== "event" || env.status) return;
+    if (env.status) return;
+    if (env.type === "rooms") {
+      this.opts.onRoomsChanged?.();
+      return;
+    }
+    if (env.type !== "event") return;
     const event = env.payload as Event;
     // A resubscribe can overlap events already delivered.
     if (event.seq <= (this.cursors.get(event.room_id) ?? Infinity)) return;

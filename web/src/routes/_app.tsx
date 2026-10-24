@@ -34,8 +34,8 @@ function AppLayout() {
 
 function Sidebar({ admin, name }: { admin: boolean; name: string }) {
   const queryClient = useQueryClient();
-  // Nothing pushes "you were added to a room" yet, so poll the list.
-  const rooms = useQuery({ queryKey: keys.rooms, queryFn: () => listRooms(), refetchInterval: 30_000 });
+  // The socket says when this list changes (RealtimeProvider).
+  const rooms = useQuery({ queryKey: keys.rooms, queryFn: () => listRooms() });
   const signOut = useMutation({
     mutationFn: () => logout(),
     onSuccess: () => {

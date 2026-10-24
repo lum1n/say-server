@@ -21,6 +21,12 @@ who is calling, before the setup wizard and login exist.
 - **Cursors are per room.** WebSocket `subscribe` takes `after`; SSE uses
   the seq as its event id, so `Last-Event-ID` resumes by itself; the long
   poll is `GET /rooms/{id}/events?after=N&wait=S`.
+- **Room list changes are hints too.** Creating a room or adding a member
+  publishes `principal.<id>.rooms`, and every WebSocket of that principal
+  gets a `rooms` push with no payload. The client rereads `GET /rooms` on
+  each push and after each reconnect. There is no resync timer for it: a
+  notification lost while the socket stays up shows on the next push,
+  reconnect or (in the web app) window focus.
 - **Slow clients are dropped, not buffered.** A WebSocket more than 256
   frames behind is closed with 1008 and resumes from its cursors.
 - **Access tokens** are opaque secrets (`say_…`). Only their SHA-256 is

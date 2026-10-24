@@ -443,7 +443,10 @@ paths:
         - `ping`: no payload.
 
         Events arrive as pushes `{id: <event id>, type: "event", payload:
-        Event}` without a status. A client that falls too far behind is
+        Event}` without a status. A push `{id, type: "rooms"}` without a
+        payload says the caller's room list changed (it was added to a room
+        or created one); reread `GET /rooms`. Like event notifications it
+        is a hint, so also reread the list after reconnecting. A client that falls too far behind is
         closed with code 1008 and should reconnect and resubscribe from its
         cursors.
       responses:

@@ -23,13 +23,15 @@ const RealtimeContext = createContext<Realtime | null>(null);
 
 /**
  * RealtimeProvider opens one socket for the signed-in app and pushes every
- * event it receives into that room's ["events", id] cache.
+ * event it receives into that room's ["events", id] cache. It also
+ * rereads the room list when the server says it changed.
  */
 export function RealtimeProvider({ queryClient, children }: { queryClient: QueryClient; children: ReactNode }) {
   const [rt, setRt] = useState<Realtime | null>(null);
   useEffect(() => {
     const r = new Realtime({
       onEvent: (e) => queryClient.setQueryData<Event[]>(keys.events(e.room_id), (log) => mergeEvents(log, [e])),
+      onRoomsChanged: () => queryClient.invalidateQueries({ queryKey: keys.rooms }),
     });
     setRt(r);
     return () => r.close();

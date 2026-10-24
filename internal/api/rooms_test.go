@@ -537,6 +537,28 @@ func TestWebSocket(t *testing.T) {
 	}
 }
 
+func TestWebSocketRoomsPush(t *testing.T) {
+	e := newEnv(t)
+	_, ada := e.user("Ada", core.PrincipalHuman)
+	bob, bobTok := e.user("Bob", core.PrincipalHuman)
+	c := dialWS(t, e, bobTok)
+
+	// Rooms that do not involve Bob say nothing to him.
+	r := e.room(ada, "general")
+	e.join(ada, r.ID, bob.ID, core.RoleMember)
+	if env := wsRead(t, c); env.Type != "rooms" || env.Status != "" || env.ID == "" {
+		t.Fatalf("after join = %+v, want a rooms push", env)
+	}
+	e.room(bobTok, "mine")
+	if env := wsRead(t, c); env.Type != "rooms" {
+		t.Fatalf("after create = %+v, want a rooms push", env)
+	}
+	wsSend(t, c, "1", "ping", nil)
+	if env := wsRead(t, c); env.ID != "1" || env.Type != "ping" {
+		t.Fatalf("got %+v, want only the ping reply", env)
+	}
+}
+
 func TestWebSocketNeedsToken(t *testing.T) {
 	e := newEnv(t)
 	url := "ws" + strings.TrimPrefix(e.ts.URL, "http") + "/api/v1/ws"

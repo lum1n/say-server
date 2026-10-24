@@ -64,6 +64,7 @@ func (s *Server) createRoom(w http.ResponseWriter, r *http.Request, me core.Prin
 		writeError(w, err)
 		return
 	}
+	s.notifyRooms(r.Context(), me.ID)
 	writeJSON(w, http.StatusCreated, toRoom(room))
 }
 
@@ -141,6 +142,7 @@ func (s *Server) addMember(w http.ResponseWriter, r *http.Request, me core.Princ
 		writeError(w, err)
 		return
 	}
+	s.notifyRooms(r.Context(), m.PrincipalID)
 	writeJSON(w, http.StatusCreated, toMember(m))
 }
 
