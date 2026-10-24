@@ -36,6 +36,14 @@
   tool-call/result, card/form. A message has a streaming state, `streaming`
   then `final`.
 
+**Streaming message**
+: A message whose parts change in place, unlogged, while its sender writes
+  it. An `edit` event ends the stream and makes it final.
+
+**Edit**
+: An event that changes a message, named in its `edits`, to new parts. The
+  message itself always shows its latest parts.
+
 **Cursor**
 : The last `seq` a client or connector has seen in a room. Reconnecting with
   a cursor replays everything after it.

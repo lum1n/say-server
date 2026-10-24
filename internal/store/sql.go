@@ -347,29 +347,7 @@ func (s *sqlStore) AppendEvent(ctx context.Context, e core.Event, opts AppendOpt
 			}
 		}
 		e.Seq = seq
-		err = q.InsertEvent(ctx, db.InsertEventParams{
-			ID:             e.ID,
-			RoomID:         e.RoomID,
-			Seq:            e.Seq,
-			Type:           string(e.Type),
-			SenderID:       e.SenderID,
-			CausedBy:       e.Causation.CausedBy,
-			HopCount:       int32(e.Causation.HopCount),
-			Parts:          parts,
-			Stream:         string(e.Stream),
-			IdempotencyKey: opts.IdempotencyKey,
-			Automated:      flag(opts.Automated),
-			CreatedAt:      millis(e.CreatedAt),
-		})
-		if err != nil {
-			return err
-		}
-		return q.InsertOutbox(ctx, db.InsertOutboxParams{
-			EventID:   e.ID,
-			RoomID:    e.RoomID,
-			Seq:       e.Seq,
-			CreatedAt: millis(e.CreatedAt),
-		})
+		return insertEvent(ctx, q, e, parts, opts)
 	})
 	if existing != nil {
 		return *existing, nil
@@ -378,6 +356,121 @@ func (s *sqlStore) AppendEvent(ctx context.Context, e core.Event, opts AppendOpt
 		return core.Event{}, err
 	}
 	return e, nil
+}
+
+// insertEvent writes e, with its seq allocated, and its outbox entry.
+func insertEvent(ctx context.Context, q *db.Queries, e core.Event, parts string, opts AppendOptions) error {
+	err := q.InsertEvent(ctx, db.InsertEventParams{
+		ID:             e.ID,
+		RoomID:         e.RoomID,
+		Seq:            e.Seq,
+		Type:           string(e.Type),
+		SenderID:       e.SenderID,
+		CausedBy:       e.Causation.CausedBy,
+		HopCount:       int32(e.Causation.HopCount),
+		Parts:          parts,
+		Stream:         string(e.Stream),
+		IdempotencyKey: opts.IdempotencyKey,
+		Automated:      flag(opts.Automated),
+		Edits:          e.Edits,
+		CreatedAt:      millis(e.CreatedAt),
+	})
+	if err != nil {
+		return err
+	}
+	return q.InsertOutbox(ctx, db.InsertOutboxParams{
+		EventID:   e.ID,
+		RoomID:    e.RoomID,
+		Seq:       e.Seq,
+		CreatedAt: millis(e.CreatedAt),
+	})
+}
+
+func (s *sqlStore) UpdateStreaming(ctx context.Context, eventID, senderID string, parts []core.Part) error {
+	data, err := encodeParts(parts)
+	if err != nil {
+		return err
+	}
+	n, err := s.q().UpdateStreaming(ctx, db.UpdateStreamingParams{ID: eventID, SenderID: senderID, Parts: data})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotStreaming
+	}
+	return nil
+}
+
+func (s *sqlStore) AppendEdit(ctx context.Context, e core.Event) (edit, message core.Event, err error) {
+	if e.ID == "" {
+		e.ID = core.NewID()
+	}
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now()
+	}
+	e.CreatedAt = e.CreatedAt.Truncate(time.Millisecond)
+	e.Type = core.EventEdit
+	e.Stream = ""
+	err = s.tx(ctx, func(q *db.Queries) error {
+		// The room's lock orders this edit against other edits of the
+		// message; a concurrent streaming update finds it final.
+		seq, err := q.BumpSeq(ctx, e.RoomID)
+		if err != nil {
+			return notFound(err)
+		}
+		row, err := q.GetEvent(ctx, e.Edits)
+		if err != nil {
+			return notFound(err)
+		}
+		if message, err = event(row); err != nil {
+			return err
+		}
+		if message.RoomID != e.RoomID {
+			return ErrNotFound
+		}
+		if message.Type != core.EventMessage || message.SenderID != e.SenderID {
+			return ErrNotEditable
+		}
+		if e.Parts == nil {
+			if message.Stream != core.StreamStreaming {
+				return ErrNotEditable
+			}
+			e.Parts = message.Parts
+		}
+		if message.Stream == core.StreamStreaming {
+			message.Stream, e.Stream = core.StreamFinal, core.StreamFinal
+		} else {
+			message.EditedAt = e.CreatedAt
+		}
+		message.Parts = e.Parts
+		parts, err := encodeParts(e.Parts)
+		if err != nil {
+			return err
+		}
+		err = q.ReplaceMessage(ctx, db.ReplaceMessageParams{
+			ID:       message.ID,
+			Parts:    parts,
+			Stream:   string(message.Stream),
+			EditedAt: optMillis(message.EditedAt),
+		})
+		if err != nil {
+			return err
+		}
+		e.Seq = seq
+		return insertEvent(ctx, q, e, parts, AppendOptions{})
+	})
+	if err != nil {
+		return core.Event{}, core.Event{}, err
+	}
+	return e, message, nil
+}
+
+func (s *sqlStore) StreamingFrom(ctx context.Context, senderID string) ([]core.Event, error) {
+	rows, err := s.q().StreamingFrom(ctx, senderID)
+	if err != nil {
+		return nil, err
+	}
+	return events(rows)
 }
 
 // checkBudgets fails when e would be more than a budget's Max events in
@@ -482,6 +575,8 @@ func event(row db.Event) (core.Event, error) {
 		Causation: core.Causation{CausedBy: row.CausedBy, HopCount: int(row.HopCount)},
 		Parts:     parts,
 		Stream:    core.StreamState(row.Stream),
+		Edits:     row.Edits,
+		EditedAt:  unmillis(row.EditedAt),
 		CreatedAt: time.UnixMilli(row.CreatedAt),
 	}, nil
 }
@@ -530,6 +625,21 @@ func millis(t time.Time) int64 {
 		t = time.Now()
 	}
 	return t.UnixMilli()
+}
+
+// optMillis and unmillis store an optional time, zero as 0.
+func optMillis(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
+}
+
+func unmillis(ms int64) time.Time {
+	if ms == 0 {
+		return time.Time{}
+	}
+	return time.UnixMilli(ms)
 }
 
 func flag(b bool) int32 {

@@ -9,6 +9,12 @@ export interface RealtimeOptions {
   url?: string;
   onEvent: (event: Event) => void;
   /**
+   * onStream gets a streaming message as it now is, each time it grows.
+   * These pushes are not replayed and may be dropped; the edit event that
+   * ends the stream comes through onEvent.
+   */
+  onStream?: (message: Event) => void;
+  /**
    * onRoomsChanged says the caller's room list may have changed: it was
    * added to a room or created one, or the socket reconnected and may have
    * missed that. Reread the list when it fires.
@@ -90,6 +96,11 @@ export class Realtime {
     if (env.status) return;
     if (env.type === "rooms") {
       this.opts.onRoomsChanged?.();
+      return;
+    }
+    if (env.type === "stream") {
+      const message = env.payload as Event;
+      if (this.cursors.has(message.room_id)) this.opts.onStream?.(message);
       return;
     }
     if (env.type !== "event") return;

@@ -23,7 +23,8 @@ binary must stay free of cgo.
   OpenAI-compatible endpoint** (Ollama, vLLM, LM Studio) through the official
   OpenAI Go SDK (`github.com/openai/openai-go`). Both are pure Go and sit
   behind `internal/llm.Provider`, which completes a transcript in which the
-  model may call tools. Streaming comes later.
+  model may call tools. Replies stream into their message
+  ([ADR 0010](./0010-streaming-and-edits.md)).
 - **When an agent answers:** in DMs; when a message mentions it as `@name`;
   and for every message in rooms where it is a **designated responder**. That
   is the membership scope `responder`, which people who own or run the room
@@ -88,6 +89,5 @@ binary must stay free of cgo.
   reply, but no MCP session outlives the reply or the node.
 - Tool calls and results are not shown in the room; only the answer is.
 - Not yet built: tools from say itself (without a token over `/mcp`),
-  showing tool use in the room, streaming replies into a message, cost
-  budgets in money, and per-agent reply rules beyond mention, DM and
+  showing tool use in the room, cost budgets in money, and per-agent reply rules beyond mention, DM and
   responder.

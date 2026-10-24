@@ -200,6 +200,30 @@ a {
   overflow-wrap: anywhere;
 }
 
+/* A reply still being written ends in a blinking caret. */
+.msg.streaming p:last-of-type::after {
+  content: "▍";
+  margin-left: 1px;
+  color: var(--muted);
+  animation: caret 1s steps(2, start) infinite;
+}
+
+@keyframes caret {
+  to {
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg.streaming p:last-of-type::after {
+    animation: none;
+  }
+}
+
+.msg .edited {
+  font-size: 12px;
+}
+
 .composer {
   grid-column: 1;
   border-top: 1px solid var(--line);

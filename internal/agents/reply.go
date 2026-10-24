@@ -16,8 +16,10 @@ import (
 // historyLimit is how many messages up to the trigger the model sees.
 const historyLimit = 40
 
-// reply asks the model for an answer to trigger and sends it.
-func (w *worker) reply(ctx context.Context, room core.Room, trigger core.Event) {
+// reply asks the model for an answer to trigger and streams it into a
+// message. The model sees the room up to seq through, which is past the
+// trigger when the trigger's stream ended later.
+func (w *worker) reply(ctx context.Context, room core.Room, trigger core.Event, through int64) {
 	// Checking the room's limits first saves a model call whose answer
 	// the send would refuse. The send checks them again.
 	policy := w.c.Chat.AgentPolicy(room)
@@ -28,58 +30,61 @@ func (w *worker) reply(ctx context.Context, room core.Room, trigger core.Event) 
 		slog.Debug("built-in agent: hop limit reached", "agent", w.me.ID, "room", room.ID)
 		return
 	}
-	req, err := w.request(ctx, room, trigger)
+	req, err := w.request(ctx, room, through)
 	if err != nil {
 		w.warn(ctx, "read history", err)
 		return
 	}
+	// mctx bounds the model calls; out cancels it when the message cannot
+	// be written.
+	mctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	out := &output{w: w, room: room.ID, trigger: trigger, cancel: cancel}
+	req.OnText = func(text string) { out.show(ctx, text, false) }
+	var tools *toolbox
 	var toolErr error
 	if len(w.cfg.MCPServers) > 0 {
-		var tools *toolbox
 		tools, toolErr = openTools(ctx, w.c.Version, w.cfg.MCPServers)
 		defer tools.close()
 		req.Tools = tools.list()
-		// Ask the model, and run the tools it calls, until it answers.
-		for round := 1; ; round++ {
-			resp, ok := w.complete(ctx, req)
-			if !ok {
-				return
-			}
-			if len(resp.ToolCalls) == 0 {
-				req.Messages = append(req.Messages, llm.Message{Role: "assistant", Text: resp.Text})
-				break
-			}
-			if round == maxToolRounds {
-				w.fail(ctx, fmt.Errorf("the model still called tools after %d rounds", maxToolRounds))
-				return
-			}
-			req.Messages = append(req.Messages, llm.Message{Role: "assistant", Text: resp.Text, ToolCalls: resp.ToolCalls})
-			results := make([]llm.ToolResult, len(resp.ToolCalls))
-			for i, c := range resp.ToolCalls {
-				results[i] = tools.call(ctx, c)
-				slog.Info("built-in agent called a tool", "agent", w.me.DisplayName, "tool", c.Name, "failed", results[i].IsError)
-			}
-			req.Messages = append(req.Messages, llm.Message{Role: "user", ToolResults: results})
-			// Tools take time; the room may have been paused meanwhile.
-			if room, err := w.c.Store.GetRoom(ctx, room.ID); err != nil || w.c.Chat.AgentPolicy(room).Paused {
-				return
-			}
-		}
-	} else {
-		resp, ok := w.complete(ctx, req)
+	}
+	// abort keeps what was streamed; the failure is on record already.
+	abort := func() {
+		out.end(ctx, "")
+		out.report(ctx)
+	}
+	// Ask the model, and run the tools it calls, until it answers.
+	for round := 1; ; round++ {
+		resp, ok := w.complete(mctx, req)
 		if !ok {
+			abort()
 			return
 		}
-		req.Messages = append(req.Messages, llm.Message{Role: "assistant", Text: resp.Text})
+		// Without tools to offer, tool calls are ignored.
+		if len(resp.ToolCalls) == 0 || len(req.Tools) == 0 {
+			out.end(ctx, resp.Text)
+			break
+		}
+		if round == maxToolRounds {
+			w.fail(ctx, fmt.Errorf("the model still called tools after %d rounds", maxToolRounds))
+			abort()
+			return
+		}
+		out.next(resp.Text)
+		req.Messages = append(req.Messages, llm.Message{Role: "assistant", Text: resp.Text, ToolCalls: resp.ToolCalls})
+		results := make([]llm.ToolResult, len(resp.ToolCalls))
+		for i, c := range resp.ToolCalls {
+			results[i] = tools.call(ctx, c)
+			slog.Info("built-in agent called a tool", "agent", w.me.DisplayName, "tool", c.Name, "failed", results[i].IsError)
+		}
+		req.Messages = append(req.Messages, llm.Message{Role: "user", ToolResults: results})
+		// Tools take time; the room may have been paused meanwhile.
+		if room, err := w.c.Store.GetRoom(ctx, room.ID); err != nil || w.c.Chat.AgentPolicy(room).Paused {
+			abort()
+			return
+		}
 	}
-	text := req.Messages[len(req.Messages)-1].Text
-	if text == "" {
-		return
-	}
-	// The key makes the reply to a message unique, so two nodes that both
-	// think they hold the agent during a lease handover send it once.
-	if _, err := w.c.Chat.SendText(ctx, w.me, room.ID, text, trigger.ID, "builtin:"+trigger.ID); err != nil {
-		w.fail(ctx, err)
+	if out.report(ctx) {
 		return
 	}
 	// A server that could not be reached stays on record after a reply.
@@ -87,6 +92,109 @@ func (w *worker) reply(ctx context.Context, room core.Room, trigger core.Event) 
 		toolErr = fmt.Errorf("replied without some tools: %w", toolErr)
 	}
 	w.fail(ctx, toolErr)
+}
+
+// streamEvery is how often a streaming reply is written at most.
+var streamEvery = 250 * time.Millisecond
+
+// errTaken means another node is already writing the reply: during a
+// lease handover both holders may answer the same trigger.
+var errTaken = errors.New("another node is writing this reply")
+
+// output writes one reply. Its message starts streaming with the first
+// text, so an answer that turns out empty sends nothing, and the text of
+// every round of tool calls stays in it.
+type output struct {
+	w       *worker
+	room    string
+	trigger core.Event
+	cancel  context.CancelFunc
+
+	done    string // the text of finished rounds
+	id      string // the message, once started
+	written string
+	at      time.Time
+	err     error // why the reply cannot be written
+}
+
+// show writes text, the current round's so far, unless it was written
+// less than streamEvery ago and force is false.
+func (o *output) show(ctx context.Context, text string, force bool) {
+	text = strings.TrimSpace(joinText(o.done, text))
+	if o.err != nil || text == o.written || !force && time.Since(o.at) < streamEvery {
+		return
+	}
+	if o.id == "" {
+		if text == "" {
+			return
+		}
+		// The key makes the reply to a message unique, so two nodes that
+		// both think they hold the agent during a lease handover send it
+		// once.
+		e, created, err := o.w.c.Chat.SendText(ctx, o.w.me, o.room, text, o.trigger.ID, "builtin:"+o.trigger.ID, true)
+		if err == nil && !created {
+			err = errTaken
+		}
+		if err != nil {
+			o.stop(err)
+			return
+		}
+		o.id = e.ID
+	} else if err := o.w.c.Chat.StreamText(ctx, o.w.me, o.room, o.id, text); err != nil {
+		o.stop(err)
+		return
+	}
+	o.written, o.at = text, time.Now()
+}
+
+// next starts a new round after one that ended in tool calls.
+func (o *output) next(text string) {
+	o.done = strings.TrimSpace(joinText(o.done, text))
+}
+
+// end finishes the message with the last round's text; on a failure, with
+// "", it keeps what was written. A reply that never started is sent whole.
+func (o *output) end(ctx context.Context, text string) {
+	if o.err != nil {
+		return
+	}
+	text = strings.TrimSpace(joinText(o.done, text))
+	if o.id == "" {
+		if text == "" {
+			return
+		}
+		e, created, err := o.w.c.Chat.SendText(ctx, o.w.me, o.room, text, o.trigger.ID, "builtin:"+o.trigger.ID, false)
+		if err == nil && !created && e.Stream == core.StreamStreaming {
+			err = errTaken
+		}
+		o.err = err
+		return
+	}
+	if text == o.written {
+		text = ""
+	}
+	o.err = o.w.c.Chat.EndText(ctx, o.w.me, o.room, o.id, text)
+}
+
+func (o *output) stop(err error) {
+	o.err = err
+	o.cancel()
+}
+
+// report records why the reply could not be written, if it could not, and
+// says whether it did.
+func (o *output) report(ctx context.Context) bool {
+	if o.err != nil && !errors.Is(o.err, errTaken) {
+		o.w.fail(ctx, o.err)
+	}
+	return o.err != nil
+}
+
+func joinText(a, b string) string {
+	if a == "" || b == "" {
+		return a + b
+	}
+	return a + "\n\n" + b
 }
 
 // complete makes one model call within the daily budget and records its
@@ -122,9 +230,10 @@ func (w *worker) complete(ctx context.Context, req llm.Request) (llm.Response, b
 }
 
 // request builds the model input: the agent's instructions and the room's
-// recent messages up to trigger, the agent's own as assistant turns.
-func (w *worker) request(ctx context.Context, room core.Room, trigger core.Event) (llm.Request, error) {
-	events, err := w.c.Store.EventsBefore(ctx, room.ID, trigger.Seq+1, historyLimit)
+// recent messages up to seq through, the agent's own as assistant turns.
+// Messages show as they are now, so streamed and edited ones are whole.
+func (w *worker) request(ctx context.Context, room core.Room, through int64) (llm.Request, error) {
+	events, err := w.c.Store.EventsBefore(ctx, room.ID, through+1, historyLimit)
 	if err != nil {
 		return llm.Request{}, err
 	}

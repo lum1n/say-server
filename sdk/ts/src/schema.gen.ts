@@ -255,7 +255,11 @@ export interface paths {
          * Server-Sent Events of a room
          * @description Replays the events after the cursor, then streams new ones. Each
          *     SSE message has `event: event`, `id: <seq>` and the Event as JSON
-         *     in `data`. Idle streams get a `: ping` comment every 25 seconds.
+         *     in `data`. A streaming message's changes come as `event: stream`
+         *     with the message as it now is and no id; they are not replayed,
+         *     and a slow reader may miss some, but the edit that ends the stream
+         *     is an `event`. Idle streams get a `: ping` comment every 25
+         *     seconds.
          */
         get: operations["streamEvents"];
         put?: never;
@@ -285,6 +289,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rooms/{id}/messages/{event_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Stream into, end or edit your own message
+         * @description While the message streams, a body with `parts` and without
+         *     `stream: "final"` replaces its parts in place: nothing is added to
+         *     the log, and subscribers get a `stream` push. Ending the stream
+         *     (`stream: "final"`, with or without `parts`) and every change to a
+         *     final message append an `edit` event that names the message in
+         *     `edits` and carries its whole new parts. Editing a final message
+         *     sets its `edited_at`; ending a stream does not. Edits do not count
+         *     against agent budgets and are allowed while agents are paused.
+         */
+        patch: operations["editMessage"];
+        trace?: never;
+    };
     "/ws": {
         parameters: {
             query?: never;
@@ -307,7 +341,11 @@ export interface paths {
          *     - `ping`: no payload.
          *
          *     Events arrive as pushes `{id: <event id>, type: "event", payload:
-         *     Event}` without a status. A push `{id, type: "rooms"}` without a
+         *     Event}` without a status. A streaming message's changes arrive as
+         *     pushes `{id, type: "stream", payload: Event}` holding the message
+         *     as it now is; they are not logged or replayed, and are dropped for
+         *     a client that falls behind, so apply them by message id and rely
+         *     on the `edit` event that ends the stream. A push `{id, type: "rooms"}` without a
          *     payload says the caller's room list changed (it was added to a room
          *     or created one); reread `GET /rooms`. Like event notifications it
          *     is a hint, so also reread the list after reconnecting. A client that falls too far behind is
@@ -577,7 +615,11 @@ export interface components {
         };
         /** @enum {string} */
         EventType: "message" | "edit" | "reaction" | "typing" | "receipt";
-        /** @enum {string} */
+        /**
+         * @description A streaming message's parts change in place until an edit ends the
+         *     stream. On an edit event, `final` means the edit ended a stream.
+         * @enum {string}
+         */
         StreamState: "streaming" | "final";
         /** @enum {string} */
         PartKind: "text" | "attachment" | "tool-call" | "tool-result" | "card";
@@ -607,17 +649,39 @@ export interface components {
             causation: components["schemas"]["Causation"];
             parts: components["schemas"]["Part"][];
             stream?: components["schemas"]["StreamState"];
+            /**
+             * @description On an edit event, the message it changed. A message in a page
+             *     of events already shows its latest parts, so clients may skip
+             *     edits of messages they loaded after the edit.
+             */
+            edits?: string;
+            /**
+             * Format: date-time
+             * @description When a final message was last edited.
+             */
+            edited_at?: string;
             /** Format: date-time */
             created_at: string;
         };
         SendMessage: {
+            /** @description At least one part, unless the message starts streaming. */
             parts: components["schemas"]["Part"][];
+            /**
+             * @description `streaming` starts a message that you then change with
+             *     `PATCH /rooms/{id}/messages/{event_id}`. The default is `final`.
+             */
+            stream?: components["schemas"]["StreamState"];
             /**
              * @description The event in this room this message replies to. Automated
              *     senders must set it; a reply that would pass the hop limit is
              *     rejected with code hop_limit.
              */
             caused_by?: string;
+        };
+        EditMessage: {
+            /** @description The whole new parts; leave out to end a stream as it is. */
+            parts?: components["schemas"]["Part"][];
+            stream?: components["schemas"]["StreamState"];
         };
         WsSubscribe: {
             room_id: string;
@@ -635,6 +699,7 @@ export interface components {
             idempotency_key?: string;
             parts: components["schemas"]["Part"][];
             caused_by?: string;
+            stream?: components["schemas"]["StreamState"];
         };
         WsError: {
             code: string;
@@ -1176,6 +1241,58 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    editMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditMessage"];
+            };
+        };
+        responses: {
+            /** @description The message as it now is */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description Not your message, or not a message (code forbidden) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["Error"];
+            /**
+             * @description A streaming update of a message that is final (code
+             *     not_streaming), also when its stream ended meanwhile.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["Error"];
         };
     };
     openWebSocket: {

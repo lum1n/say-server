@@ -98,11 +98,22 @@ type Event struct {
 	Type      EventType
 	SenderID  string
 	Causation Causation
-	Parts     []Part      // for EventMessage
-	Stream    StreamState // for EventMessage
+	// Parts are a message's content, kept up to date as it streams and is
+	// edited, or the whole new content of an edit.
+	Parts []Part
+	// Stream is a message's state. On an edit it is StreamFinal when the
+	// edit ended the message's stream, and empty otherwise.
+	Stream StreamState
+	// Edits is the message an EventEdit changes.
+	Edits string
+	// EditedAt is when a final message was last edited; zero if never.
+	EditedAt  time.Time
 	CreatedAt time.Time
 }
 
+// StreamState says whether a message is complete. A streaming message's
+// parts change in place, unlogged, until an edit event makes it final
+// (docs/adr/0010-streaming-and-edits.md).
 type StreamState string
 
 const (

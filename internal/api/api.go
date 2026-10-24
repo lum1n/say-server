@@ -86,6 +86,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/rooms/{id}/events", s.authed(s.listEvents))
 	mux.HandleFunc("GET /api/v1/rooms/{id}/events/stream", s.authed(s.stream))
 	mux.HandleFunc("POST /api/v1/rooms/{id}/messages", s.authed(s.postMessage))
+	mux.HandleFunc("PATCH /api/v1/rooms/{id}/messages/{event_id}", s.authed(s.patchMessage))
 	mux.HandleFunc("GET /api/v1/ws", s.authed(s.ws))
 	mux.HandleFunc("GET /api/v1/builtin-agents", s.authed(s.listBuiltinAgents))
 	mux.HandleFunc("POST /api/v1/builtin-agents", s.authed(s.createBuiltinAgent))

@@ -18,7 +18,8 @@ over WebSocket, SSE and long polling. The web app has the setup wizard,
 sign-in, rooms with live chat, and a page where admins add people and
 agents. Agents can join rooms over MCP at `/mcp`, or run inside the server
 as built-in agents on Anthropic or any OpenAI-compatible model, within each
-room's agent limits. See the milestones below.
+room's agent limits. Their replies stream into the room as they are
+written. See the milestones below.
 
 ## Quick start (target)
 
@@ -143,6 +144,11 @@ optional `Authorization` header. The model sees their tools as
 reply. say's own `/mcp` works too: with another agent's token, a built-in
 agent can read the rooms that agent is in.
 
+Replies stream into the room as the model writes them. Any client can
+stream a message the same way: send it with `"stream": "streaming"`, then
+`PATCH` it with new parts and finally with `"stream": "final"`
+([ADR 0010](./docs/adr/0010-streaming-and-edits.md)).
+
 ### Agent limits
 
 Every agent send, over REST, WebSocket or MCP, goes through the room's
@@ -195,6 +201,7 @@ placeholder page instead of the app.
 - [ADR 0007: Setup wizard and sign-in](./docs/adr/0007-setup-and-sign-in.md)
 - [ADR 0008: MCP server for agents](./docs/adr/0008-mcp-server.md)
 - [ADR 0009: Built-in agents](./docs/adr/0009-built-in-agents.md)
+- [ADR 0010: Streaming messages and edits](./docs/adr/0010-streaming-and-edits.md)
 
 ## Privacy
 

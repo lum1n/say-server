@@ -53,8 +53,21 @@ WHERE room_id = $1 AND sender_id = $2 AND idempotency_key = $3;
 
 -- name: InsertEvent :exec
 INSERT INTO events (id, room_id, seq, type, sender_id, caused_by, hop_count,
-                    parts, stream, idempotency_key, automated, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12);
+                    parts, stream, idempotency_key, automated, edits, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+
+-- Only a message that is still streaming changes in place; the stream
+-- condition makes a late update after the final edit a no-op.
+-- name: UpdateStreaming :execrows
+UPDATE events SET parts = $3
+WHERE id = $1 AND sender_id = $2 AND type = 'message' AND stream = 'streaming';
+
+-- name: ReplaceMessage :exec
+UPDATE events SET parts = $2, stream = $3, edited_at = $4 WHERE id = $1;
+
+-- name: StreamingFrom :many
+SELECT * FROM events WHERE sender_id = $1 AND stream = 'streaming'
+ORDER BY created_at, id;
 
 -- The created_at of the room's automated event OFFSET places back from the
 -- latest; no row means the room has no more than OFFSET of them.

@@ -95,6 +95,8 @@ type wireEvent struct {
 	Causation wireCausation    `json:"causation"`
 	Parts     []wirePart       `json:"parts"`
 	Stream    core.StreamState `json:"stream,omitempty"`
+	Edits     string           `json:"edits,omitempty"`
+	EditedAt  *time.Time       `json:"edited_at,omitempty"`
 	CreatedAt time.Time        `json:"created_at"`
 }
 
@@ -112,8 +114,18 @@ func toEvent(e core.Event) wireEvent {
 		Causation: wireCausation{CausedBy: e.Causation.CausedBy, HopCount: e.Causation.HopCount},
 		Parts:     parts,
 		Stream:    e.Stream,
+		Edits:     e.Edits,
+		EditedAt:  optTime(e.EditedAt),
 		CreatedAt: e.CreatedAt.UTC(),
 	}
+}
+
+func optTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	t = t.UTC()
+	return &t
 }
 
 func toEvents(es []core.Event) []wireEvent {
@@ -129,6 +141,15 @@ func toEvents(es []core.Event) []wireEvent {
 type sendMessage struct {
 	Parts    []wirePart `json:"parts"`
 	CausedBy string     `json:"caused_by,omitempty"`
+	// Stream "streaming" starts a message that its sender then changes
+	// with edits; it may start without parts. The default is "final".
+	Stream core.StreamState `json:"stream,omitempty"`
+}
+
+// editMessage is the body of PATCH /rooms/{id}/messages/{event_id}.
+type editMessage struct {
+	Parts  *[]wirePart      `json:"parts,omitempty"`
+	Stream core.StreamState `json:"stream,omitempty"`
 }
 
 // maxParts and maxPartBytes bound one message; files go through signed
@@ -144,16 +165,17 @@ var partKinds = map[core.PartKind]bool{
 }
 
 // toParts validates the parts of a message. Every part's data is a JSON
-// object; a text part has a non-empty "text" string.
-func (m sendMessage) toParts() ([]core.Part, error) {
-	if len(m.Parts) == 0 {
+// object; a text part has a non-empty "text" string. Only a streaming
+// message may have no parts yet.
+func toParts(in []wirePart, streaming bool) ([]core.Part, error) {
+	if len(in) == 0 && !streaming {
 		return nil, errors.New("a message needs at least one part")
 	}
-	if len(m.Parts) > maxParts {
+	if len(in) > maxParts {
 		return nil, fmt.Errorf("a message has at most %d parts", maxParts)
 	}
-	parts := make([]core.Part, len(m.Parts))
-	for i, p := range m.Parts {
+	parts := make([]core.Part, len(in))
+	for i, p := range in {
 		if !partKinds[p.Kind] {
 			return nil, fmt.Errorf("part %d: unknown kind %q", i, p.Kind)
 		}

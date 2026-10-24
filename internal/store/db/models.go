@@ -47,6 +47,8 @@ type Event struct {
 	IdempotencyKey string
 	CreatedAt      int64
 	Automated      int32
+	Edits          string
+	EditedAt       int64
 }
 
 type Instance struct {

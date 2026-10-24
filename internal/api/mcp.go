@@ -43,6 +43,7 @@ func (s *Server) mcpHandler() http.Handler {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "read",
 		Description: "Read messages in a room, oldest first. Without after or before it returns the latest messages. " +
+			"A message marked streaming is still being written. " +
 			"Use the returned cursor as after in wait_for_messages.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, s.mcpRead)
@@ -115,15 +116,18 @@ func (s *Server) mcpRoom(r core.Room) mcpRoom {
 }
 
 type mcpMessage struct {
-	ID         string    `json:"id"`
-	Seq        int64     `json:"seq"`
-	SenderID   string    `json:"sender_id"`
-	SenderName string    `json:"sender_name"`
-	SenderKind string    `json:"sender_kind"`
-	Text       string    `json:"text"`
-	ReplyTo    string    `json:"reply_to,omitempty"`
-	HopCount   int       `json:"hop_count"`
-	SentAt     time.Time `json:"sent_at"`
+	ID         string `json:"id"`
+	Seq        int64  `json:"seq"`
+	SenderID   string `json:"sender_id"`
+	SenderName string `json:"sender_name"`
+	SenderKind string `json:"sender_kind"`
+	Text       string `json:"text"`
+	ReplyTo    string `json:"reply_to,omitempty"`
+	HopCount   int    `json:"hop_count"`
+	// Streaming messages are still being written; their text grows.
+	Streaming bool      `json:"streaming,omitempty"`
+	Edited    bool      `json:"edited,omitempty"`
+	SentAt    time.Time `json:"sent_at"`
 }
 
 type mcpListRoomsOut struct {
@@ -242,7 +246,9 @@ func (s *Server) mcpWait(ctx context.Context, req *mcp.CallToolRequest, in mcpWa
 	errOther := errors.New("got a message from someone else")
 	err := s.follow(ctx, in.RoomID, in.After, func(e core.Event) error {
 		events = append(events, e)
-		if e.SenderID != me.ID && e.Type == core.EventMessage {
+		// A message still streaming is not news until its final edit.
+		news := e.Type == core.EventMessage && e.Stream != core.StreamStreaming || e.Type == core.EventEdit
+		if e.SenderID != me.ID && news {
 			return errOther
 		}
 		if len(events) >= maxPage {
@@ -284,12 +290,26 @@ func (s *Server) mcpCreateRoom(ctx context.Context, req *mcp.CallToolRequest, in
 }
 
 // mcpMessages flattens events to what a model needs: who said what, as
-// text. Parts other than text show as [kind].
+// text. Parts other than text show as [kind]. An edit shows as the message
+// it changed, as it now is: in place of the message when events has it,
+// else where the edit is.
 func (s *Server) mcpMessages(ctx context.Context, events []core.Event) ([]mcpMessage, error) {
 	names := map[string]core.Principal{}
 	out := make([]mcpMessage, 0, len(events))
+	at := map[string]int{} // message id → index in out
 	for _, e := range events {
-		if e.Type != core.EventMessage {
+		switch e.Type {
+		case core.EventMessage:
+		case core.EventEdit:
+			m, err := s.store.GetEvent(ctx, e.Edits)
+			if errors.Is(err, store.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			e = m
+		default:
 			continue
 		}
 		p, ok := names[e.SenderID]
@@ -301,7 +321,7 @@ func (s *Server) mcpMessages(ctx context.Context, events []core.Event) ([]mcpMes
 			}
 			names[e.SenderID] = p
 		}
-		out = append(out, mcpMessage{
+		m := mcpMessage{
 			ID:         e.ID,
 			Seq:        e.Seq,
 			SenderID:   e.SenderID,
@@ -310,8 +330,16 @@ func (s *Server) mcpMessages(ctx context.Context, events []core.Event) ([]mcpMes
 			Text:       e.Text(),
 			ReplyTo:    e.Causation.CausedBy,
 			HopCount:   e.Causation.HopCount,
+			Streaming:  e.Stream == core.StreamStreaming,
+			Edited:     !e.EditedAt.IsZero(),
 			SentAt:     e.CreatedAt.UTC(),
-		})
+		}
+		if i, ok := at[e.ID]; ok {
+			out[i] = m
+			continue
+		}
+		at[e.ID] = len(out)
+		out = append(out, m)
 	}
 	return out, nil
 }

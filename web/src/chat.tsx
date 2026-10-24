@@ -13,25 +13,56 @@ export const keys = {
   events: (id: string) => ["events", id] as const,
 };
 
-/** mergeEvents adds events to a room's log, keeping seq order without duplicates. */
+/**
+ * mergeEvents adds events to a room's log, keeping seq order without
+ * duplicates. Messages read over HTTP already show their latest parts, so
+ * edits in a page are kept for the cursor but not applied again.
+ */
 export function mergeEvents(log: Event[] | undefined, events: Event[]): Event[] {
   const bySeq = new Map((log ?? []).map((e) => [e.seq, e]));
   for (const e of events) bySeq.set(e.seq, e);
   return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
 
+/**
+ * applyLive adds an event pushed by the socket, which arrive in seq order:
+ * an edit also changes the message it names. Ending a stream makes the
+ * message final; a later edit marks it edited.
+ */
+export function applyLive(log: Event[] | undefined, e: Event): Event[] {
+  let next = log;
+  if (e.type === "edit" && e.edits && log) {
+    next = log.map((m) =>
+      m.id !== e.edits
+        ? m
+        : e.stream === "final"
+          ? { ...m, parts: e.parts, stream: "final" }
+          : { ...m, parts: e.parts, edited_at: e.created_at },
+    );
+  }
+  return mergeEvents(next, [e]);
+}
+
+/** applyStream shows a streaming message's latest parts, until it is final. */
+export function applyStream(log: Event[] | undefined, msg: Event): Event[] | undefined {
+  if (!log?.some((m) => m.id === msg.id && m.stream === "streaming")) return log;
+  return log.map((m) => (m.id === msg.id ? { ...m, parts: msg.parts } : m));
+}
+
 const RealtimeContext = createContext<Realtime | null>(null);
 
 /**
  * RealtimeProvider opens one socket for the signed-in app and pushes every
- * event it receives into that room's ["events", id] cache. It also
+ * event it receives, and every change to a streaming message, into that
+ * room's ["events", id] cache. It also
  * rereads the room list when the server says it changed.
  */
 export function RealtimeProvider({ queryClient, children }: { queryClient: QueryClient; children: ReactNode }) {
   const [rt, setRt] = useState<Realtime | null>(null);
   useEffect(() => {
     const r = new Realtime({
-      onEvent: (e) => queryClient.setQueryData<Event[]>(keys.events(e.room_id), (log) => mergeEvents(log, [e])),
+      onEvent: (e) => queryClient.setQueryData<Event[]>(keys.events(e.room_id), (log) => applyLive(log, e)),
+      onStream: (m) => queryClient.setQueryData<Event[]>(keys.events(m.room_id), (log) => applyStream(log, m)),
       onRoomsChanged: () => {
         queryClient.invalidateQueries({ queryKey: keys.rooms });
         // A room's agent settings changed, or its membership did.

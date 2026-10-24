@@ -25,8 +25,13 @@ import (
 // Chat is how a built-in agent takes part, the same way as any client.
 type Chat interface {
 	// SendText sends a text message from me in reply to causedBy. A
-	// repeated idempotencyKey returns the earlier message.
-	SendText(ctx context.Context, me core.Principal, roomID, text, causedBy, idempotencyKey string) (core.Event, error)
+	// repeated idempotencyKey returns the earlier message, with created
+	// false. A streaming message may start without text; StreamText
+	// replaces its text and EndText makes it final, with text or, when
+	// that is empty, with what it streamed.
+	SendText(ctx context.Context, me core.Principal, roomID, text, causedBy, idempotencyKey string, streaming bool) (e core.Event, created bool, err error)
+	StreamText(ctx context.Context, me core.Principal, roomID, eventID, text string) error
+	EndText(ctx context.Context, me core.Principal, roomID, eventID, text string) error
 	// AgentPolicy is the agent policy in effect in room.
 	AgentPolicy(room core.Room) core.AgentPolicy
 }
@@ -215,6 +220,7 @@ func (w *worker) run(ctx context.Context) {
 		return
 	}
 	defer unsubscribe()
+	w.endStreams(ctx)
 	w.refresh = true
 	tick := time.NewTicker(resync)
 	defer tick.Stop()
@@ -242,6 +248,21 @@ func (w *worker) run(ctx context.Context) {
 					w.dirty[id] = true
 				}
 			})
+		}
+	}
+}
+
+// endStreams ends the agent's replies that a node stopped writing, by
+// crashing or losing the agent's lease, with the text they have.
+func (w *worker) endStreams(ctx context.Context) {
+	streaming, err := w.c.Store.StreamingFrom(ctx, w.me.ID)
+	if err != nil {
+		w.warn(ctx, "list streaming messages", err)
+		return
+	}
+	for _, e := range streaming {
+		if err := w.c.Chat.EndText(ctx, w.me, e.RoomID, e.ID, ""); err != nil {
+			w.warn(ctx, "end a stream", err)
 		}
 	}
 }
@@ -339,6 +360,7 @@ func (w *worker) process(ctx context.Context, roomID string) {
 		return
 	}
 	var trigger *core.Event
+	var through int64
 	for {
 		events, err := w.c.Store.EventsAfter(ctx, roomID, cursor, 200)
 		if err != nil {
@@ -346,8 +368,13 @@ func (w *worker) process(ctx context.Context, roomID string) {
 			return
 		}
 		for _, e := range events {
-			if w.calls(room, m, e) {
-				trigger = &e
+			msg, ok, err := w.message(ctx, e)
+			if err != nil {
+				w.warn(ctx, "read message", err)
+				return
+			}
+			if ok && w.calls(room, m, msg, e.CreatedAt) {
+				trigger, through = &msg, e.Seq
 			}
 			cursor = e.Seq
 		}
@@ -360,15 +387,35 @@ func (w *worker) process(ctx context.Context, roomID string) {
 		return
 	}
 	if trigger != nil {
-		w.reply(ctx, room, *trigger)
+		w.reply(ctx, room, *trigger, through)
 	}
 }
 
-// calls reports whether e asks the agent for an answer: it is a recent
-// message from someone else, and it is in a DM, the agent is a designated
-// responder in the room, or it mentions the agent.
-func (w *worker) calls(room core.Room, m core.Membership, e core.Event) bool {
-	if e.Type != core.EventMessage || e.SenderID == w.me.ID || time.Since(e.CreatedAt) > maxAge {
+// message returns the complete message e brings: e itself when it is a
+// final message, or the message whose stream e ended. A streaming message
+// waits for its end, and other edits bring nothing to answer. Reading
+// both a message that is already final and the edit that ended it is
+// harmless: the edit commits with the message's last change, so both are
+// in the same pass and the agent answers once.
+func (w *worker) message(ctx context.Context, e core.Event) (core.Event, bool, error) {
+	switch {
+	case e.Type == core.EventMessage:
+		return e, e.Stream != core.StreamStreaming, nil
+	case e.Type == core.EventEdit && e.Stream == core.StreamFinal:
+		msg, err := w.c.Store.GetEvent(ctx, e.Edits)
+		if errors.Is(err, store.ErrNotFound) {
+			return core.Event{}, false, nil
+		}
+		return msg, err == nil, err
+	}
+	return core.Event{}, false, nil
+}
+
+// calls reports whether msg, complete at at, asks the agent for an answer:
+// it is a recent message from someone else, and it is in a DM, the agent
+// is a designated responder in the room, or it mentions the agent.
+func (w *worker) calls(room core.Room, m core.Membership, msg core.Event, at time.Time) bool {
+	if msg.SenderID == w.me.ID || time.Since(at) > maxAge {
 		return false
 	}
 	if m.Role == core.RoleObserver {
@@ -382,5 +429,5 @@ func (w *worker) calls(room core.Room, m core.Membership, e core.Event) bool {
 			return true
 		}
 	}
-	return core.Mentions(e.Text(), w.me.DisplayName)
+	return core.Mentions(msg.Text(), w.me.DisplayName)
 }

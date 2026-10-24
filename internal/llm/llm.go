@@ -78,6 +78,9 @@ type Request struct {
 	Messages  []Message
 	Tools     []Tool
 	MaxTokens int
+	// OnText, when set, streams the answer: it is called with the text so
+	// far each time more arrives, on the goroutine that called Complete.
+	OnText func(text string)
 }
 
 // Response is the model's turn. When it has ToolCalls the model waits for
@@ -174,9 +177,30 @@ func (p *anthropicProvider) Complete(ctx context.Context, req Request) (Response
 		}
 		params.Tools = append(params.Tools, anthropic.ToolUnionParam{OfTool: &tool})
 	}
-	msg, err := p.client.Messages.New(ctx, params)
-	if err != nil {
-		return Response{}, err
+	var msg *anthropic.Message
+	if req.OnText == nil {
+		var err error
+		if msg, err = p.client.Messages.New(ctx, params); err != nil {
+			return Response{}, err
+		}
+	} else {
+		stream := p.client.Messages.NewStreaming(ctx, params)
+		defer stream.Close()
+		msg = &anthropic.Message{}
+		var text strings.Builder
+		for stream.Next() {
+			event := stream.Current()
+			if err := msg.Accumulate(event); err != nil {
+				return Response{}, err
+			}
+			if event.Type == "content_block_delta" && event.Delta.Type == "text_delta" && event.Delta.Text != "" {
+				text.WriteString(event.Delta.Text)
+				req.OnText(text.String())
+			}
+		}
+		if err := stream.Err(); err != nil {
+			return usage(msg.Usage.InputTokens, msg.Usage.OutputTokens), err
+		}
 	}
 	out := Response{InputTokens: msg.Usage.InputTokens, OutputTokens: msg.Usage.OutputTokens}
 	if msg.StopReason == anthropic.StopReasonRefusal {
@@ -249,9 +273,30 @@ func (p *openaiProvider) Complete(ctx context.Context, req Request) (Response, e
 	} else {
 		params.MaxCompletionTokens = openai.Int(int64(req.MaxTokens))
 	}
-	c, err := p.client.Chat.Completions.New(ctx, params)
-	if err != nil {
-		return Response{}, err
+	var c *openai.ChatCompletion
+	if req.OnText == nil {
+		var err error
+		if c, err = p.client.Chat.Completions.New(ctx, params); err != nil {
+			return Response{}, err
+		}
+	} else {
+		params.StreamOptions.IncludeUsage = openai.Bool(true)
+		stream := p.client.Chat.Completions.NewStreaming(ctx, params)
+		defer stream.Close()
+		var acc openai.ChatCompletionAccumulator
+		var text strings.Builder
+		for stream.Next() {
+			chunk := stream.Current()
+			acc.AddChunk(chunk)
+			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
+				text.WriteString(chunk.Choices[0].Delta.Content)
+				req.OnText(text.String())
+			}
+		}
+		if err := stream.Err(); err != nil {
+			return usage(acc.Usage.PromptTokens, acc.Usage.CompletionTokens), err
+		}
+		c = &acc.ChatCompletion
 	}
 	out := Response{InputTokens: c.Usage.PromptTokens, OutputTokens: c.Usage.CompletionTokens}
 	if len(c.Choices) == 0 {
@@ -270,6 +315,11 @@ func (p *openaiProvider) Complete(ctx context.Context, req Request) (Response, e
 		out.ToolCalls = append(out.ToolCalls, ToolCall{ID: c.ID, Name: c.Function.Name, Input: json.RawMessage(c.Function.Arguments)})
 	}
 	return out, nil
+}
+
+// usage is the token count of a response that failed part way.
+func usage(input, output int64) Response {
+	return Response{InputTokens: input, OutputTokens: output}
 }
 
 // stringList reads a JSON Schema "required" list.

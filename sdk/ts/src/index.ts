@@ -20,6 +20,8 @@ export type Member = Schemas["Member"];
 export type Event = Schemas["Event"];
 export type Part = Schemas["Part"];
 export type SendMessage = Schemas["SendMessage"];
+export type EditMessage = Schemas["EditMessage"];
+export type StreamState = Schemas["StreamState"];
 export type CreateRoom = Schemas["CreateRoom"];
 export type AddMember = Schemas["AddMember"];
 export type UpdateMember = Schemas["UpdateMember"];
@@ -208,6 +210,26 @@ export async function sendMessage(
 ): Promise<Event> {
   const { data, error, response } = await client.POST("/rooms/{id}/messages", {
     params: { path: { id }, header: { "Idempotency-Key": idempotencyKey } },
+    body,
+  });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/**
+ * editMessage changes one of your messages. While it streams, parts
+ * replace it in place; `stream: "final"` ends the stream, and a later edit
+ * of a final message is logged and marks it edited. It returns the message
+ * as it now is.
+ */
+export async function editMessage(
+  id: string,
+  eventId: string,
+  body: EditMessage,
+  client = defaultClient,
+): Promise<Event> {
+  const { data, error, response } = await client.PATCH("/rooms/{id}/messages/{event_id}", {
+    params: { path: { id, event_id: eventId } },
     body,
   });
   if (!data) fail(response, error);

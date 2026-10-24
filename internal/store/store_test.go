@@ -368,6 +368,76 @@ func TestAppendAndReplay(t *testing.T) {
 	})
 }
 
+func TestStreamingAndEdits(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		p, r := seed(t, s)
+		other := core.Principal{ID: core.NewID(), Kind: core.PrincipalHuman, DisplayName: "bob"}
+		if err := s.CreatePrincipal(ctx, other); err != nil {
+			t.Fatal(err)
+		}
+		msg, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID, Stream: core.StreamStreaming}, AppendOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.UpdateStreaming(ctx, msg.ID, p.ID, text("hel")); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.UpdateStreaming(ctx, msg.ID, other.ID, text("hijack")); !errors.Is(err, ErrNotStreaming) {
+			t.Fatalf("someone else's streaming update: %v", err)
+		}
+		streaming, err := s.StreamingFrom(ctx, p.ID)
+		if err != nil || len(streaming) != 1 || streaming[0].ID != msg.ID || string(streaming[0].Parts[0].Data) != `"hel"` {
+			t.Fatalf("StreamingFrom = %+v, %v", streaming, err)
+		}
+		if _, _, err := s.AppendEdit(ctx, core.Event{RoomID: r.ID, SenderID: other.ID, Edits: msg.ID}); !errors.Is(err, ErrNotEditable) {
+			t.Fatalf("edit by someone else: %v", err)
+		}
+		if _, _, err := s.AppendEdit(ctx, core.Event{RoomID: r.ID, SenderID: p.ID, Edits: "nope"}); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("edit of a missing message: %v", err)
+		}
+
+		// Ending the stream without parts keeps the streamed ones.
+		edit, got, err := s.AppendEdit(ctx, core.Event{RoomID: r.ID, SenderID: p.ID, Edits: msg.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if edit.Type != core.EventEdit || edit.Seq != msg.Seq+1 || edit.Stream != core.StreamFinal || edit.Edits != msg.ID ||
+			string(edit.Parts[0].Data) != `"hel"` || got.Stream != core.StreamFinal || !got.EditedAt.IsZero() {
+			t.Fatalf("ending the stream: edit %+v, message %+v", edit, got)
+		}
+		if err := s.UpdateStreaming(ctx, msg.ID, p.ID, text("late")); !errors.Is(err, ErrNotStreaming) {
+			t.Fatalf("streaming update after the end: %v", err)
+		}
+		if streaming, _ := s.StreamingFrom(ctx, p.ID); len(streaming) != 0 {
+			t.Fatalf("still streaming: %+v", streaming)
+		}
+		if _, _, err := s.AppendEdit(ctx, core.Event{RoomID: r.ID, SenderID: p.ID, Edits: msg.ID}); !errors.Is(err, ErrNotEditable) {
+			t.Fatalf("empty edit of a final message: %v", err)
+		}
+		if _, _, err := s.AppendEdit(ctx, core.Event{RoomID: r.ID, SenderID: p.ID, Edits: edit.ID, Parts: text("x")}); !errors.Is(err, ErrNotEditable) {
+			t.Fatalf("edit of an edit: %v", err)
+		}
+
+		edit2, _, err := s.AppendEdit(ctx, core.Event{RoomID: r.ID, SenderID: p.ID, Edits: msg.ID, Parts: text("hello")})
+		if err != nil || edit2.Stream != "" {
+			t.Fatalf("edit of a final message: %+v, %v", edit2, err)
+		}
+		back, err := s.GetEvent(ctx, msg.ID)
+		if err != nil || string(back.Parts[0].Data) != `"hello"` || back.Stream != core.StreamFinal ||
+			!back.EditedAt.Equal(edit2.CreatedAt) || back.Seq != msg.Seq || back.Edits != "" {
+			t.Fatalf("message after edits = %+v, %v", back, err)
+		}
+		log, err := s.EventsAfter(ctx, r.ID, 0, 10)
+		if err != nil || len(log) != 3 || log[2].ID != edit2.ID || log[2].Edits != msg.ID {
+			t.Fatalf("log = %+v, %v", log, err)
+		}
+		if pending, _ := s.PendingOutbox(ctx, 10); len(pending) != 3 {
+			t.Fatalf("outbox = %+v", pending)
+		}
+	})
+}
+
 func TestIdempotencyKey(t *testing.T) {
 	eachEngine(t, func(t *testing.T, s Store) {
 		ctx := context.Background()

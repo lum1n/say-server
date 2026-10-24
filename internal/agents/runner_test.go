@@ -21,15 +21,18 @@ func TestMain(m *testing.M) {
 	scanEvery = 50 * time.Millisecond
 	leaseTTL = 300 * time.Millisecond
 	resync = 200 * time.Millisecond
+	streamEvery = 20 * time.Millisecond
 	os.Exit(m.Run())
 }
 
 // fakeLLM answers every request with a numbered line naming the agent,
-// or with what script returns, and remembers what it was asked.
+// or with what script returns, and remembers what it was asked. It
+// streams the answer a word at a time, pausing delay between words.
 type fakeLLM struct {
 	mu     sync.Mutex
 	calls  []llm.Request
 	script func(llm.Request) llm.Response
+	delay  time.Duration
 }
 
 func (f *fakeLLM) provider(c llm.Config) (llm.Provider, error) {
@@ -41,16 +44,30 @@ type fakeProvider struct {
 	model string
 }
 
-func (p fakeProvider) Complete(_ context.Context, req llm.Request) (llm.Response, error) {
+func (p fakeProvider) Complete(ctx context.Context, req llm.Request) (llm.Response, error) {
 	p.f.mu.Lock()
-	defer p.f.mu.Unlock()
 	p.f.calls = append(p.f.calls, req)
+	resp := llm.Response{Text: fmt.Sprintf("%s says %d", p.model, len(p.f.calls))}
 	if p.f.script != nil {
-		resp := p.f.script(req)
-		resp.InputTokens, resp.OutputTokens = 10, 5
-		return resp, nil
+		resp = p.f.script(req)
 	}
-	return llm.Response{Text: fmt.Sprintf("%s says %d", p.model, len(p.f.calls)), InputTokens: 10, OutputTokens: 5}, nil
+	resp.InputTokens, resp.OutputTokens = 10, 5
+	delay := p.f.delay
+	p.f.mu.Unlock()
+	if req.OnText != nil {
+		words := strings.SplitAfter(resp.Text, " ")
+		for i := range words {
+			if i > 0 {
+				select {
+				case <-ctx.Done():
+					return llm.Response{InputTokens: 10}, ctx.Err()
+				case <-time.After(delay):
+				}
+			}
+			req.OnText(strings.Join(words[:i+1], ""))
+		}
+	}
+	return resp, nil
 }
 
 func (f *fakeLLM) count() int {
@@ -152,14 +169,27 @@ func (e *env) responder(r core.Room, p core.Principal) {
 
 func (e *env) say(r core.Room, text string) core.Event {
 	e.t.Helper()
-	ev, err := e.srv.SendText(context.Background(), e.ada, r.ID, text, "", "")
+	ev, _, err := e.srv.SendText(context.Background(), e.ada, r.ID, text, "", "", false)
 	if err != nil {
 		e.t.Fatal(err)
 	}
 	return ev
 }
 
+// events returns the room's final messages.
 func (e *env) events(r core.Room) []core.Event {
+	e.t.Helper()
+	var msgs []core.Event
+	for _, ev := range e.log(r) {
+		if ev.Type == core.EventMessage && ev.Stream == core.StreamFinal {
+			msgs = append(msgs, ev)
+		}
+	}
+	return msgs
+}
+
+// log returns all of the room's events.
+func (e *env) log(r core.Room) []core.Event {
 	e.t.Helper()
 	evs, err := e.store.EventsAfter(context.Background(), r.ID, 0, 1000)
 	if err != nil {
@@ -390,5 +420,97 @@ func TestJoinAnswersRecentQuestionOnly(t *testing.T) {
 	evs := e.waitFor(r, "a reply", func(evs []core.Event) bool { return len(evs) == 3 })
 	if evs[2].Causation.CausedBy != recent.ID {
 		t.Fatalf("reply = %+v", evs[2])
+	}
+}
+
+func TestStreamsReplies(t *testing.T) {
+	e := newEnv(t)
+	e.llm.script = func(llm.Request) llm.Response { return llm.Response{Text: "one two three four five six"} }
+	e.llm.delay = 40 * time.Millisecond
+	e.runner("node-a")
+	bot := e.agent("Bot", 0)
+	dm := e.room(core.RoomDM, bot)
+	var mu sync.Mutex
+	var frames []string
+	unsubscribe, _ := e.bus.Subscribe(bus.RoomStreamSubject(dm.ID), func(_ string, data []byte) {
+		mu.Lock()
+		frames = append(frames, string(data))
+		mu.Unlock()
+	})
+	defer unsubscribe()
+	time.Sleep(200 * time.Millisecond)
+
+	ask := e.say(dm, "count")
+	e.waitFor(dm, "the reply", func(evs []core.Event) bool { return len(evs) == 2 })
+	e.quiet(dm)
+	log := e.log(dm)
+	if len(log) != 3 {
+		t.Fatalf("want the question, the reply and its end: %s", dump(log))
+	}
+	reply, end := log[1], log[2]
+	if reply.SenderID != bot.ID || reply.Causation.CausedBy != ask.ID || reply.Text() != "one two three four five six" || reply.Stream != core.StreamFinal {
+		t.Fatalf("reply = %+v", reply)
+	}
+	if end.Type != core.EventEdit || end.Edits != reply.ID || end.Stream != core.StreamFinal || end.Text() != reply.Text() {
+		t.Fatalf("end = %+v", end)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	// The first words start the message; later ones arrive as frames.
+	if len(frames) < 3 || !strings.Contains(frames[0], `"stream":"streaming"`) || !strings.Contains(frames[len(frames)-1], "five") {
+		t.Fatalf("frames = %q", frames)
+	}
+}
+
+func TestAnswersAStreamWhenItEnds(t *testing.T) {
+	e := newEnv(t)
+	e.runner("node-a")
+	bot := e.agent("Bot", 0)
+	r := e.room(core.RoomGroup, bot)
+	time.Sleep(200 * time.Millisecond)
+	ctx := context.Background()
+
+	msg, _, err := e.srv.SendText(ctx, e.ada, r.ID, "@bot what is", "", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.srv.StreamText(ctx, e.ada, r.ID, msg.ID, "@bot what is 2+"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(400 * time.Millisecond)
+	if n := e.llm.count(); n != 0 {
+		t.Fatalf("the bot answered a message still streaming (%d calls)", n)
+	}
+	if err := e.srv.EndText(ctx, e.ada, r.ID, msg.ID, "@bot what is 2+2?"); err != nil {
+		t.Fatal(err)
+	}
+	evs := e.waitFor(r, "the reply", func(evs []core.Event) bool { return len(evs) == 2 })
+	if evs[1].SenderID != bot.ID || evs[1].Causation.CausedBy != msg.ID {
+		t.Fatalf("reply = %+v", evs[1])
+	}
+	if evs := e.quiet(r); len(evs) != 2 {
+		t.Fatalf("want one reply: %s", dump(evs))
+	}
+	if got := e.llm.last().Messages[0].Text; got != "Ada: @bot what is 2+2?" {
+		t.Errorf("transcript = %q", got)
+	}
+}
+
+func TestEndsStreamsLeftBehind(t *testing.T) {
+	e := newEnv(t)
+	bot := e.agent("Bot", 0)
+	r := e.room(core.RoomGroup, bot)
+	// A node wrote part of a reply and died.
+	msg, _, err := e.srv.SendText(context.Background(), bot, r.ID, "half a", "", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.runner("node-a")
+	evs := e.waitFor(r, "the stream to end", func(evs []core.Event) bool { return len(evs) == 1 })
+	if evs[0].ID != msg.ID || evs[0].Text() != "half a" {
+		t.Fatalf("message = %+v", evs[0])
+	}
+	if e.llm.count() != 0 {
+		t.Fatal("ending a stream called the model")
 	}
 }

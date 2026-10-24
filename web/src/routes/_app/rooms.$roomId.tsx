@@ -77,12 +77,15 @@ function Log({ roomId }: { roomId: string }) {
 
   const list = events.data ?? [];
   const first = list[0]?.seq;
+  // Edits are in the log for its cursor; the messages show their result.
+  const messages = list.filter((e) => e.type === "message");
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
+  // Also when a streaming message grows.
   useLayoutEffect(() => {
     const el = scroller.current;
     if (el && atBottom.current) el.scrollTop = el.scrollHeight;
-  }, [list.length]);
+  }, [list]);
 
   return (
     <>
@@ -110,9 +113,9 @@ function Log({ roomId }: { roomId: string }) {
           </button>
         )}
         {events.isError && <p className="muted">{events.error.message}</p>}
-        {loaded && list.length === 0 && <p className="muted">No messages yet. Say something.</p>}
-        {list.map((e, i) => (
-          <Message key={e.seq} event={e} sender={dir.byId.get(e.sender_id)} grouped={sameSpeaker(list[i - 1], e)} />
+        {loaded && messages.length === 0 && <p className="muted">No messages yet. Say something.</p>}
+        {messages.map((e, i) => (
+          <Message key={e.seq} event={e} sender={dir.byId.get(e.sender_id)} grouped={sameSpeaker(messages[i - 1], e)} />
         ))}
       </div>
       <Composer roomId={roomId} onSent={() => (atBottom.current = true)} />
@@ -132,9 +135,9 @@ function sameSpeaker(prev: Event | undefined, e: Event) {
 const time = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
 
 function Message({ event, sender, grouped }: { event: Event; sender?: Principal; grouped: boolean }) {
-  if (event.type !== "message") return null;
+  const streaming = event.stream === "streaming";
   return (
-    <article className={grouped ? "msg grouped" : "msg"}>
+    <article className={["msg", grouped && "grouped", streaming && "streaming"].filter(Boolean).join(" ")} aria-busy={streaming}>
       {!grouped && (
         <header>
           <strong>{sender?.display_name ?? "…"}</strong>
@@ -142,6 +145,7 @@ function Message({ event, sender, grouped }: { event: Event; sender?: Principal;
           <time dateTime={event.created_at}>{time.format(new Date(event.created_at))}</time>
         </header>
       )}
+      {streaming && event.parts.length === 0 && <p className="text muted">…</p>}
       {event.parts.map((p, i) =>
         p.kind === "text" ? (
           <p key={i} className="text">
@@ -152,6 +156,11 @@ function Message({ event, sender, grouped }: { event: Event; sender?: Principal;
             [{p.kind}]
           </p>
         ),
+      )}
+      {event.edited_at && (
+        <span className="edited muted" title={`Edited ${time.format(new Date(event.edited_at))}`}>
+          edited
+        </span>
       )}
     </article>
   );

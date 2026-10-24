@@ -20,6 +20,11 @@ type Bus interface {
 // RoomSubject is where a room announces new events.
 func RoomSubject(roomID string) string { return "room." + roomID }
 
+// RoomStreamSubject carries a room's streaming messages as they change.
+// Unlike RoomSubject it has a payload, the message as JSON, and a missed
+// frame is not caught up: the stream's final edit is in the log.
+func RoomStreamSubject(roomID string) string { return "room." + roomID + ".stream" }
+
 // RoomsSubject is where a principal hears that its set of rooms, or a
 // room's settings, changed.
 func RoomsSubject(principalID string) string { return "principal." + principalID + ".rooms" }

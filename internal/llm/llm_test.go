@@ -211,3 +211,103 @@ func TestUnknownProvider(t *testing.T) {
 		t.Fatal("want an error")
 	}
 }
+
+// recordStream serves one canned event stream and keeps the request body.
+func recordStream(t *testing.T, path, stream string) (*httptest.Server, *map[string]any) {
+	t.Helper()
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != path {
+			t.Errorf("path = %s, want %s", r.URL.Path, path)
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(stream))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &body
+}
+
+func TestAnthropicStreaming(t *testing.T) {
+	srv, body := recordStream(t, "/v1/messages", `event: message_start
+data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"usage":{"input_tokens":12,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Two plus"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" two is 4."}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"calc","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"x\": 4}"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":9}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`)
+	p, _ := New(Config{Provider: ProviderAnthropic, BaseURL: srv.URL, APIKey: "k", Model: "claude-test"})
+	req := transcript
+	var seen []string
+	req.OnText = func(text string) { seen = append(seen, text) }
+	got, err := p.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(seen, []string{"Two plus", "Two plus two is 4."}) {
+		t.Errorf("OnText saw %q", seen)
+	}
+	if got.Text != "Two plus two is 4." || got.InputTokens != 12 || got.OutputTokens != 9 ||
+		len(got.ToolCalls) != 1 || got.ToolCalls[0].Name != "calc" || string(got.ToolCalls[0].Input) != `{"x": 4}` {
+		t.Fatalf("got %+v", got)
+	}
+	if (*body)["stream"] != true {
+		t.Errorf("stream = %v", (*body)["stream"])
+	}
+}
+
+func TestOpenAIStreaming(t *testing.T) {
+	srv, body := recordStream(t, "/chat/completions", `data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"llama","choices":[{"index":0,"delta":{"role":"assistant","content":"Two plus"}}]}
+
+data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"llama","choices":[{"index":0,"delta":{"content":" two is 4. "}}]}
+
+data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"llama","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"c1","object":"chat.completion.chunk","created":1,"model":"llama","choices":[],"usage":{"prompt_tokens":20,"completion_tokens":6,"total_tokens":26}}
+
+data: [DONE]
+
+`)
+	p, _ := New(Config{Provider: ProviderOpenAI, BaseURL: srv.URL, Model: "llama"})
+	req := transcript
+	var seen []string
+	req.OnText = func(text string) { seen = append(seen, text) }
+	got, err := p.Complete(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(seen, []string{"Two plus", "Two plus two is 4. "}) {
+		t.Errorf("OnText saw %q", seen)
+	}
+	if !reflect.DeepEqual(got, Response{Text: "Two plus two is 4.", InputTokens: 20, OutputTokens: 6}) {
+		t.Fatalf("got %+v", got)
+	}
+	b := *body
+	if b["stream"] != true || b["stream_options"].(map[string]any)["include_usage"] != true {
+		t.Errorf("body = %v", b)
+	}
+}

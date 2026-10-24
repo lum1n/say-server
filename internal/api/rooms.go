@@ -232,7 +232,15 @@ func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg
 	if len(idempotencyKey) > 200 {
 		return core.Event{}, false, errorf(http.StatusBadRequest, "bad_request", "idempotency key is longer than 200 bytes")
 	}
-	parts, err := msg.toParts()
+	stream := msg.Stream
+	switch stream {
+	case "":
+		stream = core.StreamFinal
+	case core.StreamFinal, core.StreamStreaming:
+	default:
+		return core.Event{}, false, errorf(http.StatusUnprocessableEntity, "invalid", "stream is \"streaming\" or \"final\"")
+	}
+	parts, err := toParts(msg.Parts, stream == core.StreamStreaming)
 	if err != nil {
 		return core.Event{}, false, errorf(http.StatusUnprocessableEntity, "invalid", "%v", err)
 	}
@@ -270,7 +278,7 @@ func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg
 		SenderID:  me.ID,
 		Causation: causation,
 		Parts:     parts,
-		Stream:    core.StreamFinal,
+		Stream:    stream,
 	}, store.AppendOptions{
 		IdempotencyKey: idempotencyKey,
 		Automated:      automated,
@@ -286,6 +294,85 @@ func (s *Server) send(ctx context.Context, me core.Principal, roomID string, msg
 	}
 	s.notify(ctx, roomID)
 	return e, e.ID == id, nil
+}
+
+func (s *Server) patchMessage(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	var body editMessage
+	if err := readJSON(w, r, &body); err != nil {
+		writeError(w, err)
+		return
+	}
+	e, err := s.edit(r.Context(), me, r.PathValue("id"), r.PathValue("event_id"), body)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toEvent(e))
+}
+
+// edit changes me's message eventID and returns it as it now is. While
+// the message streams, an edit that does not end the stream replaces its
+// parts in place and is only announced as a stream frame; every other
+// edit is an edit event in the log (docs/adr/0010-streaming-and-edits.md).
+func (s *Server) edit(ctx context.Context, me core.Principal, roomID, eventID string, body editMessage) (core.Event, error) {
+	m, err := s.member(ctx, me, roomID)
+	if err != nil {
+		return core.Event{}, err
+	}
+	if m.Role == core.RoleObserver {
+		return core.Event{}, errorf(http.StatusForbidden, "forbidden", "observers cannot send")
+	}
+	if body.Stream != "" && body.Stream != core.StreamStreaming && body.Stream != core.StreamFinal {
+		return core.Event{}, errorf(http.StatusUnprocessableEntity, "invalid", "stream is \"streaming\" or \"final\"")
+	}
+	var parts []core.Part
+	if body.Parts != nil {
+		if parts, err = toParts(*body.Parts, body.Stream == core.StreamStreaming); err != nil {
+			return core.Event{}, errorf(http.StatusUnprocessableEntity, "invalid", "%v", err)
+		}
+	}
+	msg, err := s.store.GetEvent(ctx, eventID)
+	if errors.Is(err, store.ErrNotFound) || err == nil && msg.RoomID != roomID {
+		return core.Event{}, errorf(http.StatusNotFound, "not_found", "no such message")
+	}
+	if err != nil {
+		return core.Event{}, err
+	}
+	if msg.Type != core.EventMessage || msg.SenderID != me.ID {
+		return core.Event{}, errorf(http.StatusForbidden, "forbidden", "you can only edit your own messages")
+	}
+	errFinal := errorf(http.StatusConflict, "not_streaming", "the message is final")
+	if msg.Stream == core.StreamStreaming && body.Stream != core.StreamFinal {
+		if body.Parts == nil {
+			return core.Event{}, errorf(http.StatusUnprocessableEntity, "invalid", "a streaming update needs parts")
+		}
+		err := s.store.UpdateStreaming(ctx, eventID, me.ID, parts)
+		if errors.Is(err, store.ErrNotStreaming) {
+			return core.Event{}, errFinal
+		}
+		if err != nil {
+			return core.Event{}, err
+		}
+		msg.Parts = parts
+		s.publishStream(ctx, msg)
+		return msg, nil
+	}
+	if msg.Stream != core.StreamStreaming && body.Stream == core.StreamStreaming {
+		return core.Event{}, errFinal
+	}
+	if msg.Stream != core.StreamStreaming && body.Parts == nil {
+		return core.Event{}, errorf(http.StatusUnprocessableEntity, "invalid", "an edit of a final message needs parts")
+	}
+	_, msg, err = s.store.AppendEdit(ctx, core.Event{RoomID: roomID, SenderID: me.ID, Edits: eventID, Parts: parts})
+	switch {
+	case errors.Is(err, store.ErrNotEditable):
+		// The stream ended between the read and the edit.
+		return core.Event{}, errFinal
+	case err != nil:
+		return core.Event{}, roomErr(err)
+	}
+	s.notify(ctx, roomID)
+	return msg, nil
 }
 
 // member returns me's membership of room. Rooms me is not in look the same

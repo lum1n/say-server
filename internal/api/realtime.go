@@ -33,8 +33,22 @@ func (s *Server) notifyRooms(ctx context.Context, principalID string) {
 	s.publish(ctx, bus.RoomsSubject(principalID))
 }
 
+// publishStream announces a streaming message's new parts.
+func (s *Server) publishStream(ctx context.Context, msg core.Event) {
+	data, err := json.Marshal(toEvent(msg))
+	if err != nil {
+		slog.Warn("stream frame failed", "err", err)
+		return
+	}
+	s.publishData(ctx, bus.RoomStreamSubject(msg.RoomID), data)
+}
+
 func (s *Server) publish(ctx context.Context, subject string) {
-	if err := s.bus.Publish(context.WithoutCancel(ctx), subject, nil); err != nil {
+	s.publishData(ctx, subject, nil)
+}
+
+func (s *Server) publishData(ctx context.Context, subject string, data []byte) {
+	if err := s.bus.Publish(context.WithoutCancel(ctx), subject, data); err != nil {
 		slog.Warn("bus publish failed", "subject", subject, "err", err)
 	}
 }
@@ -101,7 +115,8 @@ func (s *Server) poll(ctx context.Context, roomID string, cursor int64, limit in
 
 // stream serves a room's events as Server-Sent Events. Each event's SSE id
 // is its seq, so an EventSource resumes from Last-Event-ID by itself;
-// ?after=N sets the starting cursor explicitly.
+// ?after=N sets the starting cursor explicitly. Streaming messages' changes
+// come as "stream" events without an id.
 func (s *Server) stream(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	id := r.PathValue("id")
 	if _, err := s.member(r.Context(), me, id); err != nil {
@@ -152,6 +167,31 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, me core.Principa
 			}
 		}
 	}()
+	frames := make(chan []byte, streamBuffer)
+	unsubscribe, err := s.bus.Subscribe(bus.RoomStreamSubject(id), func(_ string, data []byte) {
+		select {
+		case frames <- data:
+		default: // dropped; the stream's final edit is in the log
+		}
+	})
+	if err != nil {
+		slog.Error("event stream: subscribe failed", "room", id, "err", err)
+		return
+	}
+	defer unsubscribe()
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case data := <-frames:
+				if write(func() error { _, err := fmt.Fprintf(w, "event: stream\ndata: %s\n\n", data); return err }) != nil {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
 	err = s.follow(ctx, id, cursor, func(e core.Event) error {
 		data, err := json.Marshal(toEvent(e))
 		if err != nil {
@@ -182,13 +222,19 @@ type envelope struct {
 // is closed; the client then reconnects and resumes from its cursors.
 const outboundBuffer = 256
 
+// streamBuffer is how many stream frames an SSE client may fall behind
+// before frames are dropped. Dropping one loses nothing for good: the next
+// frame and the final edit carry the whole message.
+const streamBuffer = 32
+
 // maxSubscriptions bounds the rooms one WebSocket follows.
 const maxSubscriptions = 1000
 
 // ws serves the client and connector WebSocket. Requests are envelopes
 // with a client-chosen id; the reply echoes the id and type with a status.
-// Events arrive as pushes of type "event" without a status, and a push of
-// type "rooms" says the caller's room list changed.
+// Events arrive as pushes of type "event" without a status, a streaming
+// message's changes as pushes of type "stream", and a push of type "rooms"
+// says the caller's room list changed.
 func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	// Accept checks that the Origin matches the Host, so another site cannot
 	// open a socket with the user's cookie.
@@ -297,6 +343,19 @@ func (c *wsConn) push(env envelope) error {
 	}
 }
 
+// pushFrame queues a stream frame unless the client is falling behind.
+// Frames are dropped rather than counted against the client: the next one
+// and the final edit carry the whole message.
+func (c *wsConn) pushFrame(env envelope) {
+	if len(c.out) > cap(c.out)/2 {
+		return
+	}
+	select {
+	case c.out <- env:
+	default:
+	}
+}
+
 // fail records why the connection ends and stops it.
 func (c *wsConn) fail(err error) {
 	c.mu.Lock()
@@ -396,8 +455,18 @@ func (c *wsConn) subscribe(ctx context.Context, roomID string, cursor int64) err
 		return errorf(http.StatusUnprocessableEntity, "too_many", "at most %d subscriptions per connection", maxSubscriptions)
 	}
 	sctx, stop := context.WithCancel(ctx)
+	unsubscribe, err := c.s.bus.Subscribe(bus.RoomStreamSubject(roomID), func(_ string, data []byte) {
+		if sctx.Err() == nil {
+			c.pushFrame(envelope{ID: core.NewID(), Type: "stream", Payload: data})
+		}
+	})
+	if err != nil {
+		stop()
+		return err
+	}
 	c.subs[roomID] = stop
 	go func() {
+		defer unsubscribe()
 		err := c.s.follow(sctx, roomID, cursor, func(e core.Event) error {
 			data, err := json.Marshal(toEvent(e))
 			if err != nil {

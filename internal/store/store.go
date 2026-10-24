@@ -23,6 +23,12 @@ var (
 	ErrNotFound      = errors.New("store: not found")
 	ErrSetupDone     = errors.New("store: setup is already done")
 	ErrUsernameTaken = errors.New("store: username is taken")
+	// ErrNotEditable refuses an edit of an event that is not the editor's
+	// own message, or an edit of a final message that changes nothing.
+	ErrNotEditable = errors.New("store: the event cannot be edited")
+	// ErrNotStreaming refuses a streaming update of a message that is
+	// final, someone else's or unknown.
+	ErrNotStreaming = errors.New("store: the message is not streaming")
 )
 
 // AppendOptions are the conditions of an AppendEvent.
@@ -116,6 +122,22 @@ type Store interface {
 	// hold across the nodes of a cluster; a spent one is a *BudgetError.
 	AppendEvent(ctx context.Context, e core.Event, opts AppendOptions) (core.Event, error)
 	GetEvent(ctx context.Context, id string) (core.Event, error)
+
+	// UpdateStreaming replaces the parts of senderID's message eventID in
+	// place, without a new event, while the message is still streaming;
+	// otherwise it returns ErrNotStreaming.
+	UpdateStreaming(ctx context.Context, eventID, senderID string, parts []core.Part) error
+	// AppendEdit appends edit e, which changes message e.Edits in
+	// e.RoomID, and updates the message to the result in one transaction.
+	// A nil e.Parts keeps the message's parts. An edit of a streaming
+	// message ends its stream; an edit of a final message must have parts
+	// and sets its EditedAt. Only the message's sender may edit it, else
+	// ErrNotEditable; an unknown message is ErrNotFound. It returns the
+	// edit as stored and the message as it now is.
+	AppendEdit(ctx context.Context, e core.Event) (edit, message core.Event, err error)
+	// StreamingFrom returns senderID's messages that are still streaming,
+	// oldest first.
+	StreamingFrom(ctx context.Context, senderID string) ([]core.Event, error)
 
 	// EventsAfter returns up to limit events of room with seq > cursor, in
 	// seq order.

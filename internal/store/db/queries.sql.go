@@ -351,7 +351,7 @@ func (q *Queries) DeleteToken(ctx context.Context, hash string) error {
 }
 
 const eventByIdempotencyKey = `-- name: EventByIdempotencyKey :one
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events
 WHERE room_id = $1 AND sender_id = $2 AND idempotency_key = $3
 `
 
@@ -377,12 +377,14 @@ func (q *Queries) EventByIdempotencyKey(ctx context.Context, arg EventByIdempote
 		&i.IdempotencyKey,
 		&i.CreatedAt,
 		&i.Automated,
+		&i.Edits,
+		&i.EditedAt,
 	)
 	return i, err
 }
 
 const eventsAfter = `-- name: EventsAfter :many
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events
 WHERE room_id = $1 AND seq > $2
 ORDER BY seq
 LIMIT $3
@@ -416,6 +418,8 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 			&i.IdempotencyKey,
 			&i.CreatedAt,
 			&i.Automated,
+			&i.Edits,
+			&i.EditedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -431,7 +435,7 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 }
 
 const eventsBefore = `-- name: EventsBefore :many
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events
 WHERE room_id = $1 AND seq < $2
 ORDER BY seq DESC
 LIMIT $3
@@ -465,6 +469,8 @@ func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]E
 			&i.IdempotencyKey,
 			&i.CreatedAt,
 			&i.Automated,
+			&i.Edits,
+			&i.EditedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -506,7 +512,7 @@ func (q *Queries) GetBuiltinAgent(ctx context.Context, principalID string) (Buil
 }
 
 const getEvent = `-- name: GetEvent :one
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated FROM events WHERE id = $1
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events WHERE id = $1
 `
 
 func (q *Queries) GetEvent(ctx context.Context, id string) (Event, error) {
@@ -525,6 +531,8 @@ func (q *Queries) GetEvent(ctx context.Context, id string) (Event, error) {
 		&i.IdempotencyKey,
 		&i.CreatedAt,
 		&i.Automated,
+		&i.Edits,
+		&i.EditedAt,
 	)
 	return i, err
 }
@@ -591,8 +599,8 @@ func (q *Queries) GetRoom(ctx context.Context, id string) (Room, error) {
 
 const insertEvent = `-- name: InsertEvent :exec
 INSERT INTO events (id, room_id, seq, type, sender_id, caused_by, hop_count,
-                    parts, stream, idempotency_key, automated, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    parts, stream, idempotency_key, automated, edits, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 `
 
 type InsertEventParams struct {
@@ -607,6 +615,7 @@ type InsertEventParams struct {
 	Stream         string
 	IdempotencyKey string
 	Automated      int32
+	Edits          string
 	CreatedAt      int64
 }
 
@@ -623,6 +632,7 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 		arg.Stream,
 		arg.IdempotencyKey,
 		arg.Automated,
+		arg.Edits,
 		arg.CreatedAt,
 	)
 	return err
@@ -842,6 +852,27 @@ func (q *Queries) ReleaseLease(ctx context.Context, arg ReleaseLeaseParams) erro
 	return err
 }
 
+const replaceMessage = `-- name: ReplaceMessage :exec
+UPDATE events SET parts = $2, stream = $3, edited_at = $4 WHERE id = $1
+`
+
+type ReplaceMessageParams struct {
+	ID       string
+	Parts    string
+	Stream   string
+	EditedAt int64
+}
+
+func (q *Queries) ReplaceMessage(ctx context.Context, arg ReplaceMessageParams) error {
+	_, err := q.db.ExecContext(ctx, replaceMessage,
+		arg.ID,
+		arg.Parts,
+		arg.Stream,
+		arg.EditedAt,
+	)
+	return err
+}
+
 const roomsFor = `-- name: RoomsFor :many
 SELECT r.id, r.kind, r.name, r.last_seq, r.created_at, r.agents_paused, r.max_hop_count, r.agent_turn_limit, r.agent_turn_window, r.agent_rate_limit
 FROM rooms r JOIN memberships m ON m.room_id = r.id
@@ -975,6 +1006,49 @@ func (q *Queries) SetupDone(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const streamingFrom = `-- name: StreamingFrom :many
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events WHERE sender_id = $1 AND stream = 'streaming'
+ORDER BY created_at, id
+`
+
+func (q *Queries) StreamingFrom(ctx context.Context, senderID string) ([]Event, error) {
+	rows, err := q.db.QueryContext(ctx, streamingFrom, senderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Event
+	for rows.Next() {
+		var i Event
+		if err := rows.Scan(
+			&i.ID,
+			&i.RoomID,
+			&i.Seq,
+			&i.Type,
+			&i.SenderID,
+			&i.CausedBy,
+			&i.HopCount,
+			&i.Parts,
+			&i.Stream,
+			&i.IdempotencyKey,
+			&i.CreatedAt,
+			&i.Automated,
+			&i.Edits,
+			&i.EditedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateBuiltinAgent = `-- name: UpdateBuiltinAgent :execrows
 UPDATE builtin_agents
 SET provider = $2, base_url = $3, model = $4, api_key = $5, system_prompt = $6,
@@ -1011,6 +1085,27 @@ func (q *Queries) UpdateBuiltinAgent(ctx context.Context, arg UpdateBuiltinAgent
 		arg.UpdatedAt,
 		arg.McpServers,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const updateStreaming = `-- name: UpdateStreaming :execrows
+UPDATE events SET parts = $3
+WHERE id = $1 AND sender_id = $2 AND type = 'message' AND stream = 'streaming'
+`
+
+type UpdateStreamingParams struct {
+	ID       string
+	SenderID string
+	Parts    string
+}
+
+// Only a message that is still streaming changes in place; the stream
+// condition makes a late update after the final edit a no-op.
+func (q *Queries) UpdateStreaming(ctx context.Context, arg UpdateStreamingParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateStreaming, arg.ID, arg.SenderID, arg.Parts)
 	if err != nil {
 		return 0, err
 	}

@@ -30,14 +30,43 @@ const (
 )
 
 // SendText is how built-in agents write: the same send path as REST, the
-// WebSocket and MCP, so every room limit applies.
-func (s *Server) SendText(ctx context.Context, me core.Principal, roomID, text, causedBy, idempotencyKey string) (core.Event, error) {
-	data, err := json.Marshal(map[string]string{"text": text})
-	if err != nil {
-		return core.Event{}, err
+// WebSocket and MCP, so every room limit applies. A streaming message is
+// then changed with StreamText and ended with EndText. created is false
+// when idempotencyKey returned an earlier message.
+func (s *Server) SendText(ctx context.Context, me core.Principal, roomID, text, causedBy, idempotencyKey string, streaming bool) (e core.Event, created bool, err error) {
+	msg := sendMessage{Parts: textParts(text), CausedBy: causedBy, Stream: core.StreamFinal}
+	if streaming {
+		msg.Stream = core.StreamStreaming
 	}
-	e, _, err := s.send(ctx, me, roomID, sendMessage{Parts: []wirePart{{Kind: core.PartText, Data: data}}, CausedBy: causedBy}, idempotencyKey)
-	return e, err
+	return s.send(ctx, me, roomID, msg, idempotencyKey)
+}
+
+// StreamText replaces the text of me's streaming message eventID.
+func (s *Server) StreamText(ctx context.Context, me core.Principal, roomID, eventID, text string) error {
+	parts := textParts(text)
+	_, err := s.edit(ctx, me, roomID, eventID, editMessage{Parts: &parts, Stream: core.StreamStreaming})
+	return err
+}
+
+// EndText ends the stream of me's message eventID with text, or with what
+// it streamed when text is empty.
+func (s *Server) EndText(ctx context.Context, me core.Principal, roomID, eventID, text string) error {
+	body := editMessage{Stream: core.StreamFinal}
+	if text != "" {
+		parts := textParts(text)
+		body.Parts = &parts
+	}
+	_, err := s.edit(ctx, me, roomID, eventID, body)
+	return err
+}
+
+// textParts is a message of one text part, or none for empty text.
+func textParts(text string) []wirePart {
+	if text == "" {
+		return []wirePart{}
+	}
+	data, _ := json.Marshal(map[string]string{"text": text})
+	return []wirePart{{Kind: core.PartText, Data: data}}
 }
 
 type wireBuiltinAgent struct {
