@@ -22,7 +22,7 @@ sign-in, but no chat UI yet. See the milestones below.
 ```sh
 curl -fsSL get.<name>.sh | sh && say
 # or
-docker run -p 8080:8080 -v data:/data say   # after `make image`
+docker run -p 7290:7290 -v data:/data say   # after `make image`
 ```
 
 Either opens a browser setup wizard that creates the admin account.
@@ -32,7 +32,7 @@ Either opens a browser setup wizard that creates the admin account.
 On first start the server logs a link with a one-time setup code:
 
 ```
-INFO open the setup wizard to create the admin url="http://localhost:8080/setup?code=…"
+INFO open the setup wizard to create the admin url="http://localhost:7290/setup?code=…"
 ```
 
 Open it to create the admin. The code means that whoever reaches a fresh
@@ -63,7 +63,7 @@ Requires Go and pnpm.
 ```sh
 make build   # builds web/ and widget/, then the Go binary into bin/say
 make test    # go vet, Go tests, TypeScript typecheck
-bin/say      # listens on :8080, stores data in data/say.db
+bin/say      # listens on :7290, stores data in data/say.db
 ```
 
 The store tests run against SQLite, and also against Postgres when
@@ -87,7 +87,7 @@ any cluster you start yourself, as long as every node has the same
 `SAY_SETUP_CODE`:
 
 ```sh
-SAY_CLUSTER_NODES=http://a:8080,http://b:8080,http://c:8080 SAY_SETUP_CODE=… \
+SAY_CLUSTER_NODES=http://a:7290,http://b:7290,http://c:7290 SAY_SETUP_CODE=… \
   go test -count=1 ./test/cluster
 ```
 
@@ -98,8 +98,8 @@ expires; people sign in through the web app instead):
 bin/say principal add --name Bot --kind agent   # prints the principal id and a token
 TOKEN=say_…
 curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"kind":"group","name":"general"}' localhost:8080/api/v1/rooms
-curl -N -H "Authorization: Bearer $TOKEN" localhost:8080/api/v1/rooms/<room id>/events/stream
+  -d '{"kind":"group","name":"general"}' localhost:7290/api/v1/rooms
+curl -N -H "Authorization: Bearer $TOKEN" localhost:7290/api/v1/rooms/<room id>/events/stream
 ```
 
 The API is described in `protocol/openapi.yaml`.

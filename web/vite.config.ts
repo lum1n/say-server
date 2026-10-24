@@ -7,8 +7,8 @@ import { defineConfig } from "vite";
 export default defineConfig({
   server: {
     proxy: {
-      "/api": { target: "http://localhost:8080", ws: true },
-      "/widget.js": "http://localhost:8080",
+      "/api": { target: "http://localhost:7290", ws: true },
+      "/widget.js": "http://localhost:7290",
     },
   },
   plugins: [tanstackStart({ spa: { enabled: true } }), viteReact()],

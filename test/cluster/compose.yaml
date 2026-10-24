@@ -1,5 +1,5 @@
 # Three say nodes on one Postgres, for the cluster test (see cluster_test.go).
-# Nodes are reachable on localhost:8081–8083. Build the image first:
+# Nodes are reachable on localhost:7291–7293. Build the image first:
 #
 #	docker build -t say:cluster-test .
 
@@ -29,10 +29,10 @@ services:
 
   say1:
     <<: *node
-    ports: ["8081:8080"]
+    ports: ["7291:7290"]
   say2:
     <<: *node
-    ports: ["8082:8080"]
+    ports: ["7292:7290"]
   say3:
     <<: *node
-    ports: ["8083:8080"]
+    ports: ["7293:7290"]

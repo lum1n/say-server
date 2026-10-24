@@ -1,5 +1,5 @@
 # docker build -t say .
-# docker run -p 8080:8080 -v data:/data say
+# docker run -p 7290:7290 -v data:/data say
 
 FROM node:24-bookworm AS web
 WORKDIR /src
@@ -33,7 +33,7 @@ COPY --from=go /say /say
 # A named volume copies this directory's owner, so nonroot can write to it.
 COPY --from=go --chown=nonroot:nonroot /data /data
 ENV SAY_DB=/data/say.db
-EXPOSE 8080 6222
+EXPOSE 7290 6222
 VOLUME /data
 ENTRYPOINT ["/say"]
 CMD ["serve"]

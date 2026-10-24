@@ -34,7 +34,7 @@ CLUSTER := docker compose -f test/cluster/compose.yaml -p say-cluster-test
 cluster-test:
 	docker build -t say:cluster-test .
 	$(CLUSTER) up -d
-	SAY_CLUSTER_NODES=http://localhost:8081,http://localhost:8082,http://localhost:8083 \
+	SAY_CLUSTER_NODES=http://localhost:7291,http://localhost:7292,http://localhost:7293 \
 	SAY_SETUP_CODE=cluster-test go test -count=1 -v ./test/cluster \
 	|| { $(CLUSTER) logs; $(CLUSTER) down -v; exit 1; }
 	$(CLUSTER) down -v

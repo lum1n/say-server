@@ -55,7 +55,7 @@ func main() {
 
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	addr := fs.String("addr", envOr("SAY_ADDR", ":8080"), "listen address")
+	addr := fs.String("addr", envOr("SAY_ADDR", ":7290"), "listen address")
 	dsn := fs.String("db", envOr("SAY_DB", "data/say.db"), "SQLite file path, or a postgres:// URL for cluster mode")
 	peers := fs.String("peers", os.Getenv("SAY_PEERS"), "comma-separated host:port cluster addresses of other nodes; enables cluster mode")
 	clusterAddr := fs.String("cluster-addr", envOr("SAY_CLUSTER_ADDR", ":6222"), "listen address for other nodes in cluster mode")
