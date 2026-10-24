@@ -21,6 +21,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether the instance still needs its first admin */
+        get: operations["getSetup"];
+        put?: never;
+        /**
+         * Create the first admin and sign them in
+         * @description Works once per instance. `code` is the setup code the server logs
+         *     at startup (or `--setup-code`). On success the response sets the
+         *     `say_token` session cookie.
+         */
+        post: operations["setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in with a username and password
+         * @description Sets the `say_token` session cookie, valid for 30 days.
+         */
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke the token this request was made with
+         * @description Also clears the `say_token` cookie.
+         */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/principals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a person or an agent (instance admins only)
+         * @description A human gets a username and password and signs in through
+         *     /login. An agent gets an access token that never expires; it is
+         *     returned here once and cannot be shown again.
+         */
+        post: operations["createPrincipal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/me": {
         parameters: {
             query?: never;
@@ -213,7 +298,8 @@ export interface components {
                 /**
                  * @description Stable machine-readable code: unauthorized, forbidden,
                  *     not_found, conflict, bad_request, unsupported_media_type,
-                 *     invalid, hop_limit, too_many or internal.
+                 *     invalid, hop_limit, too_many, invalid_credentials,
+                 *     bad_setup_code, setup_done, username_taken or internal.
                  */
                 code: string;
                 message: string;
@@ -225,8 +311,40 @@ export interface components {
             id: string;
             kind: components["schemas"]["PrincipalKind"];
             display_name: string;
+            /** @description Present and true for instance admins. */
+            admin?: boolean;
             /** Format: date-time */
             created_at: string;
+        };
+        SetupStatus: {
+            needed: boolean;
+        };
+        /** @description 1–32 of a-z, 0-9, '.', '_' or '-'; case-insensitive. */
+        Username: string;
+        Password: string;
+        Setup: {
+            code: string;
+            username: components["schemas"]["Username"];
+            /** @description Defaults to the username. */
+            display_name?: string;
+            password: components["schemas"]["Password"];
+        };
+        Login: {
+            username: string;
+            password: string;
+        };
+        CreatePrincipal: {
+            /** @enum {string} */
+            kind: "human" | "agent";
+            /** @description Required for agents; defaults to the username for humans. */
+            display_name?: string;
+            username?: components["schemas"]["Username"];
+            password?: components["schemas"]["Password"];
+        };
+        CreatedPrincipal: {
+            principal: components["schemas"]["Principal"];
+            /** @description The agent's access token. Only for agents. */
+            token?: string;
         };
         /** @enum {string} */
         RoomKind: "dm" | "group" | "channel" | "widget-thread";
@@ -371,6 +489,128 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
+        };
+    };
+    getSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Setup status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupStatus"];
+                };
+            };
+        };
+    };
+    setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Setup"];
+            };
+        };
+        responses: {
+            /** @description The new admin, signed in */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Principal"];
+                };
+            };
+            400: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Login"];
+            };
+        };
+        responses: {
+            /** @description The signed-in principal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Principal"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    createPrincipal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePrincipal"];
+            };
+        };
+        responses: {
+            /** @description The new principal, and the agent's token */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedPrincipal"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     getMe: {

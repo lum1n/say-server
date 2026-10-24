@@ -53,7 +53,7 @@ func (e *env) user(name string, kind core.PrincipalKind) (core.Principal, string
 	if err := e.store.CreatePrincipal(ctx, p); err != nil {
 		e.t.Fatal(err)
 	}
-	tok, err := e.store.CreateToken(ctx, p.ID, "test")
+	tok, err := e.store.CreateToken(ctx, p.ID, "test", time.Time{})
 	if err != nil {
 		e.t.Fatal(err)
 	}

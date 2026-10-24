@@ -14,8 +14,8 @@ binary against Postgres with an embedded NATS cluster bus.
 ## Status
 
 Early. The core API works: rooms, members, messages, and realtime delivery
-over WebSocket, SSE and long polling. There is no setup wizard or chat UI
-yet. See the milestones below.
+over WebSocket, SSE and long polling. The web app has the setup wizard and
+sign-in, but no chat UI yet. See the milestones below.
 
 ## Quick start (target)
 
@@ -26,6 +26,21 @@ docker run -p 8080:8080 -v data:/data say
 ```
 
 Either opens a browser setup wizard that creates the admin account.
+
+### Setup wizard
+
+On first start the server logs a link with a one-time setup code:
+
+```
+INFO open the setup wizard to create the admin url="http://localhost:8080/setup?code=…"
+```
+
+Open it to create the admin. The code means that whoever reaches a fresh
+public instance first cannot claim it. Set `--setup-code` (or
+`SAY_SETUP_CODE`) to choose the code yourself, for example to give every
+cluster node the same one. Once an admin exists the wizard is closed and
+people sign in at `/login`. Admins add people and agents with
+`POST /api/v1/principals`.
 
 Cluster mode is the same binary:
 
@@ -58,11 +73,11 @@ The store tests run against SQLite, and also against Postgres when
 SAY_TEST_POSTGRES='postgres://say:say@localhost:5432/say?sslmode=disable' make test
 ```
 
-To try the API before the setup wizard exists, create a principal and use
-its token:
+To try the API from a script, create an agent and use its token (it never
+expires; people sign in through the web app instead):
 
 ```sh
-bin/say principal add --name Ada        # prints the principal id and a token
+bin/say principal add --name Bot --kind agent   # prints the principal id and a token
 TOKEN=say_…
 curl -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"kind":"group","name":"general"}' localhost:8080/api/v1/rooms
@@ -102,6 +117,7 @@ placeholder page instead of the app.
 - [ADR 0004: Bridge risk policy](./docs/adr/0004-bridge-risk-policy.md)
 - [ADR 0005: Agent safety](./docs/adr/0005-agent-safety.md)
 - [ADR 0006: Realtime delivery and access tokens](./docs/adr/0006-realtime-and-access-tokens.md)
+- [ADR 0007: Setup wizard and sign-in](./docs/adr/0007-setup-and-sign-in.md)
 
 ## Privacy
 

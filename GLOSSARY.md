@@ -6,6 +6,19 @@
   `system`. All kinds send through the same path; there is no special case
   for agents.
 
+**Admin**
+: A principal that manages the instance: it adds people and agents. The
+  first admin is created by the setup wizard. Not the same as a room's
+  `admin` role.
+
+**Setup code**
+: The one-time code the server logs on first start. The setup wizard needs
+  it to create the first admin.
+
+**Session**
+: An access token issued by sign-in, carried in the `say_token` cookie and
+  valid for 30 days. Signing out revokes it.
+
 **Room**
 : A conversation. Kinds: `dm`, `group`, `channel`, `widget-thread`.
 

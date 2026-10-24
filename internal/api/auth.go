@@ -27,13 +27,8 @@ func (s *Server) authed(h func(w http.ResponseWriter, r *http.Request, me core.P
 }
 
 func (s *Server) authenticate(r *http.Request) (core.Principal, error) {
-	secret, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok {
-		if c, err := r.Cookie(TokenCookie); err == nil {
-			secret = c.Value
-		}
-	}
-	if secret = strings.TrimSpace(secret); secret == "" {
+	secret := requestToken(r)
+	if secret == "" {
 		return core.Principal{}, errUnauthorized
 	}
 	me, err := s.store.PrincipalByToken(r.Context(), secret)
@@ -41,4 +36,16 @@ func (s *Server) authenticate(r *http.Request) (core.Principal, error) {
 		return core.Principal{}, errUnauthorized
 	}
 	return me, err
+}
+
+// requestToken returns the secret from the Authorization header, or else
+// from the token cookie.
+func requestToken(r *http.Request) string {
+	secret, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		if c, err := r.Cookie(TokenCookie); err == nil {
+			secret = c.Value
+		}
+	}
+	return strings.TrimSpace(secret)
 }

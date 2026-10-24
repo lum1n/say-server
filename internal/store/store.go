@@ -13,21 +13,49 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/vegard/say-v2/internal/core"
 )
 
-var ErrNotFound = errors.New("store: not found")
+var (
+	ErrNotFound      = errors.New("store: not found")
+	ErrSetupDone     = errors.New("store: setup is already done")
+	ErrUsernameTaken = errors.New("store: username is taken")
+)
+
+// Login is a username and password hash that signs a human principal in.
+type Login struct {
+	PrincipalID  string
+	Username     string
+	PasswordHash string
+}
 
 type Store interface {
 	CreatePrincipal(ctx context.Context, p core.Principal) error
 	GetPrincipal(ctx context.Context, id string) (core.Principal, error)
 
+	// CreateUser writes a principal and its login in one transaction. It
+	// returns ErrUsernameTaken if another login has l.Username.
+	// l.PrincipalID is ignored.
+	CreateUser(ctx context.Context, p core.Principal, l Login) error
+	// LoginByUsername returns ErrNotFound for an unknown username.
+	LoginByUsername(ctx context.Context, username string) (Login, error)
+
+	// Setup creates the instance's first admin, once. It returns
+	// ErrSetupDone if setup has already been done, also by another node.
+	Setup(ctx context.Context, admin core.Principal, l Login) error
+	SetupDone(ctx context.Context) (bool, error)
+
 	// CreateToken issues a new access token for principalID and returns its
 	// secret. Only a hash of the secret is stored, so it cannot be shown
-	// again. PrincipalByToken returns ErrNotFound for an unknown secret.
-	CreateToken(ctx context.Context, principalID, name string) (secret string, err error)
+	// again. A zero expires never expires. PrincipalByToken returns
+	// ErrNotFound for an unknown, expired or revoked secret.
+	CreateToken(ctx context.Context, principalID, name string, expires time.Time) (secret string, err error)
 	PrincipalByToken(ctx context.Context, secret string) (core.Principal, error)
+	// RevokeToken deletes the token; revoking an unknown secret is not an
+	// error.
+	RevokeToken(ctx context.Context, secret string) error
 
 	// CreateRoom writes the room and its owner's membership in one
 	// transaction.

@@ -18,6 +18,18 @@ type Event struct {
 	CreatedAt      int64
 }
 
+type Instance struct {
+	Key   string
+	Value string
+}
+
+type Login struct {
+	PrincipalID  string
+	Username     string
+	PasswordHash string
+	CreatedAt    int64
+}
+
 type Membership struct {
 	RoomID      string
 	PrincipalID string
@@ -37,6 +49,7 @@ type Principal struct {
 	Kind        string
 	DisplayName string
 	CreatedAt   int64
+	Admin       int32
 }
 
 type Room struct {
@@ -52,4 +65,5 @@ type Token struct {
 	PrincipalID string
 	Name        string
 	CreatedAt   int64
+	ExpiresAt   int64
 }

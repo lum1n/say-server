@@ -10,9 +10,11 @@ info:
     envelope defined in envelope.schema.json. This file is the source of
     truth for sdk/ts and sdk/py.
 
-    Every route except /health needs an access token, sent as
-    `Authorization: Bearer <token>` or, for browsers, in the `say_token`
-    cookie. Request bodies must be `application/json`.
+    Every route except /health, /setup and /login needs an access token,
+    sent as `Authorization: Bearer <token>` or, for browsers, in the
+    `say_token` cookie. People get the cookie from POST /setup or
+    POST /login; agents get a token from POST /principals or
+    `say principal add`. Request bodies must be `application/json`.
 
     Realtime: every event has a per-room `seq`. A client keeps the last
     `seq` it has seen per room (its cursor) and resumes from it after a
@@ -37,6 +39,111 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /setup:
+    get:
+      operationId: getSetup
+      summary: Whether the instance still needs its first admin
+      security: []
+      responses:
+        "200":
+          description: Setup status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupStatus"
+    post:
+      operationId: setup
+      summary: Create the first admin and sign them in
+      description: |
+        Works once per instance. `code` is the setup code the server logs
+        at startup (or `--setup-code`). On success the response sets the
+        `say_token` session cookie.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Setup"
+      responses:
+        "201":
+          description: The new admin, signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Principal"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /login:
+    post:
+      operationId: login
+      summary: Sign in with a username and password
+      description: Sets the `say_token` session cookie, valid for 30 days.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Login"
+      responses:
+        "200":
+          description: The signed-in principal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Principal"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /logout:
+    post:
+      operationId: logout
+      summary: Revoke the token this request was made with
+      description: Also clears the `say_token` cookie.
+      responses:
+        "204":
+          description: Signed out
+        "401":
+          $ref: "#/components/responses/Error"
+  /principals:
+    post:
+      operationId: createPrincipal
+      summary: Add a person or an agent (instance admins only)
+      description: |
+        A human gets a username and password and signs in through
+        /login. An agent gets an access token that never expires; it is
+        returned here once and cannot be shown again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePrincipal"
+      responses:
+        "201":
+          description: The new principal, and the agent's token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedPrincipal"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
   /me:
     get:
       operationId: getMe
@@ -367,7 +474,8 @@ components:
               description: |
                 Stable machine-readable code: unauthorized, forbidden,
                 not_found, conflict, bad_request, unsupported_media_type,
-                invalid, hop_limit, too_many or internal.
+                invalid, hop_limit, too_many, invalid_credentials,
+                bad_setup_code, setup_done, username_taken or internal.
             message:
               type: string
     PrincipalKind:
@@ -383,9 +491,72 @@ components:
           $ref: "#/components/schemas/PrincipalKind"
         display_name:
           type: string
+        admin:
+          type: boolean
+          description: Present and true for instance admins.
         created_at:
           type: string
           format: date-time
+    SetupStatus:
+      type: object
+      required: [needed]
+      properties:
+        needed:
+          type: boolean
+    Username:
+      type: string
+      description: 1–32 of a-z, 0-9, '.', '_' or '-'; case-insensitive.
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"
+    Password:
+      type: string
+      minLength: 8
+    Setup:
+      type: object
+      required: [code, username, password]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        username:
+          $ref: "#/components/schemas/Username"
+        display_name:
+          type: string
+          description: Defaults to the username.
+        password:
+          $ref: "#/components/schemas/Password"
+    Login:
+      type: object
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    CreatePrincipal:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [human, agent]
+        display_name:
+          type: string
+          description: Required for agents; defaults to the username for humans.
+        username:
+          $ref: "#/components/schemas/Username"
+        password:
+          $ref: "#/components/schemas/Password"
+    CreatedPrincipal:
+      type: object
+      required: [principal]
+      properties:
+        principal:
+          $ref: "#/components/schemas/Principal"
+        token:
+          type: string
+          description: The agent's access token. Only for agents.
     RoomKind:
       type: string
       enum: [dm, group, channel, widget-thread]

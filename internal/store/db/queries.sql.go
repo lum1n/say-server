@@ -42,16 +42,56 @@ func (q *Queries) BumpSeq(ctx context.Context, id string) (int64, error) {
 	return last_seq, err
 }
 
+const claimSetup = `-- name: ClaimSetup :execrows
+INSERT INTO instance (key, value) VALUES ('setup', $1)
+ON CONFLICT (key) DO NOTHING
+`
+
+func (q *Queries) ClaimSetup(ctx context.Context, value string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, claimSetup, value)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const createLogin = `-- name: CreateLogin :execrows
+INSERT INTO logins (principal_id, username, password_hash, created_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (username) DO NOTHING
+`
+
+type CreateLoginParams struct {
+	PrincipalID  string
+	Username     string
+	PasswordHash string
+	CreatedAt    int64
+}
+
+func (q *Queries) CreateLogin(ctx context.Context, arg CreateLoginParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createLogin,
+		arg.PrincipalID,
+		arg.Username,
+		arg.PasswordHash,
+		arg.CreatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const createPrincipal = `-- name: CreatePrincipal :exec
 
-INSERT INTO principals (id, kind, display_name, created_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO principals (id, kind, display_name, admin, created_at)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type CreatePrincipalParams struct {
 	ID          string
 	Kind        string
 	DisplayName string
+	Admin       int32
 	CreatedAt   int64
 }
 
@@ -63,6 +103,7 @@ func (q *Queries) CreatePrincipal(ctx context.Context, arg CreatePrincipalParams
 		arg.ID,
 		arg.Kind,
 		arg.DisplayName,
+		arg.Admin,
 		arg.CreatedAt,
 	)
 	return err
@@ -91,14 +132,15 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) error {
 }
 
 const createToken = `-- name: CreateToken :exec
-INSERT INTO tokens (hash, principal_id, name, created_at)
-VALUES ($1, $2, $3, $4)
+INSERT INTO tokens (hash, principal_id, name, expires_at, created_at)
+VALUES ($1, $2, $3, $4, $5)
 `
 
 type CreateTokenParams struct {
 	Hash        string
 	PrincipalID string
 	Name        string
+	ExpiresAt   int64
 	CreatedAt   int64
 }
 
@@ -107,6 +149,7 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) error 
 		arg.Hash,
 		arg.PrincipalID,
 		arg.Name,
+		arg.ExpiresAt,
 		arg.CreatedAt,
 	)
 	return err
@@ -118,6 +161,15 @@ DELETE FROM outbox WHERE event_id = $1
 
 func (q *Queries) DeleteOutbox(ctx context.Context, eventID string) error {
 	_, err := q.db.ExecContext(ctx, deleteOutbox, eventID)
+	return err
+}
+
+const deleteToken = `-- name: DeleteToken :exec
+DELETE FROM tokens WHERE hash = $1
+`
+
+func (q *Queries) DeleteToken(ctx context.Context, hash string) error {
+	_, err := q.db.ExecContext(ctx, deleteToken, hash)
 	return err
 }
 
@@ -292,7 +344,7 @@ func (q *Queries) GetMember(ctx context.Context, arg GetMemberParams) (Membershi
 }
 
 const getPrincipal = `-- name: GetPrincipal :one
-SELECT id, kind, display_name, created_at FROM principals WHERE id = $1
+SELECT id, kind, display_name, created_at, admin FROM principals WHERE id = $1
 `
 
 func (q *Queries) GetPrincipal(ctx context.Context, id string) (Principal, error) {
@@ -303,6 +355,7 @@ func (q *Queries) GetPrincipal(ctx context.Context, id string) (Principal, error
 		&i.Kind,
 		&i.DisplayName,
 		&i.CreatedAt,
+		&i.Admin,
 	)
 	return i, err
 }
@@ -383,6 +436,22 @@ func (q *Queries) InsertOutbox(ctx context.Context, arg InsertOutboxParams) erro
 	return err
 }
 
+const loginByUsername = `-- name: LoginByUsername :one
+SELECT principal_id, username, password_hash, created_at FROM logins WHERE username = $1
+`
+
+func (q *Queries) LoginByUsername(ctx context.Context, username string) (Login, error) {
+	row := q.db.QueryRowContext(ctx, loginByUsername, username)
+	var i Login
+	err := row.Scan(
+		&i.PrincipalID,
+		&i.Username,
+		&i.PasswordHash,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const members = `-- name: Members :many
 SELECT room_id, principal_id, role, scopes FROM memberships WHERE room_id = $1 ORDER BY principal_id
 `
@@ -448,18 +517,24 @@ func (q *Queries) PendingOutbox(ctx context.Context, limit int32) ([]Outbox, err
 }
 
 const principalByToken = `-- name: PrincipalByToken :one
-SELECT p.id, p.kind, p.display_name, p.created_at FROM principals p JOIN tokens t ON t.principal_id = p.id
-WHERE t.hash = $1
+SELECT p.id, p.kind, p.display_name, p.created_at, p.admin FROM principals p JOIN tokens t ON t.principal_id = p.id
+WHERE t.hash = $1 AND (t.expires_at = 0 OR t.expires_at > $2)
 `
 
-func (q *Queries) PrincipalByToken(ctx context.Context, hash string) (Principal, error) {
-	row := q.db.QueryRowContext(ctx, principalByToken, hash)
+type PrincipalByTokenParams struct {
+	Hash      string
+	ExpiresAt int64
+}
+
+func (q *Queries) PrincipalByToken(ctx context.Context, arg PrincipalByTokenParams) (Principal, error) {
+	row := q.db.QueryRowContext(ctx, principalByToken, arg.Hash, arg.ExpiresAt)
 	var i Principal
 	err := row.Scan(
 		&i.ID,
 		&i.Kind,
 		&i.DisplayName,
 		&i.CreatedAt,
+		&i.Admin,
 	)
 	return i, err
 }
@@ -504,4 +579,15 @@ func (q *Queries) RoomsFor(ctx context.Context, principalID string) ([]RoomsForR
 		return nil, err
 	}
 	return items, nil
+}
+
+const setupDone = `-- name: SetupDone :one
+SELECT count(*) FROM instance WHERE key = 'setup'
+`
+
+func (q *Queries) SetupDone(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, setupDone)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }

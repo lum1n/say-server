@@ -3,8 +3,8 @@
 -- of migrations/0001_init.sql.
 
 -- name: CreatePrincipal :exec
-INSERT INTO principals (id, kind, display_name, created_at)
-VALUES ($1, $2, $3, $4);
+INSERT INTO principals (id, kind, display_name, admin, created_at)
+VALUES ($1, $2, $3, $4, $5);
 
 -- name: GetPrincipal :one
 SELECT * FROM principals WHERE id = $1;
@@ -70,9 +70,27 @@ SELECT * FROM outbox ORDER BY created_at, room_id, seq LIMIT $1;
 DELETE FROM outbox WHERE event_id = $1;
 
 -- name: CreateToken :exec
-INSERT INTO tokens (hash, principal_id, name, created_at)
-VALUES ($1, $2, $3, $4);
+INSERT INTO tokens (hash, principal_id, name, expires_at, created_at)
+VALUES ($1, $2, $3, $4, $5);
 
 -- name: PrincipalByToken :one
 SELECT p.* FROM principals p JOIN tokens t ON t.principal_id = p.id
-WHERE t.hash = $1;
+WHERE t.hash = $1 AND (t.expires_at = 0 OR t.expires_at > $2);
+
+-- name: DeleteToken :exec
+DELETE FROM tokens WHERE hash = $1;
+
+-- name: ClaimSetup :execrows
+INSERT INTO instance (key, value) VALUES ('setup', $1)
+ON CONFLICT (key) DO NOTHING;
+
+-- name: SetupDone :one
+SELECT count(*) FROM instance WHERE key = 'setup';
+
+-- name: CreateLogin :execrows
+INSERT INTO logins (principal_id, username, password_hash, created_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (username) DO NOTHING;
+
+-- name: LoginByUsername :one
+SELECT * FROM logins WHERE username = $1;

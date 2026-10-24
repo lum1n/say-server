@@ -41,10 +41,19 @@ func (s *sqlStore) tx(ctx context.Context, fn func(q *db.Queries) error) error {
 func (s *sqlStore) Close() error { return s.db.Close() }
 
 func (s *sqlStore) CreatePrincipal(ctx context.Context, p core.Principal) error {
-	return s.q().CreatePrincipal(ctx, db.CreatePrincipalParams{
+	return createPrincipal(ctx, s.q(), p)
+}
+
+func createPrincipal(ctx context.Context, q *db.Queries, p core.Principal) error {
+	var admin int32
+	if p.Admin {
+		admin = 1
+	}
+	return q.CreatePrincipal(ctx, db.CreatePrincipalParams{
 		ID:          p.ID,
 		Kind:        string(p.Kind),
 		DisplayName: p.DisplayName,
+		Admin:       admin,
 		CreatedAt:   millis(p.CreatedAt),
 	})
 }
@@ -62,20 +71,80 @@ func principal(row db.Principal) core.Principal {
 		ID:          row.ID,
 		Kind:        core.PrincipalKind(row.Kind),
 		DisplayName: row.DisplayName,
+		Admin:       row.Admin != 0,
 		CreatedAt:   time.UnixMilli(row.CreatedAt),
 	}
+}
+
+func (s *sqlStore) CreateUser(ctx context.Context, p core.Principal, l Login) error {
+	return s.tx(ctx, func(q *db.Queries) error { return createUser(ctx, q, p, l) })
+}
+
+func createUser(ctx context.Context, q *db.Queries, p core.Principal, l Login) error {
+	if err := createPrincipal(ctx, q, p); err != nil {
+		return err
+	}
+	// ON CONFLICT DO NOTHING turns a duplicate username into zero rows on
+	// both engines, instead of an engine-specific constraint error.
+	n, err := q.CreateLogin(ctx, db.CreateLoginParams{
+		PrincipalID:  p.ID,
+		Username:     l.Username,
+		PasswordHash: l.PasswordHash,
+		CreatedAt:    millis(p.CreatedAt),
+	})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrUsernameTaken
+	}
+	return nil
+}
+
+func (s *sqlStore) LoginByUsername(ctx context.Context, username string) (Login, error) {
+	row, err := s.q().LoginByUsername(ctx, username)
+	if err != nil {
+		return Login{}, notFound(err)
+	}
+	return Login{PrincipalID: row.PrincipalID, Username: row.Username, PasswordHash: row.PasswordHash}, nil
+}
+
+func (s *sqlStore) Setup(ctx context.Context, admin core.Principal, l Login) error {
+	admin.Admin = true
+	return s.tx(ctx, func(q *db.Queries) error {
+		// A concurrent claim on Postgres waits for this transaction and
+		// then inserts nothing.
+		n, err := q.ClaimSetup(ctx, admin.ID)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrSetupDone
+		}
+		return createUser(ctx, q, admin, l)
+	})
+}
+
+func (s *sqlStore) SetupDone(ctx context.Context) (bool, error) {
+	n, err := s.q().SetupDone(ctx)
+	return n > 0, err
 }
 
 // tokenPrefix marks say secrets so that secret scanners and people can tell
 // them apart.
 const tokenPrefix = "say_"
 
-func (s *sqlStore) CreateToken(ctx context.Context, principalID, name string) (string, error) {
+func (s *sqlStore) CreateToken(ctx context.Context, principalID, name string, expires time.Time) (string, error) {
 	secret := tokenPrefix + rand.Text()
+	var expiresAt int64
+	if !expires.IsZero() {
+		expiresAt = expires.UnixMilli()
+	}
 	err := s.q().CreateToken(ctx, db.CreateTokenParams{
 		Hash:        tokenHash(secret),
 		PrincipalID: principalID,
 		Name:        name,
+		ExpiresAt:   expiresAt,
 		CreatedAt:   millis(time.Time{}),
 	})
 	if err != nil {
@@ -85,11 +154,18 @@ func (s *sqlStore) CreateToken(ctx context.Context, principalID, name string) (s
 }
 
 func (s *sqlStore) PrincipalByToken(ctx context.Context, secret string) (core.Principal, error) {
-	row, err := s.q().PrincipalByToken(ctx, tokenHash(secret))
+	row, err := s.q().PrincipalByToken(ctx, db.PrincipalByTokenParams{
+		Hash:      tokenHash(secret),
+		ExpiresAt: time.Now().UnixMilli(),
+	})
 	if err != nil {
 		return core.Principal{}, notFound(err)
 	}
 	return principal(row), nil
+}
+
+func (s *sqlStore) RevokeToken(ctx context.Context, secret string) error {
+	return s.q().DeleteToken(ctx, tokenHash(secret))
 }
 
 func tokenHash(secret string) string {

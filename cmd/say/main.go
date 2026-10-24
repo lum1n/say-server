@@ -8,12 +8,14 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -58,6 +60,7 @@ func serve(args []string) error {
 	peers := fs.String("peers", os.Getenv("SAY_PEERS"), "comma-separated host:port cluster addresses of other nodes; enables cluster mode")
 	clusterAddr := fs.String("cluster-addr", envOr("SAY_CLUSTER_ADDR", ":6222"), "listen address for other nodes in cluster mode")
 	clusterSecret := fs.String("cluster-secret", os.Getenv("SAY_CLUSTER_SECRET"), "shared secret every node must present to join the cluster")
+	setupCodeFlag := fs.String("setup-code", os.Getenv("SAY_SETUP_CODE"), "code the setup wizard asks for; random when empty. Give every node the same one in cluster mode")
 	fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -75,9 +78,13 @@ func serve(args []string) error {
 	}
 	defer st.Close()
 
+	code, err := setupCode(ctx, st, *setupCodeFlag)
+	if err != nil {
+		return err
+	}
 	srv := &http.Server{
 		Addr:              *addr,
-		Handler:           api.New(api.Config{Version: version, Store: st, Bus: b}).Handler(),
+		Handler:           api.New(api.Config{Version: version, Store: st, Bus: b, SetupCode: code}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// Requests share ctx, so streams and long polls end on shutdown
 		// instead of holding it up.
@@ -90,6 +97,9 @@ func serve(args []string) error {
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	slog.Info("say listening", "addr", ln.Addr().String(), "version", version)
+	if code != "" {
+		slog.Info("open the setup wizard to create the admin", "url", setupURL(ln.Addr(), code))
+	}
 
 	select {
 	case err := <-errc:
@@ -102,6 +112,34 @@ func serve(args []string) error {
 		return err
 	}
 	return nil
+}
+
+// setupCode returns the code that guards the setup wizard, or "" when the
+// instance is already set up.
+func setupCode(ctx context.Context, st store.Store, fixed string) (string, error) {
+	done, err := st.SetupDone(ctx)
+	if err != nil || done {
+		return "", err
+	}
+	if fixed != "" {
+		return fixed, nil
+	}
+	return rand.Text(), nil
+}
+
+// setupURL is the wizard link to print. A wildcard listen address becomes
+// localhost, which is right when the operator runs say on their machine.
+func setupURL(addr net.Addr, code string) string {
+	host, port, _ := net.SplitHostPort(addr.String())
+	if ip := net.ParseIP(host); ip == nil || ip.IsUnspecified() {
+		host = "localhost"
+	}
+	return (&url.URL{
+		Scheme:   "http",
+		Host:     net.JoinHostPort(host, port),
+		Path:     "/setup",
+		RawQuery: url.Values{"code": {code}}.Encode(),
+	}).String()
 }
 
 // openBus returns the in-process bus, or the NATS cluster bus when peers
@@ -130,8 +168,9 @@ func openBus(peers, clusterAddr, secret, dsn string) (bus.Bus, error) {
 	return b, nil
 }
 
-// principal creates a principal and prints its id and a new access token.
-// It stands in for the setup wizard until that exists.
+// principal creates a principal and prints its id and a new access token
+// that never expires. It is for agents and scripts; people sign in through
+// the web app.
 func principal(args []string) error {
 	if len(args) == 0 || args[0] != "add" {
 		return errors.New("usage: say principal add --name NAME [--kind human|agent] [--db DSN]")
@@ -159,7 +198,7 @@ func principal(args []string) error {
 	if err := st.CreatePrincipal(ctx, p); err != nil {
 		return err
 	}
-	secret, err := st.CreateToken(ctx, p.ID, "cli")
+	secret, err := st.CreateToken(ctx, p.ID, "cli", time.Time{})
 	if err != nil {
 		return err
 	}

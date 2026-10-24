@@ -167,11 +167,11 @@ func TestTokens(t *testing.T) {
 	eachEngine(t, func(t *testing.T, s Store) {
 		ctx := context.Background()
 		p, _ := seed(t, s)
-		secret, err := s.CreateToken(ctx, p.ID, "cli")
+		secret, err := s.CreateToken(ctx, p.ID, "cli", time.Time{})
 		if err != nil || !strings.HasPrefix(secret, "say_") {
 			t.Fatalf("CreateToken = %q, %v", secret, err)
 		}
-		other, err := s.CreateToken(ctx, p.ID, "cli")
+		other, err := s.CreateToken(ctx, p.ID, "cli", time.Time{})
 		if err != nil || other == secret {
 			t.Fatalf("second CreateToken = %q, %v", other, err)
 		}
@@ -182,8 +182,110 @@ func TestTokens(t *testing.T) {
 		if _, err := s.PrincipalByToken(ctx, secret+"x"); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("wrong secret: %v", err)
 		}
-		if _, err := s.CreateToken(ctx, "no-such-principal", "cli"); err == nil {
+		if _, err := s.CreateToken(ctx, "no-such-principal", "cli", time.Time{}); err == nil {
 			t.Fatal("token for unknown principal was created")
+		}
+	})
+}
+
+func TestTokenExpiryAndRevocation(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		p, _ := seed(t, s)
+		expired, err := s.CreateToken(ctx, p.ID, "session", time.Now().Add(-time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.PrincipalByToken(ctx, expired); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("expired token: %v", err)
+		}
+		live, err := s.CreateToken(ctx, p.ID, "session", time.Now().Add(time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.PrincipalByToken(ctx, live); err != nil {
+			t.Fatalf("live token: %v", err)
+		}
+		if err := s.RevokeToken(ctx, live); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.PrincipalByToken(ctx, live); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("revoked token: %v", err)
+		}
+		if err := s.RevokeToken(ctx, live); err != nil {
+			t.Fatalf("revoking twice: %v", err)
+		}
+	})
+}
+
+func TestUsers(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		p := core.Principal{ID: core.NewID(), Kind: core.PrincipalHuman, DisplayName: "Ann"}
+		if err := s.CreateUser(ctx, p, Login{Username: "ann", PasswordHash: "h1"}); err != nil {
+			t.Fatal(err)
+		}
+		l, err := s.LoginByUsername(ctx, "ann")
+		if err != nil || l.PrincipalID != p.ID || l.PasswordHash != "h1" {
+			t.Fatalf("LoginByUsername = %+v, %v", l, err)
+		}
+		if _, err := s.LoginByUsername(ctx, "bob"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("unknown username: %v", err)
+		}
+		q := core.Principal{ID: core.NewID(), Kind: core.PrincipalHuman, DisplayName: "Other Ann"}
+		if err := s.CreateUser(ctx, q, Login{Username: "ann", PasswordHash: "h2"}); !errors.Is(err, ErrUsernameTaken) {
+			t.Fatalf("duplicate username: %v", err)
+		}
+		if _, err := s.GetPrincipal(ctx, q.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("principal survived a taken username: %v", err)
+		}
+	})
+}
+
+func TestSetupOnce(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		if done, err := s.SetupDone(ctx); err != nil || done {
+			t.Fatalf("SetupDone before = %v, %v", done, err)
+		}
+		// Setup races from several nodes; exactly one wins.
+		var wg sync.WaitGroup
+		errs := make([]error, 5)
+		for i := range errs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				p := core.Principal{ID: core.NewID(), Kind: core.PrincipalHuman, DisplayName: "admin"}
+				errs[i] = s.Setup(ctx, p, Login{Username: fmt.Sprintf("admin%d", i), PasswordHash: "h"})
+			}()
+		}
+		wg.Wait()
+		won := 0
+		for i, err := range errs {
+			switch {
+			case err == nil:
+				won++
+				l, err := s.LoginByUsername(ctx, fmt.Sprintf("admin%d", i))
+				if err != nil {
+					t.Fatal(err)
+				}
+				p, err := s.GetPrincipal(ctx, l.PrincipalID)
+				if err != nil || !p.Admin {
+					t.Fatalf("admin = %+v, %v", p, err)
+				}
+			case errors.Is(err, ErrSetupDone):
+				if _, err := s.LoginByUsername(ctx, fmt.Sprintf("admin%d", i)); !errors.Is(err, ErrNotFound) {
+					t.Fatalf("losing setup left a login: %v", err)
+				}
+			default:
+				t.Fatalf("Setup: %v", err)
+			}
+		}
+		if won != 1 {
+			t.Fatalf("%d setups succeeded", won)
+		}
+		if done, err := s.SetupDone(ctx); err != nil || !done {
+			t.Fatalf("SetupDone after = %v, %v", done, err)
 		}
 	})
 }

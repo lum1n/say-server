@@ -37,4 +37,5 @@ who is calling, before the setup wizard and login exist.
   followers of one room repeats the same read; caching the tail of hot
   rooms is a later optimisation that does not change the protocol.
 - Tokens do not expire yet. Expiry, revocation and login come with the
-  setup wizard.
+  setup wizard (superseded by ADR 0007: session tokens expire after 30
+  days and sign-out revokes them).

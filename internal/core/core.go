@@ -25,7 +25,9 @@ type Principal struct {
 	ID          string
 	Kind        PrincipalKind
 	DisplayName string
-	CreatedAt   time.Time
+	// Admin principals manage the instance: they create users and agents.
+	Admin     bool
+	CreatedAt time.Time
 }
 
 type RoomKind string

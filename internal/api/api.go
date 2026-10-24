@@ -27,6 +27,9 @@ type Config struct {
 	Version string
 	Store   store.Store
 	Bus     bus.Bus
+	// SetupCode must accompany POST /api/v1/setup, which creates the first
+	// admin. Empty when the instance is already set up.
+	SetupCode string
 	// MaxHops is the longest automated causation chain a send may extend
 	// (docs/adr/0005-agent-safety.md). Zero means DefaultMaxHops.
 	MaxHops int
@@ -35,11 +38,12 @@ type Config struct {
 const DefaultMaxHops = 8
 
 type Server struct {
-	version string
-	assets  fs.FS
-	store   store.Store
-	bus     bus.Bus
-	maxHops int
+	version   string
+	assets    fs.FS
+	store     store.Store
+	bus       bus.Bus
+	maxHops   int
+	setupCode string
 	// resync is how often a realtime follower rereads the store without a
 	// bus notification; heartbeat is how often idle streams are pinged.
 	resync    time.Duration
@@ -57,6 +61,7 @@ func New(c Config) *Server {
 		store:     c.Store,
 		bus:       c.Bus,
 		maxHops:   c.MaxHops,
+		setupCode: c.SetupCode,
 		resync:    30 * time.Second,
 		heartbeat: 25 * time.Second,
 	}
@@ -65,7 +70,12 @@ func New(c Config) *Server {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
+	mux.HandleFunc("GET /api/v1/setup", s.setupStatus)
+	mux.HandleFunc("POST /api/v1/setup", s.setup)
+	mux.HandleFunc("POST /api/v1/login", s.login)
+	mux.HandleFunc("POST /api/v1/logout", s.authed(s.logout))
 	mux.HandleFunc("GET /api/v1/me", s.authed(s.me))
+	mux.HandleFunc("POST /api/v1/principals", s.authed(s.createPrincipal))
 	mux.HandleFunc("GET /api/v1/rooms", s.authed(s.listRooms))
 	mux.HandleFunc("POST /api/v1/rooms", s.authed(s.createRoom))
 	mux.HandleFunc("GET /api/v1/rooms/{id}", s.authed(s.getRoom))

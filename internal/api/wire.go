@@ -18,11 +18,12 @@ type wirePrincipal struct {
 	ID          string             `json:"id"`
 	Kind        core.PrincipalKind `json:"kind"`
 	DisplayName string             `json:"display_name"`
+	Admin       bool               `json:"admin,omitempty"`
 	CreatedAt   time.Time          `json:"created_at"`
 }
 
 func toPrincipal(p core.Principal) wirePrincipal {
-	return wirePrincipal{ID: p.ID, Kind: p.Kind, DisplayName: p.DisplayName, CreatedAt: p.CreatedAt.UTC()}
+	return wirePrincipal{ID: p.ID, Kind: p.Kind, DisplayName: p.DisplayName, Admin: p.Admin, CreatedAt: p.CreatedAt.UTC()}
 }
 
 type wireRoom struct {
