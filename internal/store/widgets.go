@@ -221,6 +221,48 @@ func (s *sqlStore) VisitorBySubject(ctx context.Context, widgetID, subject strin
 	return visitor(row), nil
 }
 
+func (s *sqlStore) DeleteVisitor(ctx context.Context, principalID string) error {
+	return s.tx(ctx, func(q *db.Queries) error {
+		row, err := q.VisitorByPrincipal(ctx, principalID)
+		if err != nil {
+			return notFound(err)
+		}
+		room := row.RoomID
+		// Bumping the seq locks the room row first, so an append that is
+		// running finishes before its events are deleted, and one that
+		// comes later finds no room.
+		if _, err := q.BumpSeq(ctx, room); err != nil {
+			return notFound(err)
+		}
+		steps := []func(context.Context, string) error{
+			q.DeleteRoomBridgeMessages, q.DeleteRoomBridgeLinks, q.DeleteRoomAgentCursors,
+			q.DeleteRoomEvents, q.DeleteRoomMembers,
+		}
+		for _, step := range steps {
+			if err := step(ctx, room); err != nil {
+				return err
+			}
+		}
+		if err := q.DeleteVisitorRow(ctx, principalID); err != nil {
+			return err
+		}
+		if err := q.DeleteRoom(ctx, room); err != nil {
+			return err
+		}
+		// The rooms it was added to besides its thread.
+		steps = []func(context.Context, string) error{
+			q.DeleteSenderBridgeMessages, q.DeleteSenderEvents, q.DeletePrincipalMemberships,
+			q.DeletePrincipalTokens, q.DeletePrincipal,
+		}
+		for _, step := range steps {
+			if err := step(ctx, principalID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func visitor(row db.WidgetVisitor) Visitor {
 	return Visitor{
 		PrincipalID: row.PrincipalID,

@@ -669,6 +669,107 @@ func (q *Queries) DeleteConnectorSession(ctx context.Context, id string) error {
 	return err
 }
 
+const deletePrincipal = `-- name: DeletePrincipal :exec
+DELETE FROM principals WHERE id = $1
+`
+
+func (q *Queries) DeletePrincipal(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deletePrincipal, id)
+	return err
+}
+
+const deletePrincipalMemberships = `-- name: DeletePrincipalMemberships :exec
+DELETE FROM memberships WHERE principal_id = $1
+`
+
+func (q *Queries) DeletePrincipalMemberships(ctx context.Context, principalID string) error {
+	_, err := q.db.ExecContext(ctx, deletePrincipalMemberships, principalID)
+	return err
+}
+
+const deletePrincipalTokens = `-- name: DeletePrincipalTokens :exec
+DELETE FROM tokens WHERE principal_id = $1
+`
+
+func (q *Queries) DeletePrincipalTokens(ctx context.Context, principalID string) error {
+	_, err := q.db.ExecContext(ctx, deletePrincipalTokens, principalID)
+	return err
+}
+
+const deleteRoom = `-- name: DeleteRoom :exec
+DELETE FROM rooms WHERE id = $1
+`
+
+func (q *Queries) DeleteRoom(ctx context.Context, id string) error {
+	_, err := q.db.ExecContext(ctx, deleteRoom, id)
+	return err
+}
+
+const deleteRoomAgentCursors = `-- name: DeleteRoomAgentCursors :exec
+DELETE FROM agent_cursors WHERE room_id = $1
+`
+
+func (q *Queries) DeleteRoomAgentCursors(ctx context.Context, roomID string) error {
+	_, err := q.db.ExecContext(ctx, deleteRoomAgentCursors, roomID)
+	return err
+}
+
+const deleteRoomBridgeLinks = `-- name: DeleteRoomBridgeLinks :exec
+DELETE FROM bridge_links WHERE room_id = $1
+`
+
+func (q *Queries) DeleteRoomBridgeLinks(ctx context.Context, roomID string) error {
+	_, err := q.db.ExecContext(ctx, deleteRoomBridgeLinks, roomID)
+	return err
+}
+
+const deleteRoomBridgeMessages = `-- name: DeleteRoomBridgeMessages :exec
+DELETE FROM bridge_messages
+WHERE link_id IN (SELECT id FROM bridge_links WHERE room_id = $1)
+`
+
+func (q *Queries) DeleteRoomBridgeMessages(ctx context.Context, roomID string) error {
+	_, err := q.db.ExecContext(ctx, deleteRoomBridgeMessages, roomID)
+	return err
+}
+
+const deleteRoomEvents = `-- name: DeleteRoomEvents :exec
+DELETE FROM events WHERE room_id = $1
+`
+
+func (q *Queries) DeleteRoomEvents(ctx context.Context, roomID string) error {
+	_, err := q.db.ExecContext(ctx, deleteRoomEvents, roomID)
+	return err
+}
+
+const deleteRoomMembers = `-- name: DeleteRoomMembers :exec
+DELETE FROM memberships WHERE room_id = $1
+`
+
+func (q *Queries) DeleteRoomMembers(ctx context.Context, roomID string) error {
+	_, err := q.db.ExecContext(ctx, deleteRoomMembers, roomID)
+	return err
+}
+
+const deleteSenderBridgeMessages = `-- name: DeleteSenderBridgeMessages :exec
+DELETE FROM bridge_messages
+WHERE event_id IN (SELECT id FROM events WHERE sender_id = $1)
+`
+
+func (q *Queries) DeleteSenderBridgeMessages(ctx context.Context, senderID string) error {
+	_, err := q.db.ExecContext(ctx, deleteSenderBridgeMessages, senderID)
+	return err
+}
+
+const deleteSenderEvents = `-- name: DeleteSenderEvents :exec
+DELETE FROM events WHERE sender_id = $1
+`
+
+func (q *Queries) DeleteSenderEvents(ctx context.Context, senderID string) error {
+	_, err := q.db.ExecContext(ctx, deleteSenderEvents, senderID)
+	return err
+}
+
 const deleteToken = `-- name: DeleteToken :exec
 DELETE FROM tokens WHERE hash = $1
 `
@@ -689,6 +790,17 @@ type DeleteTokensNamedParams struct {
 
 func (q *Queries) DeleteTokensNamed(ctx context.Context, arg DeleteTokensNamedParams) error {
 	_, err := q.db.ExecContext(ctx, deleteTokensNamed, arg.PrincipalID, arg.Name)
+	return err
+}
+
+const deleteVisitorRow = `-- name: DeleteVisitorRow :exec
+DELETE FROM widget_visitors WHERE principal_id = $1
+`
+
+// Deleting a visitor (DeleteVisitor) removes its thread and everything
+// it wrote, wherever it wrote it.
+func (q *Queries) DeleteVisitorRow(ctx context.Context, principalID string) error {
+	_, err := q.db.ExecContext(ctx, deleteVisitorRow, principalID)
 	return err
 }
 

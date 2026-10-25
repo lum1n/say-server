@@ -369,6 +369,88 @@ func (s *Server) newVisitor(ctx context.Context, wg store.Widget, id identity) (
 	return v, nil
 }
 
+// deleteEmbedSession is a visitor deleting its own chat: the thread,
+// what it wrote and the visitor itself. Its token stops working.
+func (s *Server) deleteEmbedSession(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	ctx := r.Context()
+	wg, err := s.store.WidgetByKey(ctx, r.PathValue("key"))
+	if errors.Is(err, store.ErrNotFound) {
+		err = errWidgetNotFound
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	v, err := s.store.VisitorByPrincipal(ctx, me.ID)
+	if errors.Is(err, store.ErrNotFound) || err == nil && v.WidgetID != wg.ID {
+		err = errorf(http.StatusForbidden, "forbidden", "only the widget's visitors delete their chat")
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := s.eraseVisitor(ctx, v); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteVisitor is an instance admin erasing a visitor and its thread,
+// such as when a visitor asks for their data to be deleted.
+func (s *Server) deleteVisitor(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	if !me.Admin {
+		writeError(w, errorf(http.StatusForbidden, "forbidden", "only instance admins delete visitors"))
+		return
+	}
+	v, err := s.store.VisitorByPrincipal(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		err = errorf(http.StatusNotFound, "not_found", "no such visitor")
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := s.eraseVisitor(r.Context(), v); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// eraseVisitor deletes v with its thread, then tells everyone who shared a
+// room with it to reread their rooms and members.
+func (s *Server) eraseVisitor(ctx context.Context, v store.Visitor) error {
+	rooms, err := s.store.RoomsFor(ctx, v.PrincipalID)
+	if err != nil {
+		return err
+	}
+	var others []string
+	for _, room := range rooms {
+		ms, err := s.store.Members(ctx, room.ID)
+		if err != nil {
+			return err
+		}
+		for _, m := range ms {
+			if m.PrincipalID != v.PrincipalID && !slices.Contains(others, m.PrincipalID) {
+				others = append(others, m.PrincipalID)
+			}
+		}
+	}
+	if err := s.store.DeleteVisitor(ctx, v.PrincipalID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			// A concurrent delete won.
+			return nil
+		}
+		return err
+	}
+	slog.Info("widget visitor deleted", "widget", v.WidgetID, "visitor", v.PrincipalID)
+	for _, id := range others {
+		s.notifyRooms(ctx, id)
+	}
+	return nil
+}
+
 // handoffRoom hands a widget thread from its agent to the people in it.
 func (s *Server) handoffRoom(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	id := r.PathValue("id")

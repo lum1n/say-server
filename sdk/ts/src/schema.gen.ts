@@ -558,7 +558,40 @@ export interface paths {
          *     tokens last 90 days.
          */
         post: operations["createEmbedSession"];
-        delete?: never;
+        /**
+         * Delete the visitor's chat
+         * @description The visitor, with its own token, erases itself: its thread with
+         *     every message in it, what it wrote in other rooms, its tokens and
+         *     its guest principal. The token stops working; the next session is a
+         *     new visitor. Messages already mirrored to a bridged network stay
+         *     there.
+         */
+        delete: operations["deleteEmbedSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/visitors/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The visitor's guest principal id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a widget visitor and its thread
+         * @description Instance admins only. Erases the same as `DELETE
+         *     /embed/{key}/session`, for a visitor who asked to have their data
+         *     deleted. A verified visitor who comes back is a new visitor.
+         */
+        delete: operations["deleteVisitor"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2232,6 +2265,54 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    deleteEmbedSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The widget's public key (pk_…) */
+                key: components["parameters"]["WidgetKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    deleteVisitor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The visitor's guest principal id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
             404: components["responses"]["Error"];
         };
     };

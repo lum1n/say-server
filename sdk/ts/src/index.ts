@@ -324,6 +324,21 @@ export async function createEmbedSession(
   return data;
 }
 
+/**
+ * deleteEmbedSession deletes the visitor's chat: its thread, its messages
+ * and the visitor. Pass a client made with the visitor's token.
+ */
+export async function deleteEmbedSession(key: string, client = defaultClient): Promise<void> {
+  const { error, response } = await client.DELETE("/embed/{key}/session", { params: { path: { key } } });
+  if (!response.ok) fail(response, error);
+}
+
+/** deleteVisitor erases a widget visitor and its thread (instance admins). */
+export async function deleteVisitor(id: string, client = defaultClient): Promise<void> {
+  const { error, response } = await client.DELETE("/visitors/{id}", { params: { path: { id } } });
+  if (!response.ok) fail(response, error);
+}
+
 export async function listNetworks(client = defaultClient): Promise<Network[]> {
   const { data, error, response } = await client.GET("/networks");
   if (!data) fail(response, error);

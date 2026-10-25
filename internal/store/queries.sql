@@ -236,6 +236,46 @@ SELECT * FROM widget_visitors WHERE principal_id = $1;
 -- name: VisitorBySubject :one
 SELECT * FROM widget_visitors WHERE widget_id = $1 AND subject = $2;
 
+-- Deleting a visitor (DeleteVisitor) removes its thread and everything
+-- it wrote, wherever it wrote it.
+-- name: DeleteVisitorRow :exec
+DELETE FROM widget_visitors WHERE principal_id = $1;
+
+-- name: DeleteRoomBridgeMessages :exec
+DELETE FROM bridge_messages
+WHERE link_id IN (SELECT id FROM bridge_links WHERE room_id = $1);
+
+-- name: DeleteRoomBridgeLinks :exec
+DELETE FROM bridge_links WHERE room_id = $1;
+
+-- name: DeleteRoomAgentCursors :exec
+DELETE FROM agent_cursors WHERE room_id = $1;
+
+-- name: DeleteRoomEvents :exec
+DELETE FROM events WHERE room_id = $1;
+
+-- name: DeleteRoomMembers :exec
+DELETE FROM memberships WHERE room_id = $1;
+
+-- name: DeleteRoom :exec
+DELETE FROM rooms WHERE id = $1;
+
+-- name: DeleteSenderBridgeMessages :exec
+DELETE FROM bridge_messages
+WHERE event_id IN (SELECT id FROM events WHERE sender_id = $1);
+
+-- name: DeleteSenderEvents :exec
+DELETE FROM events WHERE sender_id = $1;
+
+-- name: DeletePrincipalMemberships :exec
+DELETE FROM memberships WHERE principal_id = $1;
+
+-- name: DeletePrincipalTokens :exec
+DELETE FROM tokens WHERE principal_id = $1;
+
+-- name: DeletePrincipal :exec
+DELETE FROM principals WHERE id = $1;
+
 -- The widget threads principal $1 is in, with each thread's latest
 -- message and whether an agent still answers it, latest activity first
 -- (docs/adr/0012-widget.md).

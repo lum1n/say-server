@@ -401,3 +401,59 @@ func TestWebSocketTokenProtocol(t *testing.T) {
 		t.Fatalf("wrong token: %v %v", err, res)
 	}
 }
+
+func TestDeleteVisitor(t *testing.T) {
+	e := newEnv(t)
+	_, root := e.admin("Root")
+	ada, adaTok := e.user("Ada", core.PrincipalHuman)
+	var w, w2 wireWidget
+	e.do("POST", "/widgets", root, map[string]any{"name": "Support", "origins": []string{"https://shop.example"}, "team": []string{ada.ID}}, &w)
+	e.do("POST", "/widgets", root, map[string]any{"name": "Sales", "origins": []string{"https://shop.example"}, "team": []string{ada.ID}}, &w2)
+
+	// A visitor deletes its own chat.
+	_, s := e.session(w.PublicKey, "", "")
+	e.say(s.Token, s.Room.ID, "please forget me")
+	if code := e.do("DELETE", "/embed/"+w2.PublicKey+"/session", s.Token, nil, nil); code != 403 {
+		t.Fatalf("delete through another widget = %d", code)
+	}
+	if code := e.do("DELETE", "/embed/"+w.PublicKey+"/session", adaTok, nil, nil); code != 403 {
+		t.Fatalf("a person deletes a widget session = %d", code)
+	}
+	if code := e.do("DELETE", "/embed/"+w.PublicKey+"/session", s.Token, nil, nil); code != 204 {
+		t.Fatalf("visitor deletes its chat = %d", code)
+	}
+	if code := e.do("GET", "/rooms/"+s.Room.ID+"/events", adaTok, nil, nil); code != 404 {
+		t.Fatalf("Ada reads the deleted thread = %d", code)
+	}
+	if code := e.do("GET", "/me", s.Token, nil, nil); code != 401 {
+		t.Fatalf("deleted visitor's token = %d", code)
+	}
+	// The same browser starts over as a new visitor.
+	if code, again := e.session(w.PublicKey, s.Token, ""); code != 201 || again.Principal.ID == s.Principal.ID {
+		t.Fatalf("session after delete = %d %+v", code, again)
+	}
+
+	// An admin deletes a verified visitor, who comes back as a new one.
+	id := signIdentity(w.Secret, map[string]any{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
+	_, v := e.session(w.PublicKey, "", id)
+	e.say(v.Token, v.Room.ID, "hi")
+	if code := e.do("DELETE", "/visitors/"+v.Principal.ID, adaTok, nil, nil); code != 403 {
+		t.Fatalf("non-admin deletes a visitor = %d", code)
+	}
+	if code := e.do("DELETE", "/visitors/"+ada.ID, root, nil, nil); code != 404 {
+		t.Fatalf("delete a person as a visitor = %d", code)
+	}
+	if code := e.do("DELETE", "/visitors/"+v.Principal.ID, root, nil, nil); code != 204 {
+		t.Fatalf("admin deletes a visitor = %d", code)
+	}
+	if code := e.do("DELETE", "/visitors/"+v.Principal.ID, root, nil, nil); code != 404 {
+		t.Fatalf("delete twice = %d", code)
+	}
+	if code, again := e.session(w.PublicKey, "", id); code != 201 || again.Principal.ID == v.Principal.ID || again.Room.ID == v.Room.ID {
+		t.Fatalf("verified visitor after delete = %d %+v", code, again)
+	}
+	var rooms struct{ Rooms []wireRoom }
+	if e.do("GET", "/rooms", adaTok, nil, &rooms); len(rooms.Rooms) != 2 {
+		t.Fatalf("Ada's rooms = %+v; want the two new threads", rooms)
+	}
+}
