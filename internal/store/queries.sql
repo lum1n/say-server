@@ -276,6 +276,28 @@ DELETE FROM tokens WHERE principal_id = $1;
 -- name: DeletePrincipal :exec
 DELETE FROM principals WHERE id = $1;
 
+-- The widget threads principal $1 is in, with each thread's latest
+-- message and whether an agent still answers it, latest activity first
+-- (docs/adr/0012-widget.md).
+-- name: WidgetThreadsFor :many
+SELECT v.room_id, v.widget_id, v.principal_id, v.subject, v.created_at,
+       w.name AS widget_name, g.display_name AS visitor_name,
+       e.sender_id AS last_sender_id, e.created_at AS last_message_at,
+       EXISTS (
+           SELECT 1 FROM memberships rm
+           WHERE rm.room_id = v.room_id AND rm.scopes LIKE '%"responder"%'
+       ) AS agent_answers
+FROM widget_visitors v
+JOIN memberships m ON m.room_id = v.room_id AND m.principal_id = $1
+JOIN widgets w ON w.id = v.widget_id
+JOIN principals g ON g.id = v.principal_id
+LEFT JOIN events e ON e.room_id = v.room_id AND e.seq = (
+    SELECT MAX(x.seq) FROM events x
+    WHERE x.room_id = v.room_id AND x.type = 'message'
+)
+ORDER BY COALESCE(e.created_at, v.created_at) DESC, v.room_id DESC
+LIMIT $2;
+
 -- name: DeleteTokensNamed :exec
 DELETE FROM tokens WHERE principal_id = $1 AND name = $2;
 

@@ -22,6 +22,9 @@ export type AgentPolicy = Schemas["AgentPolicy"];
 export type UpdateRoom = Schemas["UpdateRoom"];
 export type Member = Schemas["Member"];
 export type Event = Schemas["Event"];
+export type EventType = Schemas["EventType"];
+export type AgentSettingsChange = Schemas["AgentSettingsChange"];
+export type Handoff = Schemas["Handoff"];
 export type Part = Schemas["Part"];
 export type TextPartData = Schemas["TextPartData"];
 export type ToolCallPartData = Schemas["ToolCallPartData"];
@@ -50,6 +53,7 @@ export type Trigger = Schemas["Trigger"];
 export type Connector = Schemas["Connector"];
 export type Widget = Schemas["Widget"];
 export type WidgetSettings = Schemas["WidgetSettings"];
+export type WidgetThread = Schemas["WidgetThread"];
 export type EmbedConfig = Schemas["EmbedConfig"];
 export type EmbedSession = Schemas["EmbedSession"];
 export type EmbedSessionRequest = Schemas["EmbedSessionRequest"];
@@ -290,6 +294,13 @@ export async function updateWidget(id: string, body: WidgetSettings, client = de
   const { data, error, response } = await client.PATCH("/widgets/{id}", { params: { path: { id } }, body });
   if (!data) fail(response, error);
   return data;
+}
+
+/** listWidgetThreads reads my inbox: the widget threads I am in, latest activity first. */
+export async function listWidgetThreads(client = defaultClient): Promise<WidgetThread[]> {
+  const { data, error, response } = await client.GET("/widget-threads");
+  if (!data) fail(response, error);
+  return data.threads;
 }
 
 /** getEmbedConfig reads a widget's public settings by its public key. */

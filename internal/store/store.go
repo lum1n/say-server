@@ -199,6 +199,9 @@ type Store interface {
 	// memberships and tokens, and its guest principal. An unknown visitor
 	// is ErrNotFound.
 	DeleteVisitor(ctx context.Context, principalID string) error
+	// WidgetThreads returns up to limit widget threads principalID is a
+	// member of, latest activity first.
+	WidgetThreads(ctx context.Context, principalID string, limit int) ([]WidgetThread, error)
 
 	// CreateBridge and UpdateBridge write a bridge; UpdateBridge changes
 	// only its name, config and enabled switch.

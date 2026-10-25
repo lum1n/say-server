@@ -493,7 +493,7 @@ func (c *wsConn) subscribe(ctx context.Context, roomID string, cursor int64) err
 	if c.bot != nil {
 		return errBotFollows
 	}
-	return c.followRoom(ctx, roomID, cursor, false)
+	return c.followRoom(ctx, roomID, cursor, nil)
 }
 
 // errBotFollows refuses subscription changes on a bot session, which
@@ -501,8 +501,8 @@ func (c *wsConn) subscribe(ctx context.Context, roomID string, cursor int64) err
 var errBotFollows = errorf(http.StatusConflict, "conflict", "a bot session follows all its rooms")
 
 // followRoom starts pushing room's events after cursor, with triggers on
-// a bot session; c.mu is held.
-func (c *wsConn) followRoom(ctx context.Context, roomID string, cursor int64, bot bool) error {
+// a bot session (bot is nil otherwise); c.mu is held.
+func (c *wsConn) followRoom(ctx context.Context, roomID string, cursor int64, bot *botSession) error {
 	if stop, ok := c.subs[roomID]; ok {
 		stop()
 	} else if len(c.subs) >= maxSubscriptions {
@@ -539,8 +539,8 @@ func (c *wsConn) followRoom(ctx context.Context, roomID string, cursor int64, bo
 				return err
 			}
 			env := envelope{ID: e.ID, Type: "event", Payload: data}
-			if bot {
-				env.Trigger = c.trigger(sctx, e, triggered)
+			if bot != nil {
+				env.Trigger = c.trigger(sctx, bot, e, triggered)
 			}
 			return c.push(env)
 		})

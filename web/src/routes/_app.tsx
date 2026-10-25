@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, Navigate, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { createRoom, getMe, getSetup, listRooms, logout, SayError } from "@say/sdk";
 import { type FormEvent, useState } from "react";
-import { keys, RealtimeProvider } from "../chat";
+import { keys, RealtimeProvider, useWidgetThreads } from "../chat";
 import { FormError } from "../components/form";
 
 // The signed-in app: the room list beside the open room. Signed-out
@@ -36,6 +36,11 @@ function Sidebar({ admin, name }: { admin: boolean; name: string }) {
   const queryClient = useQueryClient();
   // The socket says when this list changes (RealtimeProvider).
   const rooms = useQuery({ queryKey: keys.rooms, queryFn: () => listRooms() });
+  // Widget threads go to the inbox instead of the room list.
+  const list = rooms.data?.filter((r) => r.kind !== "widget-thread");
+  const hasThreads = !!rooms.data && list?.length !== rooms.data.length;
+  const threads = useWidgetThreads(hasThreads);
+  const waiting = threads.data?.filter((t) => t.state === "handed_over" && t.waiting).length ?? 0;
   const signOut = useMutation({
     mutationFn: () => logout(),
     onSuccess: () => {
@@ -49,7 +54,19 @@ function Sidebar({ admin, name }: { admin: boolean; name: string }) {
         <strong>say</strong>
       </header>
       <ul className="rooms">
-        {rooms.data?.map((r) => (
+        {hasThreads && (
+          <li>
+            <Link to="/inbox" activeProps={{ "aria-current": "page" }}>
+              Inbox
+              {waiting > 0 && (
+                <span className="count" title={`${waiting} waiting for a person`}>
+                  {waiting}
+                </span>
+              )}
+            </Link>
+          </li>
+        )}
+        {list?.map((r) => (
           <li key={r.id}>
             <Link to="/rooms/$roomId" params={{ roomId: r.id }} activeProps={{ "aria-current": "page" }}>
               {r.kind === "channel" ? "# " : ""}
@@ -57,7 +74,7 @@ function Sidebar({ admin, name }: { admin: boolean; name: string }) {
             </Link>
           </li>
         ))}
-        {rooms.data?.length === 0 && <li className="muted">No rooms yet</li>}
+        {list?.length === 0 && !hasThreads && <li className="muted">No rooms yet</li>}
       </ul>
       <NewRoom />
       <footer>

@@ -19,6 +19,8 @@ each other forever and burn tokens, money and rate limits.
   the agent's good behaviour.
 - Built-in agents have per-agent token and cost budgets.
 - Every room has a human "pause agents" switch.
+  Changing it, or any other agent setting, appends an `agent-settings`
+  event to the room log with the person who changed it.
 - Loop detection uses the causation chain.
 
 ## Implementation (2026-10-24)

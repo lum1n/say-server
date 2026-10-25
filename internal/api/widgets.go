@@ -34,6 +34,9 @@ const (
 	maxIdentityTTL = 24 * time.Hour
 	clockSkew      = time.Minute
 	maxOrigins     = 20
+	// threadIdleAfter is how long a widget thread goes without a message
+	// before the inbox calls it idle.
+	threadIdleAfter = 30 * time.Minute
 )
 
 var errWidgetNotFound = errorf(http.StatusNotFound, "not_found", "no such widget")
@@ -508,6 +511,81 @@ func (s *Server) handoffOnReply(ctx context.Context, me core.Principal, room cor
 	if err := s.handoff(ctx, room.ID); err != nil {
 		slog.Warn("widget handoff failed", "room", room.ID, "err", err)
 	}
+}
+
+// The states of a widget thread in the inbox.
+const (
+	// threadOpen: an agent answers the visitor.
+	threadOpen = "open"
+	// threadHandedOver: the thread is the team's, and an agent answers
+	// only when mentioned. Threads of widgets without an agent start here.
+	threadHandedOver = "handed_over"
+	// threadIdle: nobody has written for threadIdleAfter, and no visitor
+	// waits for a person.
+	threadIdle = "idle"
+)
+
+// wireWidgetThread is a widget thread in the team's inbox.
+type wireWidgetThread struct {
+	RoomID      string `json:"room_id"`
+	WidgetID    string `json:"widget_id"`
+	WidgetName  string `json:"widget_name"`
+	VisitorID   string `json:"visitor_id"`
+	VisitorName string `json:"visitor_name"`
+	// Verified is whether the host site said who the visitor is.
+	Verified bool   `json:"verified"`
+	State    string `json:"state"`
+	// Waiting is whether the visitor wrote last, so nobody has answered.
+	Waiting       bool       `json:"waiting"`
+	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+func toWidgetThread(th store.WidgetThread, now time.Time) wireWidgetThread {
+	out := wireWidgetThread{
+		RoomID: th.RoomID, WidgetID: th.WidgetID, WidgetName: th.WidgetName,
+		VisitorID: th.PrincipalID, VisitorName: th.VisitorName, Verified: th.Subject != "",
+		Waiting: th.LastSenderID == th.PrincipalID, CreatedAt: th.CreatedAt.UTC(),
+	}
+	active := th.CreatedAt
+	if !th.LastMessageAt.IsZero() {
+		at := th.LastMessageAt.UTC()
+		out.LastMessageAt, active = &at, at
+	}
+	switch {
+	case now.Sub(active) >= threadIdleAfter && !(out.Waiting && !th.AgentAnswers):
+		out.State = threadIdle
+	case th.AgentAnswers:
+		out.State = threadOpen
+	default:
+		out.State = threadHandedOver
+	}
+	return out
+}
+
+// listWidgetThreads is the inbox: the widget threads I am in, latest
+// activity first, so a busy widget need not crowd the room list.
+func (s *Server) listWidgetThreads(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	if me.Kind != core.PrincipalHuman && me.Kind != core.PrincipalAgent {
+		writeError(w, errorf(http.StatusForbidden, "forbidden", "only people and agents have an inbox"))
+		return
+	}
+	limit, err := intParam(r.URL.Query().Get("limit"), 200, 1, maxPage)
+	if err != nil {
+		writeError(w, errorf(http.StatusBadRequest, "bad_request", "limit: %v", err))
+		return
+	}
+	threads, err := s.store.WidgetThreads(r.Context(), me.ID, int(limit))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	now := time.Now()
+	out := make([]wireWidgetThread, len(threads))
+	for i, th := range threads {
+		out[i] = toWidgetThread(th, now)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"threads": out})
 }
 
 // frameAncestors is the Content-Security-Policy for /embed/{key}: only the

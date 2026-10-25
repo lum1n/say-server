@@ -14,6 +14,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppAccountsRouteImport } from './routes/_app/accounts'
+import { Route as AppInboxRouteImport } from './routes/_app/inbox'
 import { Route as AppPeopleRouteImport } from './routes/_app/people'
 import { Route as AppWidgetsRouteImport } from './routes/_app/widgets'
 import { Route as EmbedWidgetIdRouteImport } from './routes/embed/$widgetId'
@@ -43,6 +44,11 @@ const AppAccountsRoute = AppAccountsRouteImport.update({
   path: '/accounts',
   getParentRoute: () => AppRoute,
 } as any)
+const AppInboxRoute = AppInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppPeopleRoute = AppPeopleRouteImport.update({
   id: '/people',
   path: '/people',
@@ -69,6 +75,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/accounts': typeof AppAccountsRoute
+  '/inbox': typeof AppInboxRoute
   '/people': typeof AppPeopleRoute
   '/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
@@ -78,6 +85,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/accounts': typeof AppAccountsRoute
+  '/inbox': typeof AppInboxRoute
   '/people': typeof AppPeopleRoute
   '/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
@@ -90,6 +98,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/setup': typeof SetupRoute
   '/_app/accounts': typeof AppAccountsRoute
+  '/_app/inbox': typeof AppInboxRoute
   '/_app/people': typeof AppPeopleRoute
   '/_app/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
@@ -103,6 +112,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/accounts'
+    | '/inbox'
     | '/people'
     | '/widgets'
     | '/embed/$widgetId'
@@ -112,6 +122,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/accounts'
+    | '/inbox'
     | '/people'
     | '/widgets'
     | '/embed/$widgetId'
@@ -123,6 +134,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/setup'
     | '/_app/accounts'
+    | '/_app/inbox'
     | '/_app/people'
     | '/_app/widgets'
     | '/embed/$widgetId'
@@ -174,6 +186,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAccountsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/inbox': {
+      id: '/_app/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof AppInboxRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/people': {
       id: '/_app/people'
       path: '/people'
@@ -207,6 +226,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAccountsRoute: typeof AppAccountsRoute
+  AppInboxRoute: typeof AppInboxRoute
   AppPeopleRoute: typeof AppPeopleRoute
   AppWidgetsRoute: typeof AppWidgetsRoute
   AppIndexRoute: typeof AppIndexRoute
@@ -215,6 +235,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccountsRoute: AppAccountsRoute,
+  AppInboxRoute: AppInboxRoute,
   AppPeopleRoute: AppPeopleRoute,
   AppWidgetsRoute: AppWidgetsRoute,
   AppIndexRoute: AppIndexRoute,

@@ -93,6 +93,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/builtin-agents/{id}", s.authed(s.updateBuiltinAgent))
 	mux.HandleFunc("POST /api/v1/rooms/{id}/handoff", s.authed(s.handoffRoom))
 	mux.HandleFunc("GET /api/v1/widgets", s.authed(s.listWidgets))
+	mux.HandleFunc("GET /api/v1/widget-threads", s.authed(s.listWidgetThreads))
 	mux.HandleFunc("POST /api/v1/widgets", s.authed(s.createWidget))
 	mux.HandleFunc("PATCH /api/v1/widgets/{id}", s.authed(s.updateWidget))
 	mux.HandleFunc("DELETE /api/v1/visitors/{id}", s.authed(s.deleteVisitor))

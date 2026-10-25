@@ -20,9 +20,17 @@ read another visitor's chat.
   team of people and a greeting.
 - **One thread per visitor.** A visitor is a `guest` principal with its own
   `widget-thread` room. Its members are the visitor, the team as room
-  admins and the agent as the room's responder, so the thread shows up in
-  the team's room list like any other room. Changing a widget changes new
-  threads only.
+  admins and the agent as the room's responder. Changing a widget changes
+  new threads only.
+- **An inbox, not the room list.** The web app keeps widget threads out of
+  the room list and shows them in an inbox (`GET /widget-threads`), latest
+  activity first and sorted by state: *open* while an agent is the
+  responder, *handed over* once nobody is, and *idle* after 30 minutes
+  without a message. A handed-over thread whose visitor wrote last never
+  goes idle, so a visitor nobody answered stays in front of the team; the
+  sidebar counts those. The states come from the thread's latest message
+  and its members' scopes, so they need no new table and stay true
+  whichever node or client changed them.
 - **Only the listed origins may frame it.** The server sends
   `/embed/{key}` with `Content-Security-Policy: frame-ancestors 'self'
   <origins>`, which the browser enforces; every other page gets
@@ -85,9 +93,11 @@ read another visitor's chat.
 - Session creation and guest messages are not rate-limited yet. Before a
   widget goes on a busy public site, they need per-IP limits, like
   sign-in.
-- Teams get one room per visitor and no unread counts yet, so a busy
-  widget will crowd the room list. An inbox view for widget threads is
-  future work.
+- The inbox has no per-person unread counts: "waiting" says only that
+  the visitor wrote last, which suits a team sharing threads. Messages in
+  threads that are not open are not pushed, so the web app rereads the
+  inbox every 15 seconds. It reads the latest 200 threads; older idle ones
+  drop off the end.
 - Firefox has no `location.ancestorOrigins`, so there the embed page reads
   its parent's origin from the referrer. A host page whose referrer policy
   is `no-referrer` shows "not set up for this site" in Firefox.

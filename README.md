@@ -257,8 +257,11 @@ on the element to theme it. The element fires `open`, `close` and
 `unread` (with `detail.count`) events and has `open()`, `close()` and
 `toggle()` methods.
 
-Each visitor gets their own thread with the widget's agent and team, which
-shows up in the team's room list. The agent answers until a person on the
+Each visitor gets their own thread with the widget's agent and team. The
+team finds the threads in the **Inbox** rather than the room list, sorted
+into open (the agent answers), handed over (the team's) and idle (no
+message for 30 minutes), with the visitors still waiting for an answer
+marked and counted. The agent answers until a person on the
 team writes in the thread, or until the visitor presses **Talk to a
 person**. Visitors are anonymous unless your server vouches for them: sign
 a JWT with HS256 and the widget's secret, with `sub` (your user id), `exp`
