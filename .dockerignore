@@ -1,0 +1,10 @@
+.git
+**/node_modules
+**/dist
+web/.output
+.tanstack
+bin
+data
+internal/api/static/*
+!internal/api/static/README.md
+build

@@ -9,13 +9,31 @@ info:
     HTTP API of the say core. Realtime traffic (WebSocket, SSE) uses the
     envelope defined in envelope.schema.json. This file is the source of
     truth for sdk/ts and sdk/py.
+
+    Every route except /health, /setup, /login and /embed/{key} needs an
+    access token, sent as `Authorization: Bearer <token>` or, for
+    browsers, in the `say_token` cookie. A browser that cannot use the
+    cookie (the widget's iframe) offers the token on /ws as the
+    subprotocol `say.token.<token>` next to `say.v1`. People get the
+    cookie from POST /setup or POST /login; agents get a token from
+    POST /principals or `say principal add`. Request bodies must be `application/json`.
+
+    Realtime: every event has a per-room `seq`. A client keeps the last
+    `seq` it has seen per room (its cursor) and resumes from it after a
+    reconnect, over the WebSocket (`subscribe` with `after`), SSE
+    (`Last-Event-ID` or `?after=`) or long polling
+    (`GET /rooms/{id}/events?after=…&wait=…`).
 servers:
   - url: /api/v1
+security:
+  - bearer: []
+  - cookie: []
 paths:
   /health:
     get:
       operationId: getHealth
       summary: Liveness and version
+      security: []
       responses:
         "200":
           description: The server is up
@@ -23,7 +41,1224 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Health"
+  /setup:
+    get:
+      operationId: getSetup
+      summary: Whether the instance still needs its first admin
+      security: []
+      responses:
+        "200":
+          description: Setup status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupStatus"
+    post:
+      operationId: setup
+      summary: Create the first admin and sign them in
+      description: |
+        Works once per instance. `code` is the setup code the server logs
+        at startup (or `--setup-code`). On success the response sets the
+        `say_token` session cookie.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Setup"
+      responses:
+        "201":
+          description: The new admin, signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Principal"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /login:
+    post:
+      operationId: login
+      summary: Sign in with a username and password
+      description: Sets the `say_token` session cookie, valid for 30 days.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Login"
+      responses:
+        "200":
+          description: The signed-in principal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Principal"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+  /logout:
+    post:
+      operationId: logout
+      summary: Revoke the token this request was made with
+      description: Also clears the `say_token` cookie.
+      responses:
+        "204":
+          description: Signed out
+        "401":
+          $ref: "#/components/responses/Error"
+  /principals:
+    get:
+      operationId: listPrincipals
+      summary: Every principal on the instance, oldest first
+      description: |
+        The directory clients resolve sender and member names from. People
+        and agents may read it; guests and ghosts get 403. An agent with an
+        open bot session on /ws carries `connector`.
+      responses:
+        "200":
+          description: The principals
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [principals]
+                properties:
+                  principals:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Principal"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createPrincipal
+      summary: Add a person or an agent (instance admins only)
+      description: |
+        A human gets a username and password and signs in through
+        /login. An agent gets an access token that never expires; it is
+        returned here once and cannot be shown again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePrincipal"
+      responses:
+        "201":
+          description: The new principal, and the agent's token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatedPrincipal"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /me:
+    get:
+      operationId: getMe
+      summary: The principal the token belongs to
+      responses:
+        "200":
+          description: The caller
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Principal"
+        "401":
+          $ref: "#/components/responses/Error"
+  /rooms:
+    get:
+      operationId: listRooms
+      summary: Rooms the caller is a member of, oldest first
+      responses:
+        "200":
+          description: The rooms
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [rooms]
+                properties:
+                  rooms:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Room"
+        "401":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createRoom
+      summary: Create a room owned by the caller
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRoom"
+      responses:
+        "201":
+          description: The new room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    get:
+      operationId: getRoom
+      summary: One room
+      responses:
+        "200":
+          description: The room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateRoom
+      summary: Change a room's agent settings
+      description: |
+        Only people (not agents) who own or administer the room, or
+        instance admins who are in it, may change it, so an agent can
+        never lift its own limits.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRoom"
+      responses:
+        "200":
+          description: The room
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Room"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}/members:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    get:
+      operationId: listMembers
+      summary: Members of a room
+      responses:
+        "200":
+          description: The members
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [members]
+                properties:
+                  members:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Member"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: addMember
+      summary: Add a principal to a room (owners and admins only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddMember"
+      responses:
+        "201":
+          description: The new membership
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Member"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}/members/{principal_id}:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+      - name: principal_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: updateMember
+      summary: Make an agent a designated responder, or stop it being one
+      description: |
+        A built-in agent that is a responder answers every message in the
+        room, not only those that mention it. Only people who own or
+        administer the room, or instance admins in it, may change it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMember"
+      responses:
+        "200":
+          description: The membership
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Member"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}/events:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    get:
+      operationId: listEvents
+      summary: Page through a room's event log
+      description: |
+        With `after`, reads forward from that cursor; `wait` then holds the
+        request until at least one event arrives or the wait ends (the
+        long-poll fallback). Without `after`, reads the page that ends
+        just before `before`, or the latest page. Events are always in seq
+        order.
+      parameters:
+        - name: after
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: before
+          in: query
+          schema:
+            type: integer
+            format: int64
+            minimum: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 50
+        - name: wait
+          in: query
+          description: Seconds to wait for new events; only with `after`.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 60
+            default: 0
+      responses:
+        "200":
+          description: A page of events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [events, deliveries]
+                properties:
+                  events:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Event"
+                  deliveries:
+                    description: How the page's messages went out to the room's bridges.
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Delivery"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}/events/stream:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    get:
+      operationId: streamEvents
+      summary: Server-Sent Events of a room
+      description: |
+        Replays the events after the cursor, then streams new ones. Each
+        SSE message has `event: event`, `id: <seq>` and the Event as JSON
+        in `data`. A streaming message's changes come as `event: stream`
+        with the message as it now is and no id; they are not replayed,
+        and a slow reader may miss some, but the edit that ends the stream
+        is an `event`. Idle streams get a `: ping` comment every 25
+        seconds.
+      parameters:
+        - name: after
+          in: query
+          description: Cursor to start after. Defaults to `Last-Event-ID`, then 0.
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+        - name: Last-Event-ID
+          in: header
+          schema:
+            type: string
+      responses:
+        "200":
+          description: An event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    post:
+      operationId: sendMessage
+      summary: Send a message to a room
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          description: |
+            A repeated key from the same sender in the same room returns the
+            original event with status 200 instead of sending again.
+          schema:
+            type: string
+            maxLength: 200
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessage"
+      responses:
+        "201":
+          description: The new event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "200":
+          description: The event an earlier send with the same key created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: Agents are paused in this room (code agents_paused)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+        "429":
+          description: |
+            An automated sender hit the room's agent turn budget (code
+            agent_budget) or its own rate limit (code rate_limited).
+          headers:
+            Retry-After:
+              description: Seconds until the send would pass.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /rooms/{id}/messages/{event_id}:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: editMessage
+      summary: Stream into, end or edit your own message
+      description: |
+        While the message streams, a body with `parts` and without
+        `stream: "final"` replaces its parts in place: nothing is added to
+        the log, and subscribers get a `stream` push. Ending the stream
+        (`stream: "final"`, with or without `parts`) and every change to a
+        final message append an `edit` event that names the message in
+        `edits` and carries its whole new parts. Editing a final message
+        sets its `edited_at`; ending a stream does not. Edits do not count
+        against agent budgets and are allowed while agents are paused.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EditMessage"
+      responses:
+        "200":
+          description: The message as it now is
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          description: Not your message, or not a message (code forbidden)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: |
+            A streaming update of a message that is final (code
+            not_streaming), also when its stream ended meanwhile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /ws:
+    get:
+      operationId: openWebSocket
+      summary: The client and connector WebSocket
+      description: |
+        Frames are envelopes (envelope.schema.json). A request carries a
+        client-chosen `id`, a `type` and a payload; the reply echoes `id`
+        and `type` with `status` `ok` or `error` (payload `WsError`).
+        Request types and payloads:
+
+        - `subscribe`: `WsSubscribe`. Pushes the room's events after
+          `after`, then new ones. Subscribing again restarts from the new
+          cursor.
+        - `unsubscribe`: `WsUnsubscribe`.
+        - `send`: `WsSend`; the reply payload is the `Event`.
+        - `edit`: `WsEdit`; the reply payload is the message as it now is.
+        - `ping`: no payload.
+        - `hello`: `WsHello`; opens a bot session (below). The reply
+          payload is `WsHelloReply`.
+        - `ack`: `WsAck`; bot sessions only.
+
+        **Bot sessions.** An agent's socket that says `hello` follows
+        every room the agent is in, and rooms it is added to later, by
+        itself; `subscribe` and `unsubscribe` are refused with 409. Each
+        room starts at the agent's stored cursor, which `ack` moves
+        forward; a room it never acked starts 20 events back. Delivery is
+        at least once: events not acked come again after a reconnect, so
+        reply with an idempotency key derived from the message. An event
+        push that asks the bot for an answer has `trigger` (`Trigger`) on
+        its envelope. For an `edit` event that ends a stream, the trigger
+        is for the message it completes (`edits`), whose content is the
+        edit's parts. The agent shows as online (`Principal.connector`)
+        while the socket is open. Event pushes start after the hello reply.
+
+        Events arrive as pushes `{id: <event id>, type: "event", payload:
+        Event}` without a status. A streaming message's changes arrive as
+        pushes `{id, type: "stream", payload: Event}` holding the message
+        as it now is; they are not logged or replayed, and are dropped for
+        a client that falls behind, so apply them by message id and rely
+        on the `edit` event that ends the stream. A push `{id, type: "rooms"}` without a
+        payload says the caller's room list changed (it was added to a room
+        or created one); reread `GET /rooms`. A client that offered the
+        subprotocols `say.v1` and `say.token.<token>` is answered with
+        `say.v1`. Like event notifications it
+        is a hint, so also reread the list after reconnecting. It also
+        comes when a bridge of the caller or of one of its rooms changes
+        state. A push `{id, type: "delivery", payload: DeliveryPush}` on a
+        subscribed room says how a message went out to its bridges. A client that falls too far behind is
+        closed with code 1008 and should reconnect and resubscribe from its
+        cursors.
+      responses:
+        "101":
+          description: Switching to the WebSocket protocol
+        "401":
+          $ref: "#/components/responses/Error"
+  /builtin-agents:
+    get:
+      operationId: listBuiltinAgents
+      summary: Built-in agents (instance admins only)
+      description: |
+        Agents the server runs itself by calling a model provider. API
+        keys are never returned.
+      responses:
+        "200":
+          description: The built-in agents, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agents]
+                properties:
+                  agents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BuiltinAgent"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createBuiltinAgent
+      summary: Add a built-in agent (instance admins only)
+      description: |
+        Creates an agent principal that the server runs. Add it to rooms
+        like any other principal; it answers DMs, mentions, and every
+        message in rooms where it is a responder.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBuiltinAgent"
+      responses:
+        "201":
+          description: The new agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuiltinAgent"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /builtin-agents/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The agent's principal id
+        schema:
+          type: string
+    patch:
+      operationId: updateBuiltinAgent
+      summary: Change a built-in agent (instance admins only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BuiltinAgentSettings"
+      responses:
+        "200":
+          description: The agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BuiltinAgent"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /rooms/{id}/handoff:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+    post:
+      operationId: handoffRoom
+      summary: Hand a widget thread from its agent to its people
+      description: |
+        Agents in the thread stop being responders, so they answer only
+        when mentioned. The visitor or a person in the thread may call it;
+        a person's first message in the thread does the same.
+      responses:
+        "204":
+          description: Handed over
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /widgets:
+    get:
+      operationId: listWidgets
+      summary: Chat widgets (instance admins only)
+      responses:
+        "200":
+          description: The widgets, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [widgets]
+                properties:
+                  widgets:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Widget"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createWidget
+      summary: Create a chat widget (instance admins only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WidgetSettings"
+      responses:
+        "201":
+          description: The widget
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Widget"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /widgets/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: updateWidget
+      summary: Change a chat widget (instance admins only)
+      description: Absent fields stay as they are. Existing threads keep their members.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WidgetSettings"
+      responses:
+        "200":
+          description: The widget
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Widget"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteWidget
+      summary: Delete a chat widget (instance admins only)
+      description: Its visitors are signed out. Their threads stay with the team.
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /widget-threads:
+    get:
+      operationId: listWidgetThreads
+      summary: The widget threads I am in (the inbox)
+      description: |
+        Widget threads whose team or agent I am in, with whether an agent
+        still answers each, latest activity first. People and agents only.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+      responses:
+        "200":
+          description: The threads, latest activity first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [threads]
+                properties:
+                  threads:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WidgetThread"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /embed/{key}:
+    parameters:
+      - $ref: "#/components/parameters/WidgetKey"
+    get:
+      operationId: getEmbedConfig
+      summary: A widget's public settings, for its embed page
+      description: A widget that is switched off is not found.
+      security: []
+      responses:
+        "200":
+          description: The settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedConfig"
+        "404":
+          $ref: "#/components/responses/Error"
+  /embed/{key}/session:
+    parameters:
+      - $ref: "#/components/parameters/WidgetKey"
+    post:
+      operationId: createEmbedSession
+      summary: Sign a visitor in to a widget
+      description: |
+        With a bearer token from an earlier session of the same visitor,
+        returns that session as is. With an identity token, finds or
+        creates the verified visitor it names, on any device; an anonymous
+        visitor's bearer token sent with it, when that subject has no
+        visitor yet, makes the anonymous visitor the verified one, keeping
+        its thread, and stops working. Otherwise
+        creates an anonymous visitor: a guest principal with a widget
+        thread, whose members are the widget's team and agent. Visitor
+        tokens last 90 days.
+      security:
+        - {}
+        - bearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbedSessionRequest"
+      responses:
+        "200":
+          description: An existing visitor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedSession"
+        "201":
+          description: A new visitor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedSession"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteEmbedSession
+      summary: Delete the visitor's chat
+      description: |
+        The visitor, with its own token, erases itself: its thread with
+        every message in it, what it wrote in other rooms, its tokens and
+        its guest principal. The token stops working; the next session is a
+        new visitor. Messages already mirrored to a bridged network stay
+        there.
+      security:
+        - bearer: []
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /visitors/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The visitor's guest principal id.
+        schema:
+          type: string
+    delete:
+      operationId: deleteVisitor
+      summary: Delete a widget visitor and its thread
+      description: |
+        Instance admins only. Erases the same as `DELETE
+        /embed/{key}/session`, for a visitor who asked to have their data
+        deleted. A verified visitor who comes back is a new visitor.
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /hooks/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The bridge's id.
+        schema:
+          type: string
+    post:
+      operationId: postHook
+      summary: Post a message to a bridge that takes hooks
+      description: |
+        For networks with `hook: true`, such as webhooks. The network
+        checks the secret: for webhooks, `Authorization: Bearer <secret>`
+        or `?token=<secret>`. Any node takes it. In a relay bot the chat
+        must be linked to a room, or nothing is taken (404 `not_linked`).
+        A repeated `id` in the same chat is ignored.
+      security:
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HookMessage"
+      responses:
+        "204":
+          description: Taken
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /networks:
+    get:
+      operationId: listNetworks
+      summary: The networks this server bridges to, with their settings
+      responses:
+        "200":
+          description: The networks, by name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [networks]
+                properties:
+                  networks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Network"
+        "401":
+          $ref: "#/components/responses/Error"
+  /bridges:
+    get:
+      operationId: listBridges
+      summary: Your accounts on other networks, and relay bots for admins
+      responses:
+        "200":
+          description: The bridges the caller manages, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [bridges]
+                properties:
+                  bridges:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Bridge"
+        "401":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createBridge
+      summary: Connect your account on a network, or add a relay bot
+      description: |
+        In `account` mode (the default; people only) the account's chats
+        become rooms of the caller, and what the caller writes there goes
+        out as them. `bot` mode (instance admins only) adds a relay bot
+        that rooms are linked to with `POST /bridges/{id}/links`. The
+        bridge starts at once; a login step it needs shows as `prompt`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BridgeSettings"
+      responses:
+        "201":
+          description: The bridge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bridge"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /bridges/{id}:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+    get:
+      operationId: getBridge
+      summary: A bridge the caller manages
+      responses:
+        "200":
+          description: The bridge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bridge"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    patch:
+      operationId: updateBridge
+      summary: Change a bridge's name, settings or switch; it restarts
+      description: |
+        Absent fields stay as they are. In `config`, a setting set to ""
+        is cleared and a secret left out keeps its value.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BridgeSettings"
+      responses:
+        "200":
+          description: The bridge
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Bridge"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /bridges/{id}/answer:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+    post:
+      operationId: answerBridge
+      summary: Answer the bridge's login prompt (its owner only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  type: string
+                  maxLength: 4096
+      responses:
+        "204":
+          description: Passed to the node running the bridge
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: The bridge is not waiting for an answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bridges/{id}/links:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+    get:
+      operationId: listBridgeLinks
+      summary: The rooms a bridge mirrors, and the remote chats they mirror
+      responses:
+        "200":
+          description: The links, oldest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [links]
+                properties:
+                  links:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BridgeLink"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    post:
+      operationId: createBridgeLink
+      summary: Link a room to a remote channel of a relay bot
+      description: |
+        The caller must own or administer the room. Delivery starts from
+        now; the room's history is not sent. Accounts make their links
+        themselves, one room per chat (409).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBridgeLink"
+      responses:
+        "201":
+          description: The link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeLink"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+  /bridges/{id}/links/{link_id}:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+      - name: link_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      operationId: deleteBridgeLink
+      summary: Stop mirroring a room; the room and its log stay
+      responses:
+        "204":
+          description: Unlinked
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
 components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+    cookie:
+      type: apiKey
+      in: cookie
+      name: say_token
+  parameters:
+    BridgeID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    WidgetKey:
+      name: key
+      in: path
+      required: true
+      description: The widget's public key (pk_…)
+      schema:
+        type: string
+    RoomID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: An error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
     Health:
       type: object
@@ -34,15 +1269,774 @@ components:
           enum: [ok]
         version:
           type: string
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: |
+                Stable machine-readable code: unauthorized, forbidden,
+                not_found, conflict, bad_request, unsupported_media_type,
+                invalid, hop_limit, agents_paused, agent_budget,
+                rate_limited, too_many, invalid_credentials,
+                bad_setup_code, setup_done, username_taken or internal.
+            message:
+              type: string
     PrincipalKind:
       type: string
       enum: [human, agent, guest, ghost, system]
+    Principal:
+      type: object
+      required: [id, kind, display_name, created_at]
+      properties:
+        id:
+          type: string
+        kind:
+          $ref: "#/components/schemas/PrincipalKind"
+        display_name:
+          type: string
+        admin:
+          type: boolean
+          description: Present and true for instance admins.
+        connector:
+          $ref: "#/components/schemas/Connector"
+        created_at:
+          type: string
+          format: date-time
+    Connector:
+      type: object
+      description: |
+        An agent's open bot session: the bot is online. Only
+        `GET /principals` shows it.
+      required: [name, version, capabilities, connected_at]
+      properties:
+        name:
+          type: string
+        version:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+        connected_at:
+          type: string
+          format: date-time
+    SetupStatus:
+      type: object
+      required: [needed]
+      properties:
+        needed:
+          type: boolean
+    Username:
+      type: string
+      description: 1–32 of a-z, 0-9, '.', '_' or '-'; case-insensitive.
+      pattern: "^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"
+    Password:
+      type: string
+      minLength: 8
+    Setup:
+      type: object
+      required: [code, username, password]
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+        username:
+          $ref: "#/components/schemas/Username"
+        display_name:
+          type: string
+          description: Defaults to the username.
+        password:
+          $ref: "#/components/schemas/Password"
+    Login:
+      type: object
+      required: [username, password]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+    CreatePrincipal:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [human, agent]
+        display_name:
+          type: string
+          description: Required for agents; defaults to the username for humans.
+        username:
+          $ref: "#/components/schemas/Username"
+        password:
+          $ref: "#/components/schemas/Password"
+    CreatedPrincipal:
+      type: object
+      required: [principal]
+      properties:
+        principal:
+          $ref: "#/components/schemas/Principal"
+        token:
+          type: string
+          description: The agent's access token. Only for agents.
     RoomKind:
       type: string
       enum: [dm, group, channel, widget-thread]
+    Room:
+      type: object
+      required: [id, kind, name, agents, created_at]
+      properties:
+        id:
+          type: string
+        kind:
+          $ref: "#/components/schemas/RoomKind"
+        name:
+          type: string
+        agents:
+          $ref: "#/components/schemas/AgentPolicy"
+        bridges:
+          description: The networks the room is mirrored to; only in `GET /rooms` and `GET /rooms/{id}`, and absent when none.
+          type: array
+          items:
+            $ref: "#/components/schemas/RoomBridge"
+        created_at:
+          type: string
+          format: date-time
+    AgentPolicy:
+      type: object
+      description: |
+        The limits on automated senders (agents) that apply in a room,
+        with the server's defaults filled in. People are never limited.
+      required: [paused, max_hop_count, turn_limit, turn_window_seconds, rate_limit_per_minute]
+      properties:
+        paused:
+          type: boolean
+          description: Every automated send is refused with agents_paused.
+        max_hop_count:
+          type: integer
+          description: The longest automated causation chain (hop_limit).
+        turn_limit:
+          type: integer
+          description: |
+            Automated messages, from all agents together, the room takes in
+            any turn_window_seconds (agent_budget).
+        turn_window_seconds:
+          type: integer
+        rate_limit_per_minute:
+          type: integer
+          description: Messages one agent may send per minute (rate_limited).
+    UpdateRoom:
+      type: object
+      additionalProperties: false
+      properties:
+        agents:
+          $ref: "#/components/schemas/AgentPolicyPatch"
+    AgentPolicyPatch:
+      type: object
+      description: Absent fields stay as they are; a zero limit means the server default.
+      additionalProperties: false
+      properties:
+        paused:
+          type: boolean
+        max_hop_count:
+          type: integer
+          minimum: 0
+          maximum: 64
+        turn_limit:
+          type: integer
+          minimum: 0
+          maximum: 10000
+        turn_window_seconds:
+          type: integer
+          description: 0, or from 60 to 86400.
+          minimum: 0
+          maximum: 86400
+        rate_limit_per_minute:
+          type: integer
+          minimum: 0
+          maximum: 600
+    CreateRoom:
+      type: object
+      required: [kind]
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [dm, group, channel]
+        name:
+          type: string
+          maxLength: 200
+    Role:
+      type: string
+      enum: [owner, admin, member, observer]
+    Member:
+      type: object
+      required: [principal_id, role, scopes]
+      properties:
+        principal_id:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        scopes:
+          type: array
+          description: responder marks an agent that answers every message in the room.
+          items:
+            type: string
+        display_name:
+          type: string
+          description: In member lists, so that guests, who cannot read the directory, can name senders.
+        kind:
+          $ref: "#/components/schemas/PrincipalKind"
+    AddMember:
+      type: object
+      required: [principal_id]
+      additionalProperties: false
+      properties:
+        principal_id:
+          type: string
+        role:
+          type: string
+          enum: [admin, member, observer]
+          default: member
+    UpdateMember:
+      type: object
+      additionalProperties: false
+      properties:
+        responder:
+          type: boolean
+          description: Only agents can be responders.
+    LLMProvider:
+      type: string
+      description: openai also covers any OpenAI-compatible endpoint, such as Ollama.
+      enum: [anthropic, openai]
+    BuiltinAgentSettings:
+      type: object
+      description: Absent fields stay as they are.
+      additionalProperties: false
+      properties:
+        display_name:
+          type: string
+          description: The agent's name, which people @mention it by. A rename takes effect at once.
+          maxLength: 100
+        provider:
+          $ref: "#/components/schemas/LLMProvider"
+        base_url:
+          type: string
+          description: An OpenAI-compatible endpoint, e.g. http://localhost:11434/v1. Empty is the provider's own API.
+          maxLength: 2000
+        model:
+          type: string
+          description: Empty picks the provider's default model.
+          maxLength: 2000
+        api_key:
+          type: string
+          description: Write-only. Empty uses the server's ANTHROPIC_API_KEY or OPENAI_API_KEY.
+          maxLength: 2000
+        system_prompt:
+          type: string
+          description: Added to the instructions the server gives every built-in agent.
+          maxLength: 20000
+        max_tokens:
+          type: integer
+          description: The longest reply, in tokens. 0 is the default, 1024.
+          minimum: 0
+          maximum: 64000
+        daily_token_budget:
+          type: integer
+          format: int64
+          description: Input plus output tokens per UTC day; 0 is no limit.
+          minimum: 0
+        input_price:
+          type: number
+          description: Dollars per million input tokens, used to count spending against daily_cost_budget.
+          minimum: 0
+          maximum: 10000
+        output_price:
+          type: number
+          description: Dollars per million output tokens.
+          minimum: 0
+          maximum: 10000
+        daily_cost_budget:
+          type: number
+          description: |
+            Dollars per UTC day at the agent's prices; 0 is no limit. Needs
+            input_price or output_price. Each call's cost is counted at the
+            prices set when it was made, rounded up to a micro-dollar.
+          minimum: 0
+          maximum: 1000000
+        enabled:
+          type: boolean
+        mcp_servers:
+          type: array
+          description: |
+            Replaces the MCP servers whose tools the agent may call. A server
+            without `authorization` keeps the header it had, as long as its
+            name and URL are unchanged.
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/MCPServerSettings"
+    MCPServerSettings:
+      type: object
+      required: [name, url]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: Prefixes the server's tool names, as `name__tool`.
+          pattern: "^[a-zA-Z0-9_-]{1,32}$"
+        url:
+          type: string
+          description: The server's streamable HTTP endpoint.
+          maxLength: 2000
+        authorization:
+          type: string
+          description: Write-only. Sent as the Authorization header, e.g. `Bearer …`. Empty sends none.
+          maxLength: 2000
+    MCPServer:
+      type: object
+      required: [name, url, has_authorization]
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        has_authorization:
+          type: boolean
+    CreateBuiltinAgent:
+      allOf:
+        - $ref: "#/components/schemas/BuiltinAgentSettings"
+        - type: object
+          required: [display_name, provider]
+          properties:
+            display_name:
+              type: string
+              maxLength: 100
+    BuiltinAgent:
+      type: object
+      required: [principal, provider, base_url, model, has_api_key, system_prompt, max_tokens, daily_token_budget, tokens_today, input_price, output_price, daily_cost_budget, cost_today, enabled, mcp_servers]
+      properties:
+        principal:
+          $ref: "#/components/schemas/Principal"
+        provider:
+          $ref: "#/components/schemas/LLMProvider"
+        base_url:
+          type: string
+        model:
+          type: string
+        has_api_key:
+          type: boolean
+        system_prompt:
+          type: string
+        max_tokens:
+          type: integer
+        daily_token_budget:
+          type: integer
+          format: int64
+        tokens_today:
+          type: integer
+          format: int64
+          description: Tokens used so far today (UTC).
+        input_price:
+          type: number
+          description: Dollars per million input tokens.
+        output_price:
+          type: number
+          description: Dollars per million output tokens.
+        daily_cost_budget:
+          type: number
+          description: Dollars per UTC day; 0 is no limit.
+        cost_today:
+          type: number
+          description: Dollars spent so far today (UTC).
+        enabled:
+          type: boolean
+        mcp_servers:
+          type: array
+          items:
+            $ref: "#/components/schemas/MCPServer"
+        last_error:
+          type: string
+          description: Why the agent last failed to reply, until it next succeeds.
+        last_error_at:
+          type: string
+          format: date-time
+    WidgetSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        origins:
+          type: array
+          maxItems: 20
+          description: |
+            Origins of the pages that may embed the widget, like
+            https://shop.example. The embed page is served with
+            `frame-ancestors` set to them. At least one is required.
+          items:
+            type: string
+        agent_id:
+          type: string
+          description: The agent that answers visitors; "" is none.
+        team:
+          type: array
+          description: People added to each new thread as admins.
+          items:
+            type: string
+        greeting:
+          type: string
+          maxLength: 1000
+        enabled:
+          type: boolean
+          description: Off hides the widget on host sites and stops its visitors chatting; their threads stay.
+        rotate_secret:
+          type: boolean
+          description: Replace the secret; identity tokens signed with the old one stop working.
+    Widget:
+      type: object
+      required: [id, name, public_key, secret, origins, team, greeting, enabled, updated_at, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        public_key:
+          type: string
+          description: pk_…, the widget attribute of `<say-chat>`.
+        secret:
+          type: string
+          description: sk_…, signs identity tokens (HS256 JWTs) on the host site's server. Keep it there.
+        origins:
+          type: array
+          items:
+            type: string
+        agent_id:
+          type: string
+        team:
+          type: array
+          items:
+            type: string
+        greeting:
+          type: string
+        enabled:
+          type: boolean
+        updated_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    WidgetThread:
+      type: object
+      required: [room_id, widget_id, widget_name, visitor_id, visitor_name, verified, state, waiting, created_at]
+      properties:
+        room_id:
+          type: string
+        widget_id:
+          type: string
+        widget_name:
+          type: string
+        visitor_id:
+          type: string
+        visitor_name:
+          type: string
+        verified:
+          type: boolean
+          description: Whether the host site signed the visitor in (an identity token).
+        state:
+          type: string
+          enum: [open, handed_over, idle]
+          description: |
+            `open`: an agent answers the visitor. `handed_over`: the
+            thread is the team's, and agents answer only when mentioned.
+            `idle`: no message for 30 minutes, unless the visitor of a
+            handed-over thread is still waiting for a person.
+        waiting:
+          type: boolean
+          description: The visitor wrote the latest message, so nobody has answered it yet.
+        last_message_at:
+          type: string
+          format: date-time
+          description: Absent when the thread has no messages.
+        created_at:
+          type: string
+          format: date-time
+    EmbedConfig:
+      type: object
+      required: [name, greeting, origins]
+      properties:
+        name:
+          type: string
+        greeting:
+          type: string
+        origins:
+          type: array
+          items:
+            type: string
+    EmbedSessionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        identity:
+          type: string
+          description: |
+            An HS256 JWT signed with the widget secret. Claims: `sub` (the
+            host site's user id, required), `exp` (required, at most 24 h
+            ahead), `name` (optional), `nbf` (optional).
+    EmbedSession:
+      type: object
+      required: [principal, room, token]
+      properties:
+        principal:
+          $ref: "#/components/schemas/Principal"
+        room:
+          $ref: "#/components/schemas/Room"
+        token:
+          type: string
+          description: The visitor's access token. Send it as a bearer token and, on /ws, as a subprotocol.
     Reachability:
       type: string
       enum: [live, offline, unlinked]
+    BridgeMode:
+      type: string
+      enum: [account, bot]
+    BridgeState:
+      description: |
+        `live` while the node running it is connected; `login` while it
+        waits for its owner (`prompt`); `error` when its connection fails
+        (`error`); `offline` when no node runs it; `disabled`.
+      type: string
+      enum: [live, login, error, offline, disabled]
+    NetworkField:
+      type: object
+      required: [key, label, kind]
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        kind:
+          description: A `secret` is write-only.
+          type: string
+          enum: [text, secret, number, bool]
+        required:
+          type: boolean
+        placeholder:
+          type: string
+        help:
+          type: string
+        modes:
+          description: The modes the field applies in; absent is all.
+          type: array
+          items:
+            $ref: "#/components/schemas/BridgeMode"
+    Network:
+      type: object
+      required: [name, title, modes, fields, capabilities]
+      properties:
+        name:
+          type: string
+        title:
+          type: string
+        modes:
+          type: array
+          items:
+            $ref: "#/components/schemas/BridgeMode"
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/NetworkField"
+        capabilities:
+          type: array
+          items:
+            type: string
+        hook:
+          description: The network takes messages posted to `/hooks/{bridge id}`.
+          type: boolean
+    HookMessage:
+      description: A message posted to a webhook bridge's hook.
+      type: object
+      properties:
+        chat:
+          description: The remote chat, linked to a room; else `?chat=`, else "default".
+          type: string
+        id:
+          description: The message's id in the chat, so repeats are ignored; made up if absent.
+          type: string
+        text:
+          type: string
+        content:
+          description: The text, as Discord webhooks name it, if `text` is absent.
+          type: string
+        username:
+          description: Who wrote it; "Webhook" if absent.
+          type: string
+        user_id:
+          description: A stable id of the writer; the username if absent.
+          type: string
+        reply_to:
+          type: string
+        edit:
+          description: The message `id` now reads `text`.
+          type: boolean
+        time:
+          type: string
+          format: date-time
+    BridgeSettings:
+      type: object
+      properties:
+        network:
+          description: Required to create; can't change.
+          type: string
+        mode:
+          $ref: "#/components/schemas/BridgeMode"
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        config:
+          description: Values for the network's fields, by key.
+          type: object
+          additionalProperties: true
+        enabled:
+          type: boolean
+    BridgePrompt:
+      description: A login step only the owner can do.
+      type: object
+      required: [kind, text]
+      properties:
+        kind:
+          type: string
+          enum: [code, password, text, qr]
+        text:
+          type: string
+        data:
+          description: What to show, such as a QR code's contents.
+          type: string
+    Bridge:
+      type: object
+      required: [id, owner_id, mode, network, name, config, secrets_set, enabled, state, created_at]
+      properties:
+        id:
+          type: string
+        owner_id:
+          type: string
+        mode:
+          $ref: "#/components/schemas/BridgeMode"
+        network:
+          type: string
+        name:
+          type: string
+        config:
+          description: The settings without secrets.
+          type: object
+          additionalProperties: true
+        secrets_set:
+          description: The secrets that are set.
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
+        state:
+          $ref: "#/components/schemas/BridgeState"
+        error:
+          type: string
+        prompt:
+          $ref: "#/components/schemas/BridgePrompt"
+        seen_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    BridgeLink:
+      type: object
+      required: [id, bridge_id, room_id, room_name, remote_id, remote_name, created_at]
+      properties:
+        id:
+          type: string
+        bridge_id:
+          type: string
+        room_id:
+          type: string
+        room_name:
+          type: string
+        remote_id:
+          type: string
+        remote_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateBridgeLink:
+      type: object
+      required: [room_id, remote_id]
+      properties:
+        room_id:
+          type: string
+        remote_id:
+          description: The channel on the network, such as "#say" on IRC.
+          type: string
+          minLength: 1
+          maxLength: 500
+        remote_name:
+          type: string
+          maxLength: 200
+    RoomBridge:
+      type: object
+      required: [bridge_id, network, name, mode, remote_name, state]
+      properties:
+        bridge_id:
+          type: string
+        network:
+          type: string
+        name:
+          type: string
+        mode:
+          $ref: "#/components/schemas/BridgeMode"
+        remote_name:
+          type: string
+        state:
+          $ref: "#/components/schemas/BridgeState"
+    DeliveryState:
+      description: |
+        `unknown` is a send under way when its node stopped; it is never
+        retried. `expired` waited longer than ten minutes for its bridge.
+      type: string
+      enum: [sending, sent, unknown, failed, expired]
+    Delivery:
+      type: object
+      required: [event_id, bridge_id, state]
+      properties:
+        event_id:
+          type: string
+        bridge_id:
+          type: string
+        state:
+          $ref: "#/components/schemas/DeliveryState"
+        error:
+          type: string
+    DeliveryPush:
+      type: object
+      required: [room_id, event_id, deliveries]
+      properties:
+        room_id:
+          type: string
+        event_id:
+          type: string
+        deliveries:
+          type: array
+          items:
+            $ref: "#/components/schemas/Delivery"
     Causation:
       type: object
       required: [hop_count]
@@ -54,3 +2048,270 @@ components:
           type: integer
           minimum: 0
           description: Automated hops since the last human event.
+    EventType:
+      type: string
+      enum: [message, edit, reaction, typing, receipt, agent-settings, handoff]
+      description: |
+        `agent-settings` and `handoff` are system events: they record who
+        changed the room (the event's sender) and when, in the room log.
+    AgentSettingsChange:
+      type: object
+      description: |
+        Body of an `agent-settings` event. Only the settings that changed
+        are present.
+      properties:
+        paused:
+          type: boolean
+          description: The room's "pause agents" switch.
+        max_hop_count:
+          type: integer
+          minimum: 0
+    Handoff:
+      type: object
+      description: |
+        Body of a `handoff` event: who now handles the conversation, such as
+        a widget thread passing from an agent to a human. When the sender is
+        `to`, they took over themselves.
+      required: [to]
+      properties:
+        from:
+          type: string
+          description: Principal that handled the conversation before, if any.
+        to:
+          type: string
+          description: Principal that handles the conversation now.
+    StreamState:
+      type: string
+      enum: [streaming, final]
+      description: |
+        A streaming message's parts change in place until an edit ends the
+        stream. On an edit event, `final` means the edit ended a stream.
+    PartKind:
+      type: string
+      enum: [text, attachment, tool-call, tool-result, card]
+    Part:
+      type: object
+      description: |
+        One typed piece of a message. `data` is a JSON object of at most
+        64 KiB; for `text` it is a `TextPartData`, and for `tool-call` a
+        `ToolCallPartData`.
+      required: [kind, data]
+      properties:
+        kind:
+          $ref: "#/components/schemas/PartKind"
+        data:
+          type: object
+          additionalProperties: true
+    TextPartData:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+    ToolCallPartData:
+      type: object
+      description: |
+        A tool the sender used while writing the message, such as a built-in
+        agent's call to an MCP server. It shows the call and how it went,
+        not its result.
+      required: [name, status]
+      properties:
+        id:
+          type: string
+          description: The call's id, unique within the message.
+        name:
+          type: string
+          minLength: 1
+        input:
+          type: object
+          additionalProperties: true
+          description: The call's arguments; absent when they were too long to show.
+        status:
+          type: string
+          enum: [running, done, failed]
+        error:
+          type: string
+          description: Why a failed call failed.
+    Event:
+      type: object
+      required: [id, room_id, seq, type, sender_id, causation, parts, created_at]
+      properties:
+        id:
+          type: string
+        room_id:
+          type: string
+        seq:
+          type: integer
+          format: int64
+          description: Position in the room's log; the cursor to resume from.
+        type:
+          $ref: "#/components/schemas/EventType"
+        sender_id:
+          type: string
+        causation:
+          $ref: "#/components/schemas/Causation"
+        parts:
+          type: array
+          items:
+            $ref: "#/components/schemas/Part"
+        stream:
+          $ref: "#/components/schemas/StreamState"
+        edits:
+          type: string
+          description: |
+            On an edit event, the message it changed. A message in a page
+            of events already shows its latest parts, so clients may skip
+            edits of messages they loaded after the edit.
+        edited_at:
+          type: string
+          format: date-time
+          description: When a final message was last edited.
+        created_at:
+          type: string
+          format: date-time
+    SendMessage:
+      type: object
+      required: [parts]
+      additionalProperties: false
+      properties:
+        parts:
+          type: array
+          description: At least one part, unless the message starts streaming.
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/Part"
+        stream:
+          $ref: "#/components/schemas/StreamState"
+          description: |
+            `streaming` starts a message that you then change with
+            `PATCH /rooms/{id}/messages/{event_id}`. The default is `final`.
+        caused_by:
+          type: string
+          description: |
+            The event in this room this message replies to. Automated
+            senders must set it; a reply that would pass the hop limit is
+            rejected with code hop_limit.
+    EditMessage:
+      type: object
+      additionalProperties: false
+      properties:
+        parts:
+          type: array
+          description: The whole new parts; leave out to end a stream as it is.
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/Part"
+        stream:
+          $ref: "#/components/schemas/StreamState"
+    WsSubscribe:
+      type: object
+      required: [room_id]
+      properties:
+        room_id:
+          type: string
+        after:
+          type: integer
+          format: int64
+          minimum: 0
+          default: 0
+    WsUnsubscribe:
+      type: object
+      required: [room_id]
+      properties:
+        room_id:
+          type: string
+    WsSend:
+      type: object
+      required: [room_id, parts]
+      properties:
+        room_id:
+          type: string
+        idempotency_key:
+          type: string
+          maxLength: 200
+        parts:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/Part"
+        caused_by:
+          type: string
+        stream:
+          $ref: "#/components/schemas/StreamState"
+    WsEdit:
+      type: object
+      description: The same as PATCH /rooms/{id}/messages/{event_id}.
+      required: [room_id, event_id]
+      properties:
+        room_id:
+          type: string
+        event_id:
+          type: string
+        parts:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/Part"
+        stream:
+          $ref: "#/components/schemas/StreamState"
+    WsHello:
+      type: object
+      description: Opens a bot session. Agent tokens only.
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        version:
+          type: string
+          maxLength: 100
+        capabilities:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+            minLength: 1
+            maxLength: 32
+    WsHelloReply:
+      type: object
+      required: [principal, session_id]
+      properties:
+        principal:
+          $ref: "#/components/schemas/Principal"
+        session_id:
+          type: string
+    WsAck:
+      type: object
+      description: |
+        The bot has handled the room's events through seq. Cursors only
+        move forward.
+      required: [room_id, seq]
+      properties:
+        room_id:
+          type: string
+        seq:
+          type: integer
+          format: int64
+          minimum: 0
+    Trigger:
+      type: string
+      description: |
+        Why a message asks a bot for an answer: it is in a DM, the bot is
+        a designated responder in the room, or the message @mentions the
+        bot. Only recent (5 min) messages from others trigger, never in a
+        room where the bot observes.
+      enum: [dm, responder, mention]
+    WsError:
+      type: object
+      required: [code, message, status]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        status:
+          type: integer
+          description: The HTTP status the same error would have.
+        retry_after:
+          type: integer
+          description: For agent_budget and rate_limited, seconds until a send would pass.

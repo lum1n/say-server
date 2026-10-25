@@ -9,54 +9,203 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as AppRouteImport } from './routes/_app'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as SetupRouteImport } from './routes/setup'
+import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppAccountsRouteImport } from './routes/_app/accounts'
+import { Route as AppInboxRouteImport } from './routes/_app/inbox'
+import { Route as AppPeopleRouteImport } from './routes/_app/people'
+import { Route as AppWidgetsRouteImport } from './routes/_app/widgets'
 import { Route as EmbedWidgetIdRouteImport } from './routes/embed/$widgetId'
+import { Route as AppRoomsRoomIdRouteImport } from './routes/_app/rooms.$roomId'
 
-const IndexRoute = IndexRouteImport.update({
+const AppRoute = AppRouteImport.update({
+  id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SetupRoute = SetupRouteImport.update({
+  id: '/setup',
+  path: '/setup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccountsRoute = AppAccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppInboxRoute = AppInboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPeopleRoute = AppPeopleRouteImport.update({
+  id: '/people',
+  path: '/people',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWidgetsRoute = AppWidgetsRouteImport.update({
+  id: '/widgets',
+  path: '/widgets',
+  getParentRoute: () => AppRoute,
 } as any)
 const EmbedWidgetIdRoute = EmbedWidgetIdRouteImport.update({
   id: '/embed/$widgetId',
   path: '/embed/$widgetId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppRoomsRoomIdRoute = AppRoomsRoomIdRouteImport.update({
+  id: '/rooms/$roomId',
+  path: '/rooms/$roomId',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/': typeof AppIndexRoute
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
+  '/accounts': typeof AppAccountsRoute
+  '/inbox': typeof AppInboxRoute
+  '/people': typeof AppPeopleRoute
+  '/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
+  '/rooms/$roomId': typeof AppRoomsRoomIdRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
+  '/accounts': typeof AppAccountsRoute
+  '/inbox': typeof AppInboxRoute
+  '/people': typeof AppPeopleRoute
+  '/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
+  '/': typeof AppIndexRoute
+  '/rooms/$roomId': typeof AppRoomsRoomIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/_app': typeof AppRouteWithChildren
+  '/login': typeof LoginRoute
+  '/setup': typeof SetupRoute
+  '/_app/accounts': typeof AppAccountsRoute
+  '/_app/inbox': typeof AppInboxRoute
+  '/_app/people': typeof AppPeopleRoute
+  '/_app/widgets': typeof AppWidgetsRoute
   '/embed/$widgetId': typeof EmbedWidgetIdRoute
+  '/_app/': typeof AppIndexRoute
+  '/_app/rooms/$roomId': typeof AppRoomsRoomIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/embed/$widgetId'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/setup'
+    | '/accounts'
+    | '/inbox'
+    | '/people'
+    | '/widgets'
+    | '/embed/$widgetId'
+    | '/rooms/$roomId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/embed/$widgetId'
-  id: '__root__' | '/' | '/embed/$widgetId'
+  to:
+    | '/login'
+    | '/setup'
+    | '/accounts'
+    | '/inbox'
+    | '/people'
+    | '/widgets'
+    | '/embed/$widgetId'
+    | '/'
+    | '/rooms/$roomId'
+  id:
+    | '__root__'
+    | '/_app'
+    | '/login'
+    | '/setup'
+    | '/_app/accounts'
+    | '/_app/inbox'
+    | '/_app/people'
+    | '/_app/widgets'
+    | '/embed/$widgetId'
+    | '/_app/'
+    | '/_app/rooms/$roomId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  AppRoute: typeof AppRouteWithChildren
+  LoginRoute: typeof LoginRoute
+  SetupRoute: typeof SetupRoute
   EmbedWidgetIdRoute: typeof EmbedWidgetIdRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
+    '/_app': {
+      id: '/_app'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/setup': {
+      id: '/setup'
+      path: '/setup'
+      fullPath: '/setup'
+      preLoaderRoute: typeof SetupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_app/': {
+      id: '/_app/'
       path: '/'
       fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/accounts': {
+      id: '/_app/accounts'
+      path: '/accounts'
+      fullPath: '/accounts'
+      preLoaderRoute: typeof AppAccountsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/inbox': {
+      id: '/_app/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof AppInboxRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/people': {
+      id: '/_app/people'
+      path: '/people'
+      fullPath: '/people'
+      preLoaderRoute: typeof AppPeopleRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/widgets': {
+      id: '/_app/widgets'
+      path: '/widgets'
+      fullPath: '/widgets'
+      preLoaderRoute: typeof AppWidgetsRouteImport
+      parentRoute: typeof AppRoute
     }
     '/embed/$widgetId': {
       id: '/embed/$widgetId'
@@ -65,11 +214,40 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof EmbedWidgetIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/rooms/$roomId': {
+      id: '/_app/rooms/$roomId'
+      path: '/rooms/$roomId'
+      fullPath: '/rooms/$roomId'
+      preLoaderRoute: typeof AppRoomsRoomIdRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
+interface AppRouteChildren {
+  AppAccountsRoute: typeof AppAccountsRoute
+  AppInboxRoute: typeof AppInboxRoute
+  AppPeopleRoute: typeof AppPeopleRoute
+  AppWidgetsRoute: typeof AppWidgetsRoute
+  AppIndexRoute: typeof AppIndexRoute
+  AppRoomsRoomIdRoute: typeof AppRoomsRoomIdRoute
+}
+
+const AppRouteChildren: AppRouteChildren = {
+  AppAccountsRoute: AppAccountsRoute,
+  AppInboxRoute: AppInboxRoute,
+  AppPeopleRoute: AppPeopleRoute,
+  AppWidgetsRoute: AppWidgetsRoute,
+  AppIndexRoute: AppIndexRoute,
+  AppRoomsRoomIdRoute: AppRoomsRoomIdRoute,
+}
+
+const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  AppRoute: AppRouteWithChildren,
+  LoginRoute: LoginRoute,
+  SetupRoute: SetupRoute,
   EmbedWidgetIdRoute: EmbedWidgetIdRoute,
 }
 export const routeTree = rootRouteImport
