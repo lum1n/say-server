@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vegard/say-v2/internal/bus"
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/bus"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // Two nodes share a store and a NATS cluster bus. A message sent through

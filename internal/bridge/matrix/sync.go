@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vegard/say-v2/internal/bridge"
+	"github.com/lum1n/say-v2/internal/bridge"
 )
 
 // Limits of the backfill on the first sync.

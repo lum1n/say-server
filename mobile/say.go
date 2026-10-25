@@ -4,7 +4,7 @@
 //	make android   # build/say.aar, for Kotlin and Java
 //	make ios       # build/Say.xcframework, for Swift (on macOS)
 //
-// It wraps package github.com/vegard/say-v2/say in the types gomobile can
+// It wraps package github.com/lum1n/say-v2/say in the types gomobile can
 // bind: strings, numbers, structs and callback interfaces. Requests and
 // envelopes are the JSON of protocol/.
 //
@@ -20,7 +20,7 @@ import (
 	"errors"
 	"sync/atomic"
 
-	embedded "github.com/vegard/say-v2/say"
+	embedded "github.com/lum1n/say-v2/say"
 )
 
 // Node is a say node running in the app.

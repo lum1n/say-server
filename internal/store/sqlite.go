@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/vegard/say-v2/internal/store/db"
+	"github.com/lum1n/say-v2/internal/store/db"
 	_ "modernc.org/sqlite"
 )
 

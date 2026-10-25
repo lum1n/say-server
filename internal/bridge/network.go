@@ -22,7 +22,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/vegard/say-v2/internal/connector"
+	"github.com/lum1n/say-v2/internal/connector"
 )
 
 // Network is a kind of bridge: IRC, Matrix, Slack, …

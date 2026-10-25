@@ -14,8 +14,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/vegard/say-v2/internal/tui"
-	"github.com/vegard/say-v2/say"
+	"github.com/lum1n/say-v2/internal/tui"
+	"github.com/lum1n/say-v2/say"
 )
 
 // runTUI runs the terminal client. By default it embeds a local node

@@ -12,8 +12,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // The MCP server at /mcp lets an agent such as Claude Code take part in

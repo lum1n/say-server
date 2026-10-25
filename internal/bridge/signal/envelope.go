@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/vegard/say-v2/internal/bridge"
+	"github.com/lum1n/say-v2/internal/bridge"
 )
 
 // receiveParams are the params of a "receive" notification. signal-cli

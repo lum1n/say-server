@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/vegard/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/core"
 )
 
 // raw sends a JSON request with an optional cookie and returns the response

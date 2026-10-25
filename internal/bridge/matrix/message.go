@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/vegard/say-v2/internal/bridge"
+	"github.com/lum1n/say-v2/internal/bridge"
 )
 
 // encryptedText stands in for a message of an encrypted room.

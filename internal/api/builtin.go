@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vegard/say-v2/internal/bus"
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/llm"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/bus"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/llm"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // Built-in agents are agent principals the server runs itself

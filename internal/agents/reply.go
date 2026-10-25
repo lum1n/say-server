@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/llm"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/llm"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // historyLimit is how many messages up to the trigger the model sees.

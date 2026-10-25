@@ -13,10 +13,10 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/store"
 
-	_ "github.com/vegard/say-v2/internal/bridge/webhook"
+	_ "github.com/lum1n/say-v2/internal/bridge/webhook"
 )
 
 func TestWebhookBridge(t *testing.T) {

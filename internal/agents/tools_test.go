@@ -13,9 +13,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/llm"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/llm"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // weatherServer is an MCP server with one tool, forecast, that only

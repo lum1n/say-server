@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // TokenCookie carries the access token for browsers, which cannot set an

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vegard/say-v2/internal/bridge"
+	"github.com/lum1n/say-v2/internal/bridge"
 )
 
 const token = "123456:SECRETtoken_abc"

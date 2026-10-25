@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // The server's agent policy for rooms that set no limit of their own

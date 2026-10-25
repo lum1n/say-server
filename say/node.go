@@ -28,14 +28,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vegard/say-v2/internal/agents"
-	"github.com/vegard/say-v2/internal/api"
-	"github.com/vegard/say-v2/internal/bridge"
-	_ "github.com/vegard/say-v2/internal/bridge/networks" // registers every network
-	"github.com/vegard/say-v2/internal/bus"
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/password"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/agents"
+	"github.com/lum1n/say-v2/internal/api"
+	"github.com/lum1n/say-v2/internal/bridge"
+	_ "github.com/lum1n/say-v2/internal/bridge/networks" // registers every network
+	"github.com/lum1n/say-v2/internal/bus"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/password"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // Config is how to run a node. The zero value runs a single node on

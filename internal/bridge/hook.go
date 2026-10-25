@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/vegard/say-v2/internal/bus"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/bus"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // ErrNotLinked is a hooked message for a chat no room is linked to.

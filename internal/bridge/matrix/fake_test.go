@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vegard/say-v2/internal/bridge"
+	"github.com/lum1n/say-v2/internal/bridge"
 )
 
 // fakeServer is a homeserver with just enough of the client-server API

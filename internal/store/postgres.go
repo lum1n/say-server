@@ -6,7 +6,7 @@ import (
 	"fmt"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/vegard/say-v2/internal/store/db"
+	"github.com/lum1n/say-v2/internal/store/db"
 )
 
 // migrationLock is the Postgres advisory lock key that serializes

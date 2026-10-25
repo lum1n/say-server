@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/vegard/say-v2/internal/bridge"
+	"github.com/lum1n/say-v2/internal/bridge"
 )
 
 // TestHomeserver runs the driver against a real homeserver that allows

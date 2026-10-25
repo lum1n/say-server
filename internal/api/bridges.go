@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vegard/say-v2/internal/bridge"
-	"github.com/vegard/say-v2/internal/bus"
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/bridge"
+	"github.com/lum1n/say-v2/internal/bus"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // Bridges connect rooms to other networks (docs/adr/0014-bridges.md). A

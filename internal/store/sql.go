@@ -12,8 +12,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/vegard/say-v2/internal/core"
-	"github.com/vegard/say-v2/internal/store/db"
+	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-v2/internal/store/db"
 )
 
 // sqlStore is the Store for both engines. wrap adapts a connection or

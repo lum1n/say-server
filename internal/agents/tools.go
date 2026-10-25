@@ -13,8 +13,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/vegard/say-v2/internal/llm"
-	"github.com/vegard/say-v2/internal/store"
+	"github.com/lum1n/say-v2/internal/llm"
+	"github.com/lum1n/say-v2/internal/store"
 )
 
 // An agent's tools come from the MCP servers its admin gave it. It opens
