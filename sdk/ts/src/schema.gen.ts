@@ -21,6 +21,706 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/setup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether the instance still needs its first admin */
+        get: operations["getSetup"];
+        put?: never;
+        /**
+         * Create the first admin and sign them in
+         * @description Works once per instance. `code` is the setup code the server logs
+         *     at startup (or `--setup-code`). On success the response sets the
+         *     `say_token` session cookie.
+         */
+        post: operations["setup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in with a username and password
+         * @description Sets the `say_token` session cookie, valid for 30 days.
+         */
+        post: operations["login"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke the token this request was made with
+         * @description Also clears the `say_token` cookie.
+         */
+        post: operations["logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/principals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Every principal on the instance, oldest first
+         * @description The directory clients resolve sender and member names from. People
+         *     and agents may read it; guests and ghosts get 403. An agent with an
+         *     open bot session on /ws carries `connector`.
+         */
+        get: operations["listPrincipals"];
+        put?: never;
+        /**
+         * Add a person or an agent (instance admins only)
+         * @description A human gets a username and password and signs in through
+         *     /login. An agent gets an access token that never expires; it is
+         *     returned here once and cannot be shown again.
+         */
+        post: operations["createPrincipal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The principal the token belongs to */
+        get: operations["getMe"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Rooms the caller is a member of, oldest first */
+        get: operations["listRooms"];
+        put?: never;
+        /** Create a room owned by the caller */
+        post: operations["createRoom"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        /** One room */
+        get: operations["getRoom"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a room's agent settings
+         * @description Only people (not agents) who own or administer the room, or
+         *     instance admins who are in it, may change it, so an agent can
+         *     never lift its own limits.
+         */
+        patch: operations["updateRoom"];
+        trace?: never;
+    };
+    "/rooms/{id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        /** Members of a room */
+        get: operations["listMembers"];
+        put?: never;
+        /** Add a principal to a room (owners and admins only) */
+        post: operations["addMember"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}/members/{principal_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                principal_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Make an agent a designated responder, or stop it being one
+         * @description A built-in agent that is a responder answers every message in the
+         *     room, not only those that mention it. Only people who own or
+         *     administer the room, or instance admins in it, may change it.
+         */
+        patch: operations["updateMember"];
+        trace?: never;
+    };
+    "/rooms/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Page through a room's event log
+         * @description With `after`, reads forward from that cursor; `wait` then holds the
+         *     request until at least one event arrives or the wait ends (the
+         *     long-poll fallback). Without `after`, reads the page that ends
+         *     just before `before`, or the latest page. Events are always in seq
+         *     order.
+         */
+        get: operations["listEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}/events/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Server-Sent Events of a room
+         * @description Replays the events after the cursor, then streams new ones. Each
+         *     SSE message has `event: event`, `id: <seq>` and the Event as JSON
+         *     in `data`. A streaming message's changes come as `event: stream`
+         *     with the message as it now is and no id; they are not replayed,
+         *     and a slow reader may miss some, but the edit that ends the stream
+         *     is an `event`. Idle streams get a `: ping` comment every 25
+         *     seconds.
+         */
+        get: operations["streamEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Send a message to a room */
+        post: operations["sendMessage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}/messages/{event_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Stream into, end or edit your own message
+         * @description While the message streams, a body with `parts` and without
+         *     `stream: "final"` replaces its parts in place: nothing is added to
+         *     the log, and subscribers get a `stream` push. Ending the stream
+         *     (`stream: "final"`, with or without `parts`) and every change to a
+         *     final message append an `edit` event that names the message in
+         *     `edits` and carries its whole new parts. Editing a final message
+         *     sets its `edited_at`; ending a stream does not. Edits do not count
+         *     against agent budgets and are allowed while agents are paused.
+         */
+        patch: operations["editMessage"];
+        trace?: never;
+    };
+    "/ws": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The client and connector WebSocket
+         * @description Frames are envelopes (envelope.schema.json). A request carries a
+         *     client-chosen `id`, a `type` and a payload; the reply echoes `id`
+         *     and `type` with `status` `ok` or `error` (payload `WsError`).
+         *     Request types and payloads:
+         *
+         *     - `subscribe`: `WsSubscribe`. Pushes the room's events after
+         *       `after`, then new ones. Subscribing again restarts from the new
+         *       cursor.
+         *     - `unsubscribe`: `WsUnsubscribe`.
+         *     - `send`: `WsSend`; the reply payload is the `Event`.
+         *     - `edit`: `WsEdit`; the reply payload is the message as it now is.
+         *     - `ping`: no payload.
+         *     - `hello`: `WsHello`; opens a bot session (below). The reply
+         *       payload is `WsHelloReply`.
+         *     - `ack`: `WsAck`; bot sessions only.
+         *
+         *     **Bot sessions.** An agent's socket that says `hello` follows
+         *     every room the agent is in, and rooms it is added to later, by
+         *     itself; `subscribe` and `unsubscribe` are refused with 409. Each
+         *     room starts at the agent's stored cursor, which `ack` moves
+         *     forward; a room it never acked starts 20 events back. Delivery is
+         *     at least once: events not acked come again after a reconnect, so
+         *     reply with an idempotency key derived from the message. An event
+         *     push that asks the bot for an answer has `trigger` (`Trigger`) on
+         *     its envelope. For an `edit` event that ends a stream, the trigger
+         *     is for the message it completes (`edits`), whose content is the
+         *     edit's parts. The agent shows as online (`Principal.connector`)
+         *     while the socket is open. Event pushes start after the hello reply.
+         *
+         *     Events arrive as pushes `{id: <event id>, type: "event", payload:
+         *     Event}` without a status. A streaming message's changes arrive as
+         *     pushes `{id, type: "stream", payload: Event}` holding the message
+         *     as it now is; they are not logged or replayed, and are dropped for
+         *     a client that falls behind, so apply them by message id and rely
+         *     on the `edit` event that ends the stream. A push `{id, type: "rooms"}` without a
+         *     payload says the caller's room list changed (it was added to a room
+         *     or created one); reread `GET /rooms`. A client that offered the
+         *     subprotocols `say.v1` and `say.token.<token>` is answered with
+         *     `say.v1`. Like event notifications it
+         *     is a hint, so also reread the list after reconnecting. It also
+         *     comes when a bridge of the caller or of one of its rooms changes
+         *     state. A push `{id, type: "delivery", payload: DeliveryPush}` on a
+         *     subscribed room says how a message went out to its bridges. A client that falls too far behind is
+         *     closed with code 1008 and should reconnect and resubscribe from its
+         *     cursors.
+         */
+        get: operations["openWebSocket"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/builtin-agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Built-in agents (instance admins only)
+         * @description Agents the server runs itself by calling a model provider. API
+         *     keys are never returned.
+         */
+        get: operations["listBuiltinAgents"];
+        put?: never;
+        /**
+         * Add a built-in agent (instance admins only)
+         * @description Creates an agent principal that the server runs. Add it to rooms
+         *     like any other principal; it answers DMs, mentions, and every
+         *     message in rooms where it is a responder.
+         */
+        post: operations["createBuiltinAgent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/builtin-agents/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The agent's principal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change a built-in agent (instance admins only) */
+        patch: operations["updateBuiltinAgent"];
+        trace?: never;
+    };
+    "/rooms/{id}/handoff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hand a widget thread from its agent to its people
+         * @description Agents in the thread stop being responders, so they answer only
+         *     when mentioned. The visitor or a person in the thread may call it;
+         *     a person's first message in the thread does the same.
+         */
+        post: operations["handoffRoom"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/widgets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Chat widgets (instance admins only) */
+        get: operations["listWidgets"];
+        put?: never;
+        /** Create a chat widget (instance admins only) */
+        post: operations["createWidget"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/widgets/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a chat widget (instance admins only)
+         * @description Absent fields stay as they are. Existing threads keep their members.
+         */
+        patch: operations["updateWidget"];
+        trace?: never;
+    };
+    "/widget-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The widget threads I am in (the inbox)
+         * @description Widget threads whose team or agent I am in, with whether an agent
+         *     still answers each, latest activity first. People and agents only.
+         */
+        get: operations["listWidgetThreads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/embed/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The widget's public key (pk_…) */
+                key: components["parameters"]["WidgetKey"];
+            };
+            cookie?: never;
+        };
+        /** A widget's public settings, for its embed page */
+        get: operations["getEmbedConfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/embed/{key}/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The widget's public key (pk_…) */
+                key: components["parameters"]["WidgetKey"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign a visitor in to a widget
+         * @description With a bearer token from an earlier session of the same visitor,
+         *     returns that session as is. With an identity token, finds or
+         *     creates the verified visitor it names, on any device. Otherwise
+         *     creates an anonymous visitor: a guest principal with a widget
+         *     thread, whose members are the widget's team and agent. Visitor
+         *     tokens last 90 days.
+         */
+        post: operations["createEmbedSession"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/hooks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The bridge's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post a message to a bridge that takes hooks
+         * @description For networks with `hook: true`, such as webhooks. The network
+         *     checks the secret: for webhooks, `Authorization: Bearer <secret>`
+         *     or `?token=<secret>`. Any node takes it. In a relay bot the chat
+         *     must be linked to a room, or nothing is taken (404 `not_linked`).
+         *     A repeated `id` in the same chat is ignored.
+         */
+        post: operations["postHook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/networks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The networks this server bridges to, with their settings */
+        get: operations["listNetworks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bridges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Your accounts on other networks, and relay bots for admins */
+        get: operations["listBridges"];
+        put?: never;
+        /**
+         * Connect your account on a network, or add a relay bot
+         * @description In `account` mode (the default; people only) the account's chats
+         *     become rooms of the caller, and what the caller writes there goes
+         *     out as them. `bot` mode (instance admins only) adds a relay bot
+         *     that rooms are linked to with `POST /bridges/{id}/links`. The
+         *     bridge starts at once; a login step it needs shows as `prompt`.
+         */
+        post: operations["createBridge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bridges/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        /** A bridge the caller manages */
+        get: operations["getBridge"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a bridge's name, settings or switch; it restarts
+         * @description Absent fields stay as they are. In `config`, a setting set to ""
+         *     is cleared and a secret left out keeps its value.
+         */
+        patch: operations["updateBridge"];
+        trace?: never;
+    };
+    "/bridges/{id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Answer the bridge's login prompt (its owner only) */
+        post: operations["answerBridge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bridges/{id}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        /** The rooms a bridge mirrors, and the remote chats they mirror */
+        get: operations["listBridgeLinks"];
+        put?: never;
+        /**
+         * Link a room to a remote channel of a relay bot
+         * @description The caller must own or administer the room. Delivery starts from
+         *     now; the room's history is not sent. Accounts make their links
+         *     themselves, one room per chat (409).
+         */
+        post: operations["createBridgeLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bridges/{id}/links/{link_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Stop mirroring a room; the room and its log stay */
+        delete: operations["deleteBridgeLink"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -30,12 +730,442 @@ export interface components {
             status: "ok";
             version: string;
         };
+        Error: {
+            error: {
+                /**
+                 * @description Stable machine-readable code: unauthorized, forbidden,
+                 *     not_found, conflict, bad_request, unsupported_media_type,
+                 *     invalid, hop_limit, agents_paused, agent_budget,
+                 *     rate_limited, too_many, invalid_credentials,
+                 *     bad_setup_code, setup_done, username_taken or internal.
+                 */
+                code: string;
+                message: string;
+            };
+        };
         /** @enum {string} */
         PrincipalKind: "human" | "agent" | "guest" | "ghost" | "system";
+        Principal: {
+            id: string;
+            kind: components["schemas"]["PrincipalKind"];
+            display_name: string;
+            /** @description Present and true for instance admins. */
+            admin?: boolean;
+            connector?: components["schemas"]["Connector"];
+            /** Format: date-time */
+            created_at: string;
+        };
+        /**
+         * @description An agent's open bot session: the bot is online. Only
+         *     `GET /principals` shows it.
+         */
+        Connector: {
+            name: string;
+            version: string;
+            capabilities: string[];
+            /** Format: date-time */
+            connected_at: string;
+        };
+        SetupStatus: {
+            needed: boolean;
+        };
+        /** @description 1–32 of a-z, 0-9, '.', '_' or '-'; case-insensitive. */
+        Username: string;
+        Password: string;
+        Setup: {
+            code: string;
+            username: components["schemas"]["Username"];
+            /** @description Defaults to the username. */
+            display_name?: string;
+            password: components["schemas"]["Password"];
+        };
+        Login: {
+            username: string;
+            password: string;
+        };
+        CreatePrincipal: {
+            /** @enum {string} */
+            kind: "human" | "agent";
+            /** @description Required for agents; defaults to the username for humans. */
+            display_name?: string;
+            username?: components["schemas"]["Username"];
+            password?: components["schemas"]["Password"];
+        };
+        CreatedPrincipal: {
+            principal: components["schemas"]["Principal"];
+            /** @description The agent's access token. Only for agents. */
+            token?: string;
+        };
         /** @enum {string} */
         RoomKind: "dm" | "group" | "channel" | "widget-thread";
+        Room: {
+            id: string;
+            kind: components["schemas"]["RoomKind"];
+            name: string;
+            agents: components["schemas"]["AgentPolicy"];
+            /** @description The networks the room is mirrored to; only in `GET /rooms` and `GET /rooms/{id}`, and absent when none. */
+            bridges?: components["schemas"]["RoomBridge"][];
+            /** Format: date-time */
+            created_at: string;
+        };
+        /**
+         * @description The limits on automated senders (agents) that apply in a room,
+         *     with the server's defaults filled in. People are never limited.
+         */
+        AgentPolicy: {
+            /** @description Every automated send is refused with agents_paused. */
+            paused: boolean;
+            /** @description The longest automated causation chain (hop_limit). */
+            max_hop_count: number;
+            /**
+             * @description Automated messages, from all agents together, the room takes in
+             *     any turn_window_seconds (agent_budget).
+             */
+            turn_limit: number;
+            turn_window_seconds: number;
+            /** @description Messages one agent may send per minute (rate_limited). */
+            rate_limit_per_minute: number;
+        };
+        UpdateRoom: {
+            agents?: components["schemas"]["AgentPolicyPatch"];
+        };
+        /** @description Absent fields stay as they are; a zero limit means the server default. */
+        AgentPolicyPatch: {
+            paused?: boolean;
+            max_hop_count?: number;
+            turn_limit?: number;
+            /** @description 0, or from 60 to 86400. */
+            turn_window_seconds?: number;
+            rate_limit_per_minute?: number;
+        };
+        CreateRoom: {
+            /** @enum {string} */
+            kind: "dm" | "group" | "channel";
+            name?: string;
+        };
+        /** @enum {string} */
+        Role: "owner" | "admin" | "member" | "observer";
+        Member: {
+            principal_id: string;
+            role: components["schemas"]["Role"];
+            /** @description responder marks an agent that answers every message in the room. */
+            scopes: string[];
+            /** @description In member lists, so that guests, who cannot read the directory, can name senders. */
+            display_name?: string;
+            kind?: components["schemas"]["PrincipalKind"];
+        };
+        AddMember: {
+            principal_id: string;
+            /**
+             * @default member
+             * @enum {string}
+             */
+            role: "admin" | "member" | "observer";
+        };
+        UpdateMember: {
+            /** @description Only agents can be responders. */
+            responder?: boolean;
+        };
+        /**
+         * @description openai also covers any OpenAI-compatible endpoint, such as Ollama.
+         * @enum {string}
+         */
+        LLMProvider: "anthropic" | "openai";
+        /** @description Absent fields stay as they are. */
+        BuiltinAgentSettings: {
+            /** @description The agent's name, which people @mention it by. A rename takes effect at once. */
+            display_name?: string;
+            provider?: components["schemas"]["LLMProvider"];
+            /** @description An OpenAI-compatible endpoint, e.g. http://localhost:11434/v1. Empty is the provider's own API. */
+            base_url?: string;
+            /** @description Empty picks the provider's default model. */
+            model?: string;
+            /** @description Write-only. Empty uses the server's ANTHROPIC_API_KEY or OPENAI_API_KEY. */
+            api_key?: string;
+            /** @description Added to the instructions the server gives every built-in agent. */
+            system_prompt?: string;
+            /** @description The longest reply, in tokens. 0 is the default, 1024. */
+            max_tokens?: number;
+            /**
+             * Format: int64
+             * @description Input plus output tokens per UTC day; 0 is no limit.
+             */
+            daily_token_budget?: number;
+            /** @description Dollars per million input tokens, used to count spending against daily_cost_budget. */
+            input_price?: number;
+            /** @description Dollars per million output tokens. */
+            output_price?: number;
+            /**
+             * @description Dollars per UTC day at the agent's prices; 0 is no limit. Needs
+             *     input_price or output_price. Each call's cost is counted at the
+             *     prices set when it was made, rounded up to a micro-dollar.
+             */
+            daily_cost_budget?: number;
+            enabled?: boolean;
+            /**
+             * @description Replaces the MCP servers whose tools the agent may call. A server
+             *     without `authorization` keeps the header it had, as long as its
+             *     name and URL are unchanged.
+             */
+            mcp_servers?: components["schemas"]["MCPServerSettings"][];
+        };
+        MCPServerSettings: {
+            /** @description Prefixes the server's tool names, as `name__tool`. */
+            name: string;
+            /** @description The server's streamable HTTP endpoint. */
+            url: string;
+            /** @description Write-only. Sent as the Authorization header, e.g. `Bearer …`. Empty sends none. */
+            authorization?: string;
+        };
+        MCPServer: {
+            name: string;
+            url: string;
+            has_authorization: boolean;
+        };
+        CreateBuiltinAgent: components["schemas"]["BuiltinAgentSettings"] & {
+            display_name: string;
+        };
+        BuiltinAgent: {
+            principal: components["schemas"]["Principal"];
+            provider: components["schemas"]["LLMProvider"];
+            base_url: string;
+            model: string;
+            has_api_key: boolean;
+            system_prompt: string;
+            max_tokens: number;
+            /** Format: int64 */
+            daily_token_budget: number;
+            /**
+             * Format: int64
+             * @description Tokens used so far today (UTC).
+             */
+            tokens_today: number;
+            /** @description Dollars per million input tokens. */
+            input_price: number;
+            /** @description Dollars per million output tokens. */
+            output_price: number;
+            /** @description Dollars per UTC day; 0 is no limit. */
+            daily_cost_budget: number;
+            /** @description Dollars spent so far today (UTC). */
+            cost_today: number;
+            enabled: boolean;
+            mcp_servers: components["schemas"]["MCPServer"][];
+            /** @description Why the agent last failed to reply, until it next succeeds. */
+            last_error?: string;
+            /** Format: date-time */
+            last_error_at?: string;
+        };
+        WidgetSettings: {
+            name?: string;
+            /**
+             * @description Origins of the pages that may embed the widget, like
+             *     https://shop.example. The embed page is served with
+             *     `frame-ancestors` set to them. At least one is required.
+             */
+            origins?: string[];
+            /** @description The agent that answers visitors; "" is none. */
+            agent_id?: string;
+            /** @description People added to each new thread as admins. */
+            team?: string[];
+            greeting?: string;
+            /** @description Replace the secret; identity tokens signed with the old one stop working. */
+            rotate_secret?: boolean;
+        };
+        Widget: {
+            id: string;
+            name: string;
+            /** @description pk_…, the widget attribute of `<say-chat>`. */
+            public_key: string;
+            /** @description sk_…, signs identity tokens (HS256 JWTs) on the host site's server. Keep it there. */
+            secret: string;
+            origins: string[];
+            agent_id?: string;
+            team: string[];
+            greeting: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        WidgetThread: {
+            room_id: string;
+            widget_id: string;
+            widget_name: string;
+            visitor_id: string;
+            visitor_name: string;
+            /** @description Whether the host site signed the visitor in (an identity token). */
+            verified: boolean;
+            /**
+             * @description `open`: an agent answers the visitor. `handed_over`: the
+             *     thread is the team's, and agents answer only when mentioned.
+             *     `idle`: no message for 30 minutes, unless the visitor of a
+             *     handed-over thread is still waiting for a person.
+             * @enum {string}
+             */
+            state: "open" | "handed_over" | "idle";
+            /** @description The visitor wrote the latest message, so nobody has answered it yet. */
+            waiting: boolean;
+            /**
+             * Format: date-time
+             * @description Absent when the thread has no messages.
+             */
+            last_message_at?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        EmbedConfig: {
+            name: string;
+            greeting: string;
+            origins: string[];
+        };
+        EmbedSessionRequest: {
+            /**
+             * @description An HS256 JWT signed with the widget secret. Claims: `sub` (the
+             *     host site's user id, required), `exp` (required, at most 24 h
+             *     ahead), `name` (optional), `nbf` (optional).
+             */
+            identity?: string;
+        };
+        EmbedSession: {
+            principal: components["schemas"]["Principal"];
+            room: components["schemas"]["Room"];
+            /** @description The visitor's access token. Send it as a bearer token and, on /ws, as a subprotocol. */
+            token: string;
+        };
         /** @enum {string} */
         Reachability: "live" | "offline" | "unlinked";
+        /** @enum {string} */
+        BridgeMode: "account" | "bot";
+        /**
+         * @description `live` while the node running it is connected; `login` while it
+         *     waits for its owner (`prompt`); `error` when its connection fails
+         *     (`error`); `offline` when no node runs it; `disabled`.
+         * @enum {string}
+         */
+        BridgeState: "live" | "login" | "error" | "offline" | "disabled";
+        NetworkField: {
+            key: string;
+            label: string;
+            /**
+             * @description A `secret` is write-only.
+             * @enum {string}
+             */
+            kind: "text" | "secret" | "number" | "bool";
+            required?: boolean;
+            placeholder?: string;
+            help?: string;
+            /** @description The modes the field applies in; absent is all. */
+            modes?: components["schemas"]["BridgeMode"][];
+        };
+        Network: {
+            name: string;
+            title: string;
+            modes: components["schemas"]["BridgeMode"][];
+            fields: components["schemas"]["NetworkField"][];
+            capabilities: string[];
+            /** @description The network takes messages posted to `/hooks/{bridge id}`. */
+            hook?: boolean;
+        };
+        /** @description A message posted to a webhook bridge's hook. */
+        HookMessage: {
+            /** @description The remote chat, linked to a room; else `?chat=`, else "default". */
+            chat?: string;
+            /** @description The message's id in the chat, so repeats are ignored; made up if absent. */
+            id?: string;
+            text?: string;
+            /** @description The text, as Discord webhooks name it, if `text` is absent. */
+            content?: string;
+            /** @description Who wrote it; "Webhook" if absent. */
+            username?: string;
+            /** @description A stable id of the writer; the username if absent. */
+            user_id?: string;
+            reply_to?: string;
+            /** @description The message `id` now reads `text`. */
+            edit?: boolean;
+            /** Format: date-time */
+            time?: string;
+        };
+        BridgeSettings: {
+            /** @description Required to create; can't change. */
+            network?: string;
+            mode?: components["schemas"]["BridgeMode"];
+            name?: string;
+            /** @description Values for the network's fields, by key. */
+            config?: {
+                [key: string]: unknown;
+            };
+            enabled?: boolean;
+        };
+        /** @description A login step only the owner can do. */
+        BridgePrompt: {
+            /** @enum {string} */
+            kind: "code" | "password" | "text" | "qr";
+            text: string;
+            /** @description What to show, such as a QR code's contents. */
+            data?: string;
+        };
+        Bridge: {
+            id: string;
+            owner_id: string;
+            mode: components["schemas"]["BridgeMode"];
+            network: string;
+            name: string;
+            /** @description The settings without secrets. */
+            config: {
+                [key: string]: unknown;
+            };
+            /** @description The secrets that are set. */
+            secrets_set: string[];
+            enabled: boolean;
+            state: components["schemas"]["BridgeState"];
+            error?: string;
+            prompt?: components["schemas"]["BridgePrompt"];
+            /** Format: date-time */
+            seen_at?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        BridgeLink: {
+            id: string;
+            bridge_id: string;
+            room_id: string;
+            room_name: string;
+            remote_id: string;
+            remote_name: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        CreateBridgeLink: {
+            room_id: string;
+            /** @description The channel on the network, such as "#say" on IRC. */
+            remote_id: string;
+            remote_name?: string;
+        };
+        RoomBridge: {
+            bridge_id: string;
+            network: string;
+            name: string;
+            mode: components["schemas"]["BridgeMode"];
+            remote_name: string;
+            state: components["schemas"]["BridgeState"];
+        };
+        /**
+         * @description `unknown` is a send under way when its node stopped; it is never
+         *     retried. `expired` waited longer than ten minutes for its bridge.
+         * @enum {string}
+         */
+        DeliveryState: "sending" | "sent" | "unknown" | "failed" | "expired";
+        Delivery: {
+            event_id: string;
+            bridge_id: string;
+            state: components["schemas"]["DeliveryState"];
+            error?: string;
+        };
+        DeliveryPush: {
+            room_id: string;
+            event_id: string;
+            deliveries: components["schemas"]["Delivery"][];
+        };
         Causation: {
             /** @description Id of the event that triggered this one. */
             caused_by?: string;
@@ -68,9 +1198,171 @@ export interface components {
             /** @description Principal that handles the conversation now. */
             to: string;
         };
+        /**
+         * @description A streaming message's parts change in place until an edit ends the
+         *     stream. On an edit event, `final` means the edit ended a stream.
+         * @enum {string}
+         */
+        StreamState: "streaming" | "final";
+        /** @enum {string} */
+        PartKind: "text" | "attachment" | "tool-call" | "tool-result" | "card";
+        /**
+         * @description One typed piece of a message. `data` is a JSON object of at most
+         *     64 KiB; for `text` it is a `TextPartData`, and for `tool-call` a
+         *     `ToolCallPartData`.
+         */
+        Part: {
+            kind: components["schemas"]["PartKind"];
+            data: {
+                [key: string]: unknown;
+            };
+        };
+        TextPartData: {
+            text: string;
+        };
+        /**
+         * @description A tool the sender used while writing the message, such as a built-in
+         *     agent's call to an MCP server. It shows the call and how it went,
+         *     not its result.
+         */
+        ToolCallPartData: {
+            /** @description The call's id, unique within the message. */
+            id?: string;
+            name: string;
+            /** @description The call's arguments; absent when they were too long to show. */
+            input?: {
+                [key: string]: unknown;
+            };
+            /** @enum {string} */
+            status: "running" | "done" | "failed";
+            /** @description Why a failed call failed. */
+            error?: string;
+        };
+        Event: {
+            id: string;
+            room_id: string;
+            /**
+             * Format: int64
+             * @description Position in the room's log; the cursor to resume from.
+             */
+            seq: number;
+            type: components["schemas"]["EventType"];
+            sender_id: string;
+            causation: components["schemas"]["Causation"];
+            parts: components["schemas"]["Part"][];
+            stream?: components["schemas"]["StreamState"];
+            /**
+             * @description On an edit event, the message it changed. A message in a page
+             *     of events already shows its latest parts, so clients may skip
+             *     edits of messages they loaded after the edit.
+             */
+            edits?: string;
+            /**
+             * Format: date-time
+             * @description When a final message was last edited.
+             */
+            edited_at?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        SendMessage: {
+            /** @description At least one part, unless the message starts streaming. */
+            parts: components["schemas"]["Part"][];
+            /**
+             * @description `streaming` starts a message that you then change with
+             *     `PATCH /rooms/{id}/messages/{event_id}`. The default is `final`.
+             */
+            stream?: components["schemas"]["StreamState"];
+            /**
+             * @description The event in this room this message replies to. Automated
+             *     senders must set it; a reply that would pass the hop limit is
+             *     rejected with code hop_limit.
+             */
+            caused_by?: string;
+        };
+        EditMessage: {
+            /** @description The whole new parts; leave out to end a stream as it is. */
+            parts?: components["schemas"]["Part"][];
+            stream?: components["schemas"]["StreamState"];
+        };
+        WsSubscribe: {
+            room_id: string;
+            /**
+             * Format: int64
+             * @default 0
+             */
+            after: number;
+        };
+        WsUnsubscribe: {
+            room_id: string;
+        };
+        WsSend: {
+            room_id: string;
+            idempotency_key?: string;
+            parts: components["schemas"]["Part"][];
+            caused_by?: string;
+            stream?: components["schemas"]["StreamState"];
+        };
+        /** @description The same as PATCH /rooms/{id}/messages/{event_id}. */
+        WsEdit: {
+            room_id: string;
+            event_id: string;
+            parts?: components["schemas"]["Part"][];
+            stream?: components["schemas"]["StreamState"];
+        };
+        /** @description Opens a bot session. Agent tokens only. */
+        WsHello: {
+            name?: string;
+            version?: string;
+            capabilities?: string[];
+        };
+        WsHelloReply: {
+            principal: components["schemas"]["Principal"];
+            session_id: string;
+        };
+        /**
+         * @description The bot has handled the room's events through seq. Cursors only
+         *     move forward.
+         */
+        WsAck: {
+            room_id: string;
+            /** Format: int64 */
+            seq: number;
+        };
+        /**
+         * @description Why a message asks a bot for an answer: it is in a DM, the bot is
+         *     a designated responder in the room, or the message @mentions the
+         *     bot. Only recent (5 min) messages from others trigger, never in a
+         *     room where the bot observes.
+         * @enum {string}
+         */
+        Trigger: "dm" | "responder" | "mention";
+        WsError: {
+            code: string;
+            message: string;
+            /** @description The HTTP status the same error would have. */
+            status: number;
+            /** @description For agent_budget and rate_limited, seconds until a send would pass. */
+            retry_after?: number;
+        };
     };
-    responses: never;
-    parameters: never;
+    responses: {
+        /** @description An error */
+        Error: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["Error"];
+            };
+        };
+    };
+    parameters: {
+        BridgeID: string;
+        /** @description The widget's public key (pk_…) */
+        WidgetKey: string;
+        RoomID: string;
+    };
     requestBodies: never;
     headers: never;
     pathItems: never;
@@ -95,6 +1387,1128 @@ export interface operations {
                     "application/json": components["schemas"]["Health"];
                 };
             };
+        };
+    };
+    getSetup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Setup status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupStatus"];
+                };
+            };
+        };
+    };
+    setup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Setup"];
+            };
+        };
+        responses: {
+            /** @description The new admin, signed in */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Principal"];
+                };
+            };
+            400: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    login: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Login"];
+            };
+        };
+        responses: {
+            /** @description The signed-in principal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Principal"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+        };
+    };
+    logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Signed out */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    listPrincipals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The principals */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        principals: components["schemas"]["Principal"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createPrincipal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreatePrincipal"];
+            };
+        };
+        responses: {
+            /** @description The new principal, and the agent's token */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreatedPrincipal"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getMe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Principal"];
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    listRooms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The rooms */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        rooms: components["schemas"]["Room"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    createRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRoom"];
+            };
+        };
+        responses: {
+            /** @description The new room */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The room */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRoom"];
+            };
+        };
+        responses: {
+            /** @description The room */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Room"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listMembers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The members */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        members: components["schemas"]["Member"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    addMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddMember"];
+            };
+        };
+        responses: {
+            /** @description The new membership */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    updateMember: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                principal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMember"];
+            };
+        };
+        responses: {
+            /** @description The membership */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Member"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listEvents: {
+        parameters: {
+            query?: {
+                after?: number;
+                before?: number;
+                limit?: number;
+                /** @description Seconds to wait for new events; only with `after`. */
+                wait?: number;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        events: components["schemas"]["Event"][];
+                        /** @description How the page's messages went out to the room's bridges. */
+                        deliveries: components["schemas"]["Delivery"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    streamEvents: {
+        parameters: {
+            query?: {
+                /** @description Cursor to start after. Defaults to `Last-Event-ID`, then 0. */
+                after?: number;
+            };
+            header?: {
+                "Last-Event-ID"?: string;
+            };
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description An event stream */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    sendMessage: {
+        parameters: {
+            query?: never;
+            header?: {
+                /**
+                 * @description A repeated key from the same sender in the same room returns the
+                 *     original event with status 200 instead of sending again.
+                 */
+                "Idempotency-Key"?: string;
+            };
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendMessage"];
+            };
+        };
+        responses: {
+            /** @description The event an earlier send with the same key created */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"];
+                };
+            };
+            /** @description The new event */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description Agents are paused in this room (code agents_paused) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["Error"];
+            /**
+             * @description An automated sender hit the room's agent turn budget (code
+             *     agent_budget) or its own rate limit (code rate_limited).
+             */
+            429: {
+                headers: {
+                    /** @description Seconds until the send would pass. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    editMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EditMessage"];
+            };
+        };
+        responses: {
+            /** @description The message as it now is */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description Not your message, or not a message (code forbidden) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["Error"];
+            /**
+             * @description A streaming update of a message that is final (code
+             *     not_streaming), also when its stream ended meanwhile.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            422: components["responses"]["Error"];
+        };
+    };
+    openWebSocket: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Switching to the WebSocket protocol */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    listBuiltinAgents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The built-in agents, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        agents: components["schemas"]["BuiltinAgent"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createBuiltinAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBuiltinAgent"];
+            };
+        };
+        responses: {
+            /** @description The new agent */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuiltinAgent"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    updateBuiltinAgent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The agent's principal id */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BuiltinAgentSettings"];
+            };
+        };
+        responses: {
+            /** @description The agent */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuiltinAgent"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    handoffRoom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Handed over */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listWidgets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The widgets, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        widgets: components["schemas"]["Widget"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    createWidget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WidgetSettings"];
+            };
+        };
+        responses: {
+            /** @description The widget */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Widget"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    updateWidget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WidgetSettings"];
+            };
+        };
+        responses: {
+            /** @description The widget */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Widget"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listWidgetThreads: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The threads, latest activity first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        threads: components["schemas"]["WidgetThread"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    getEmbedConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The widget's public key (pk_…) */
+                key: components["parameters"]["WidgetKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbedConfig"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    createEmbedSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The widget's public key (pk_…) */
+                key: components["parameters"]["WidgetKey"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmbedSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description An existing visitor */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbedSession"];
+                };
+            };
+            /** @description A new visitor */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmbedSession"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    postHook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The bridge's id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HookMessage"];
+            };
+        };
+        responses: {
+            /** @description Taken */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listNetworks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The networks, by name */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        networks: components["schemas"]["Network"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    listBridges: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bridges the caller manages, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        bridges: components["schemas"]["Bridge"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    createBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BridgeSettings"];
+            };
+        };
+        responses: {
+            /** @description The bridge */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Bridge"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    getBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bridge */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Bridge"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    updateBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BridgeSettings"];
+            };
+        };
+        responses: {
+            /** @description The bridge */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Bridge"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    answerBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    value: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Passed to the node running the bridge */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description The bridge is not waiting for an answer */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    listBridgeLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The links, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        links: components["schemas"]["BridgeLink"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    createBridgeLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateBridgeLink"];
+            };
+        };
+        responses: {
+            /** @description The link */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BridgeLink"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    deleteBridgeLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+                link_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Unlinked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
 }

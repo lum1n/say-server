@@ -8,6 +8,11 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"time"
+
+	"github.com/vegard/say-v2/internal/bus"
+	"github.com/vegard/say-v2/internal/core"
+	"github.com/vegard/say-v2/internal/store"
 )
 
 //go:embed all:static
@@ -17,19 +22,93 @@ var static embed.FS
 // is not a file or an API route gets it, and the client router takes over.
 const shell = "_shell.html"
 
-type Server struct {
-	version string
-	assets  fs.FS
+// Config is what a Server needs. Store and Bus are required for every
+// route except health and the static app.
+type Config struct {
+	Version string
+	Store   store.Store
+	Bus     bus.Bus
+	// SetupCode must accompany POST /api/v1/setup, which creates the first
+	// admin. Empty when the instance is already set up.
+	SetupCode string
+	// Agents is the agent policy of rooms that set no limits of their own
+	// (docs/adr/0005-agent-safety.md). Its zero limits take the Default
+	// constants; Paused is ignored.
+	Agents core.AgentPolicy
 }
 
-func New(version string) *Server {
+type Server struct {
+	version   string
+	assets    fs.FS
+	store     store.Store
+	bus       bus.Bus
+	defaults  core.AgentPolicy
+	setupCode string
+	// resync is how often a realtime follower rereads the store without a
+	// bus notification; heartbeat is how often idle streams are pinged.
+	resync    time.Duration
+	heartbeat time.Duration
+}
+
+func New(c Config) *Server {
 	assets, _ := fs.Sub(static, "static")
-	return &Server{version: version, assets: assets}
+	c.Agents.Paused = false
+	c.Agents = withDefaults(c.Agents, builtinAgentPolicy)
+	return &Server{
+		version:   c.Version,
+		assets:    assets,
+		store:     c.Store,
+		bus:       c.Bus,
+		defaults:  c.Agents,
+		setupCode: c.SetupCode,
+		resync:    30 * time.Second,
+		heartbeat: 25 * time.Second,
+	}
 }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
+	mux.HandleFunc("GET /api/v1/setup", s.setupStatus)
+	mux.HandleFunc("POST /api/v1/setup", s.setup)
+	mux.HandleFunc("POST /api/v1/login", s.login)
+	mux.HandleFunc("POST /api/v1/logout", s.authed(s.logout))
+	mux.HandleFunc("GET /api/v1/me", s.authed(s.me))
+	mux.HandleFunc("GET /api/v1/principals", s.authed(s.listPrincipals))
+	mux.HandleFunc("POST /api/v1/principals", s.authed(s.createPrincipal))
+	mux.HandleFunc("GET /api/v1/rooms", s.authed(s.listRooms))
+	mux.HandleFunc("POST /api/v1/rooms", s.authed(s.createRoom))
+	mux.HandleFunc("GET /api/v1/rooms/{id}", s.authed(s.getRoom))
+	mux.HandleFunc("PATCH /api/v1/rooms/{id}", s.authed(s.updateRoom))
+	mux.HandleFunc("GET /api/v1/rooms/{id}/members", s.authed(s.listMembers))
+	mux.HandleFunc("POST /api/v1/rooms/{id}/members", s.authed(s.addMember))
+	mux.HandleFunc("PATCH /api/v1/rooms/{id}/members/{principal_id}", s.authed(s.updateMember))
+	mux.HandleFunc("GET /api/v1/rooms/{id}/events", s.authed(s.listEvents))
+	mux.HandleFunc("GET /api/v1/rooms/{id}/events/stream", s.authed(s.stream))
+	mux.HandleFunc("POST /api/v1/rooms/{id}/messages", s.authed(s.postMessage))
+	mux.HandleFunc("PATCH /api/v1/rooms/{id}/messages/{event_id}", s.authed(s.patchMessage))
+	mux.HandleFunc("GET /api/v1/ws", s.authed(s.ws))
+	mux.HandleFunc("GET /api/v1/builtin-agents", s.authed(s.listBuiltinAgents))
+	mux.HandleFunc("POST /api/v1/builtin-agents", s.authed(s.createBuiltinAgent))
+	mux.HandleFunc("PATCH /api/v1/builtin-agents/{id}", s.authed(s.updateBuiltinAgent))
+	mux.HandleFunc("POST /api/v1/rooms/{id}/handoff", s.authed(s.handoffRoom))
+	mux.HandleFunc("GET /api/v1/widgets", s.authed(s.listWidgets))
+	mux.HandleFunc("GET /api/v1/widget-threads", s.authed(s.listWidgetThreads))
+	mux.HandleFunc("POST /api/v1/widgets", s.authed(s.createWidget))
+	mux.HandleFunc("PATCH /api/v1/widgets/{id}", s.authed(s.updateWidget))
+	mux.HandleFunc("GET /api/v1/networks", s.authed(s.listNetworks))
+	mux.HandleFunc("GET /api/v1/bridges", s.authed(s.listBridges))
+	mux.HandleFunc("POST /api/v1/bridges", s.authed(s.createBridge))
+	mux.HandleFunc("GET /api/v1/bridges/{id}", s.authed(s.getBridge))
+	mux.HandleFunc("PATCH /api/v1/bridges/{id}", s.authed(s.updateBridge))
+	mux.HandleFunc("POST /api/v1/bridges/{id}/answer", s.authed(s.answerBridge))
+	mux.HandleFunc("GET /api/v1/bridges/{id}/links", s.authed(s.listLinks))
+	mux.HandleFunc("POST /api/v1/bridges/{id}/links", s.authed(s.createLink))
+	mux.HandleFunc("DELETE /api/v1/bridges/{id}/links/{link_id}", s.authed(s.deleteLink))
+	mux.HandleFunc("POST /api/v1/hooks/{id}", s.hook)
+	mux.HandleFunc("GET /api/v1/embed/{key}", s.embedConfig)
+	mux.HandleFunc("POST /api/v1/embed/{key}/session", s.embedSession)
+	mux.Handle("/mcp", s.mcpHandler())
 	mux.Handle("/api/", http.NotFoundHandler())
 	mux.HandleFunc("/", s.app)
 	return mux
@@ -69,6 +148,12 @@ func (s *Server) app(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
+	if strings.HasPrefix(name, "embed/") {
+		w.Header().Set("Content-Security-Policy", s.frameAncestors(r, name))
+	} else {
+		// Only the widget's page may be framed by other sites.
+		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
+	}
 	w.Write(body)
 }
 

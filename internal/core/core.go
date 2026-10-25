@@ -25,7 +25,9 @@ type Principal struct {
 	ID          string
 	Kind        PrincipalKind
 	DisplayName string
-	CreatedAt   time.Time
+	// Admin principals manage the instance: they create users and agents.
+	Admin     bool
+	CreatedAt time.Time
 }
 
 type RoomKind string
@@ -41,7 +43,24 @@ type Room struct {
 	ID        string
 	Kind      RoomKind
 	Name      string
+	Agents    AgentPolicy
 	CreatedAt time.Time
+}
+
+// AgentPolicy is a room's limits on automated senders
+// (docs/adr/0005-agent-safety.md). A zero limit means the server default.
+type AgentPolicy struct {
+	// Paused rejects every automated send in the room.
+	Paused bool
+	// MaxHops is the longest automated causation chain in the room.
+	MaxHops int
+	// TurnLimit is how many automated messages, from all senders together,
+	// the room takes in any TurnWindow.
+	TurnLimit  int
+	TurnWindow time.Duration
+	// RateLimit is how many messages one automated sender may send to the
+	// room per minute.
+	RateLimit int
 }
 
 type Role string
@@ -84,13 +103,24 @@ type Event struct {
 	Type      EventType
 	SenderID  string
 	Causation Causation
-	Parts     []Part               // for EventMessage
-	Stream    StreamState          // for EventMessage
+	// Parts are a message's content, kept up to date as it streams and is
+	// edited, or the whole new content of an edit.
+	Parts []Part
+	// Stream is a message's state. On an edit it is StreamFinal when the
+	// edit ended the message's stream, and empty otherwise.
+	Stream StreamState
+	// Edits is the message an EventEdit changes.
+	Edits string
+	// EditedAt is when a final message was last edited; zero if never.
+	EditedAt  time.Time
 	Settings  *AgentSettingsChange // for EventAgentSettings
 	Handoff   *Handoff             // for EventHandoff
 	CreatedAt time.Time
 }
 
+// StreamState says whether a message is complete. A streaming message's
+// parts change in place, unlogged, until an edit event makes it final
+// (docs/adr/0010-streaming-and-edits.md).
 type StreamState string
 
 const (

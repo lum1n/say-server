@@ -1,0 +1,800 @@
+:root {
+  color-scheme: light dark;
+  --bg: light-dark(#fff, #16171a);
+  --panel: light-dark(#f5f5f4, #1e1f23);
+  --line: light-dark(#e4e4e2, #2c2d33);
+  --text: light-dark(#1c1c1c, #e8e8e6);
+  --muted: light-dark(#6b6b68, #9a9a96);
+  --accent: light-dark(#2b5fd9, #7aa2ff);
+  font: 15px/1.45 system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+input,
+select,
+textarea {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+button {
+  background: var(--accent);
+  color: var(--bg);
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button.link {
+  background: none;
+  color: var(--accent);
+  padding: 0;
+}
+
+a {
+  color: var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.online {
+  font-size: 11px;
+  margin-left: 6px;
+  color: light-dark(#17803d, #4ade80);
+}
+
+.online::before {
+  content: "●";
+  margin-right: 3px;
+}
+
+.badge {
+  font-size: 11px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-left: 6px;
+  color: var(--muted);
+}
+
+.center,
+.empty {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+}
+
+.auth {
+  max-width: 360px;
+  margin: 10vh auto;
+  padding: 0 16px;
+}
+
+/* App layout: rooms | room (log and composer) | members */
+
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  height: 100vh;
+  height: 100dvh; /* excludes mobile browser toolbars */
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 12px;
+  min-height: 0;
+}
+
+.rooms {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.rooms a {
+  display: block;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.rooms a[aria-current="page"] {
+  background: var(--line);
+  font-weight: 600;
+}
+
+.new-room {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+}
+
+.new-room input {
+  grid-column: 1 / -1;
+}
+
+.sidebar footer {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.room {
+  display: grid;
+  grid-template-columns: 1fr 220px;
+  grid-template-rows: auto 1fr auto;
+  min-height: 0;
+}
+
+.room-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 16px;
+}
+
+.room-header h1 {
+  font-size: 17px;
+  margin: 0;
+}
+
+.log {
+  overflow-y: auto;
+  padding: 12px 16px;
+  min-height: 0;
+}
+
+.earlier {
+  display: block;
+  margin: 0 auto 12px;
+}
+
+.msg {
+  margin-top: 10px;
+}
+
+.msg.grouped {
+  margin-top: 2px;
+}
+
+.msg header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.msg time {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.msg p,
+.pending .text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A reply still being written ends in a blinking caret, unless it is
+   waiting on a tool. */
+.msg.streaming > p:last-child::after {
+  content: "▍";
+  margin-left: 1px;
+  color: var(--muted);
+  animation: caret 1s steps(2, start) infinite;
+}
+
+@keyframes caret {
+  to {
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg.streaming > p:last-child::after {
+    animation: none;
+  }
+}
+
+/* Tools an agent used, between the text of its rounds. */
+.msg .tool {
+  margin: 2px 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.msg .tool::before {
+  content: "⚙ ";
+}
+
+.msg details.tool::before {
+  content: none;
+}
+
+.msg .tool summary {
+  cursor: pointer;
+}
+
+.msg .tool.failed,
+.msg .tool-error {
+  color: crimson;
+}
+
+.msg .tool-error,
+.msg .tool pre {
+  margin: 4px 0 4px 16px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.msg .tool pre {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.msg .edited {
+  font-size: 12px;
+}
+
+.composer {
+  grid-column: 1;
+  border-top: 1px solid var(--line);
+  padding: 10px 16px;
+}
+
+.composer form {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+}
+
+.composer textarea {
+  flex: 1;
+  resize: none;
+  field-sizing: content;
+  max-height: 200px;
+}
+
+.pending {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  opacity: 0.7;
+}
+
+.pending.unknown,
+.pending.failed {
+  opacity: 1;
+}
+
+.pending [role="alert"] {
+  color: crimson;
+  font-size: 13px;
+}
+
+.members {
+  grid-column: 2;
+  grid-row: 2 / 4;
+  border-left: 1px solid var(--line);
+  padding: 12px;
+  overflow-y: auto;
+}
+
+.members h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+
+.members ul,
+.directory {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.members form {
+  display: grid;
+  gap: 6px;
+}
+
+.agents-switch {
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.agents-switch .badge {
+  margin: 0 8px 0 0;
+}
+
+.agent-limits {
+  margin-top: 20px;
+}
+
+.agent-limits label {
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.agent-limits .per {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-limits input {
+  width: 100%;
+  min-width: 0;
+}
+
+.page {
+  padding: 16px 24px;
+  overflow-y: auto;
+  max-width: 560px;
+}
+
+.page form {
+  margin-top: 24px;
+}
+
+.back {
+  display: none;
+}
+
+.members .responder {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Inbox: widget threads by state, a count of visitors waiting in the
+   sidebar */
+
+.rooms .count,
+.tabs .count {
+  font-size: 12px;
+  border-radius: 9px;
+  padding: 0 6px;
+  margin-left: 6px;
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 16px 0 8px;
+}
+
+.tabs button {
+  background: none;
+  color: inherit;
+  border: 1px solid var(--line);
+}
+
+.tabs button[aria-pressed="true"] {
+  background: var(--line);
+  font-weight: 600;
+}
+
+.tabs button:not([aria-pressed="true"]) .count {
+  background: var(--line);
+  color: inherit;
+}
+
+.threads {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.threads li {
+  border-bottom: 1px solid var(--line);
+}
+
+.threads li.muted {
+  padding: 8px 0;
+  border: 0;
+}
+
+.threads a {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 8px 4px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.threads .who {
+  flex: 1;
+  font-weight: 600;
+}
+
+.threads time {
+  font-size: 13px;
+}
+
+.badge.waiting {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.builtin-agents {
+  margin-top: 32px;
+}
+
+.builtin-agents .directory li {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.builtin-agents .agent-settings {
+  margin-top: 12px;
+}
+
+.agent-error {
+  color: crimson;
+  font-size: 13px;
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.agent-settings textarea {
+  font: inherit;
+  resize: vertical;
+}
+
+.mcp-servers,
+.agent-prices {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  margin: 0 0 12px;
+  padding: 8px 12px 12px;
+}
+
+.mcp-servers p,
+.agent-prices p {
+  font-size: 13px;
+  margin: 0 0 8px;
+}
+
+.mcp-server {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(5em, 1fr) minmax(10em, 3fr) minmax(8em, 2fr) auto;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.mcp-actions {
+  display: flex;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .mcp-server {
+    grid-template-columns: 1fr;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+.token code {
+  display: block;
+  word-break: break-all;
+  background: var(--panel);
+  padding: 8px;
+  border-radius: 6px;
+}
+
+/* Phones: one screen at a time. The room list is the home screen; a room
+   or page replaces it and links back. */
+@media (max-width: 760px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+  .app[data-view="page"] > .sidebar,
+  .app[data-view="list"] > :not(.sidebar) {
+    display: none;
+  }
+  .sidebar {
+    border-right: 0;
+  }
+  .back {
+    display: inline;
+    white-space: nowrap;
+  }
+  .page .back {
+    display: block;
+  }
+  .room {
+    grid-template-columns: 1fr;
+  }
+  .members {
+    display: none;
+  }
+  /* iOS Safari zooms into fields with smaller text. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* The widget's page inside the <say-chat> iframe. A host page themes it
+   with --say-accent, --say-bg, --say-text, --say-font and --say-radius. */
+.embed {
+  --accent: var(--say-accent, light-dark(#2b5fd9, #7aa2ff));
+  --bg: var(--say-bg, light-dark(#fff, #16171a));
+  --text: var(--say-text, light-dark(#1c1c1c, #e8e8e6));
+  --radius: var(--say-radius, 14px);
+  font-family: var(--say-font, inherit);
+  background: var(--bg);
+  color: var(--text);
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+}
+
+.embed.center {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  text-align: center;
+}
+
+.embed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.embed-header h1 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.embed-close {
+  background: none;
+  color: inherit;
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.embed-log {
+  overflow-y: auto;
+  min-height: 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.embed-msg {
+  max-width: 85%;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.embed-msg.theirs {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--text) 8%, var(--bg));
+}
+
+.embed-msg.mine {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.embed-name {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.embed-tag {
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.embed-msg .caret::after {
+  content: "▍";
+  color: var(--muted);
+  animation: caret 1s steps(2, start) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .embed-msg .caret::after {
+    animation: none;
+  }
+}
+
+.embed-handoff {
+  margin: 0;
+  padding: 0 12px 6px;
+  font-size: 13px;
+  text-align: center;
+}
+
+.embed-composer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: end;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.embed-composer textarea {
+  flex: 1;
+  resize: none;
+  field-sizing: content;
+  max-height: 120px;
+  font-size: 16px;
+}
+
+.embed-error {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 0 12px 8px;
+  font-size: 13px;
+  color: crimson;
+}
+
+.widgets > li {
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.widgets p {
+  margin: 4px 0;
+}
+
+.snippet {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0;
+  font-size: 13px;
+}
+
+.snippet textarea {
+  font: 12px/1.4 ui-monospace, monospace;
+  resize: none;
+}
+
+.secret {
+  overflow-wrap: anywhere;
+}
+
+.team {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+/* Bridges: a room's networks, a message's delivery, the Accounts page. */
+.bridge-chip {
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+.bridge-chip.live::before,
+.state.live::before {
+  content: "●";
+  margin-right: 4px;
+  color: light-dark(#17803d, #4ade80);
+}
+
+.bridge-chip:not(.live),
+.state:not(.live) {
+  color: light-dark(#a15c00, #fbbf24);
+}
+
+.delivery {
+  display: block;
+  font-size: 12px;
+  color: light-dark(#a15c00, #fbbf24);
+}
+
+.delivery.sending {
+  color: var(--muted);
+}
+
+.state {
+  font-size: 12px;
+  margin-left: 6px;
+}
+
+.accounts .prompt {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0;
+}
+
+.accounts .qr {
+  width: 220px;
+  max-width: 100%;
+  background: #fff;
+  padding: 8px;
+  border-radius: 8px;
+}
+
+.accounts .qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.accounts .chats {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+
+.hook code {
+  overflow-wrap: anywhere;
+}

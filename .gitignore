@@ -1,4 +1,5 @@
 /bin/
+/build/
 node_modules/
 .tanstack/
 web/.output/
@@ -7,3 +8,4 @@ widget/dist/
 internal/api/static/*
 !internal/api/static/README.md
 /data/
+__pycache__/

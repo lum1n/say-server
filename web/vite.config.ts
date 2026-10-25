@@ -7,9 +7,13 @@ import { defineConfig } from "vite";
 export default defineConfig({
   server: {
     proxy: {
-      "/api": { target: "http://localhost:8080", ws: true },
-      "/widget.js": "http://localhost:8080",
+      "/api": { target: "http://localhost:7290", ws: true },
+      "/widget.js": "http://localhost:7290",
     },
   },
+  // The build prerenders the SPA shell from a preview server. Bind it to
+  // 127.0.0.1: in a container "localhost" can resolve to an address the
+  // server does not listen on.
+  preview: { host: "127.0.0.1" },
   plugins: [tanstackStart({ spa: { enabled: true } }), viteReact()],
 });

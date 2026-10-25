@@ -9,7 +9,11 @@
     "id": { "type": "string", "minLength": 1 },
     "type": { "type": "string", "minLength": 1 },
     "status": { "type": "string", "enum": ["ok", "error", "unknown"] },
-    "payload": {}
+    "payload": {},
+    "trigger": {
+      "description": "On an event pushed to a bot session: why the message asks the bot for an answer.",
+      "enum": ["dm", "responder", "mention"]
+    }
   },
   "additionalProperties": false
 }
