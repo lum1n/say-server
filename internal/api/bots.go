@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/vegard/say-v2/internal/core"
@@ -75,7 +76,7 @@ func (c *wsConn) hello(ctx context.Context, raw json.RawMessage) (json.RawMessag
 	if err := c.s.store.SaveConnectorSession(ctx, cs); err != nil {
 		return nil, err
 	}
-	bot := &botSession{wake: make(chan struct{}, 1)}
+	bot := &botSession{wake: make(chan struct{}, 1), rooms: map[string]roomTrigger{}}
 	c.mu.Lock()
 	c.bot = bot
 	c.mu.Unlock()
@@ -87,13 +88,65 @@ func (c *wsConn) hello(ctx context.Context, raw json.RawMessage) (json.RawMessag
 // botSession is the state of a socket that said hello.
 type botSession struct {
 	wake chan struct{} // the agent's room list may have changed
+
+	// rooms caches, per room, what triggers depend on besides the
+	// message, so a busy room costs no store reads per message. Every
+	// change to it comes with a room list push, which clears the cache;
+	// so does each heartbeat, as pushes are hints.
+	mu    sync.Mutex
+	rooms map[string]roomTrigger
+	gen   uint64 // bumped on each clear
 }
 
+// roomTrigger is a room and the agent's membership of it.
+type roomTrigger struct {
+	room core.Room
+	m    core.Membership
+}
+
+// poke says the agent's rooms may have changed: the room list is reread
+// and cached rooms are forgotten.
 func (b *botSession) poke() {
+	b.forget()
 	select {
 	case b.wake <- struct{}{}:
 	default:
 	}
+}
+
+func (b *botSession) forget() {
+	b.mu.Lock()
+	clear(b.rooms)
+	b.gen++
+	b.mu.Unlock()
+}
+
+// room returns roomID and the agent's membership of it, from the cache
+// or the store.
+func (b *botSession) room(ctx context.Context, st store.Store, agentID, roomID string) (roomTrigger, error) {
+	b.mu.Lock()
+	rt, ok := b.rooms[roomID]
+	gen := b.gen
+	b.mu.Unlock()
+	if ok {
+		return rt, nil
+	}
+	room, err := st.GetRoom(ctx, roomID)
+	if err != nil {
+		return roomTrigger{}, err
+	}
+	m, err := st.GetMember(ctx, roomID, agentID)
+	if err != nil {
+		return roomTrigger{}, err
+	}
+	rt = roomTrigger{room: room, m: m}
+	b.mu.Lock()
+	// A clear during the reads may mean they are already stale.
+	if b.gen == gen {
+		b.rooms[roomID] = rt
+	}
+	b.mu.Unlock()
+	return rt, nil
 }
 
 // runBot follows the agent's rooms and renews its session until the
@@ -109,14 +162,15 @@ func (c *wsConn) runBot(ctx context.Context, bot *botSession, cs store.Connector
 	beat := time.NewTicker(c.s.heartbeat)
 	defer beat.Stop()
 	for {
-		c.syncBotRooms(ctx)
+		c.syncBotRooms(ctx, bot)
 		select {
 		case <-ctx.Done():
 			return
 		case <-bot.wake:
 		case <-beat.C:
-			// Room list pushes are hints, so the list is reread on each
-			// heartbeat too.
+			// Room list pushes are hints, so the list is reread and the
+			// cached rooms forgotten on each heartbeat too.
+			bot.forget()
 			cs.SeenAt = time.Now()
 			if err := c.s.store.SaveConnectorSession(ctx, cs); err != nil && ctx.Err() == nil {
 				slog.Warn("bot session: renew failed", "session", cs.ID, "err", err)
@@ -127,7 +181,7 @@ func (c *wsConn) runBot(ctx context.Context, bot *botSession, cs store.Connector
 
 // syncBotRooms follows the rooms the agent is in and stops following the
 // ones it left.
-func (c *wsConn) syncBotRooms(ctx context.Context) {
+func (c *wsConn) syncBotRooms(ctx context.Context, bot *botSession) {
 	rooms, err := c.s.store.RoomsFor(ctx, c.me.ID)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -152,7 +206,7 @@ func (c *wsConn) syncBotRooms(ctx context.Context) {
 			continue
 		}
 		c.mu.Lock()
-		err = c.followRoom(ctx, room.ID, cursor, true)
+		err = c.followRoom(ctx, room.ID, cursor, bot)
 		c.mu.Unlock()
 		if err != nil {
 			slog.Warn("bot session: follow failed", "agent", c.me.ID, "room", room.ID, "err", err)
@@ -169,20 +223,16 @@ func (c *wsConn) syncBotRooms(ctx context.Context) {
 }
 
 // trigger returns why e asks the agent for an answer, if it does.
-func (c *wsConn) trigger(ctx context.Context, e core.Event, triggered map[string]bool) core.Trigger {
+func (c *wsConn) trigger(ctx context.Context, bot *botSession, e core.Event, triggered map[string]bool) core.Trigger {
 	msg, ok, err := store.CompleteMessage(ctx, c.s.store, e)
 	if err != nil || !ok || msg.SenderID == c.me.ID || triggered[msg.ID] {
 		return ""
 	}
-	room, err := c.s.store.GetRoom(ctx, e.RoomID)
+	rt, err := bot.room(ctx, c.s.store, c.me.ID, e.RoomID)
 	if err != nil {
 		return ""
 	}
-	m, err := c.s.store.GetMember(ctx, e.RoomID, c.me.ID)
-	if err != nil {
-		return ""
-	}
-	t := core.Triggers(c.me, room, m, msg, e.CreatedAt, time.Now())
+	t := core.Triggers(c.me, rt.room, rt.m, msg, e.CreatedAt, time.Now())
 	if t != "" {
 		if len(triggered) >= triggeredMemory {
 			clear(triggered)
