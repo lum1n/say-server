@@ -84,6 +84,31 @@ func TestWidgetsAndVisitors(t *testing.T) {
 		if ms, err := s.Members(ctx, v.RoomID); err != nil || len(ms) != 2 {
 			t.Fatalf("thread members = %v, %v", ms, err)
 		}
+
+		// An anonymous visitor who signs in keeps its guest and thread.
+		anon, err := visit("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.VerifyVisitor(ctx, anon.PrincipalID, "user-1", "", ""); !errors.Is(err, ErrVisitorExists) {
+			t.Fatalf("verify as a subject that has a visitor: %v", err)
+		}
+		if _, err := s.VerifyVisitor(ctx, v.PrincipalID, "user-2", "", ""); !errors.Is(err, ErrVisitorExists) {
+			t.Fatalf("verify a verified visitor: %v", err)
+		}
+		verified, err := s.VerifyVisitor(ctx, anon.PrincipalID, "user-2", "Grace", "Help · Grace")
+		if want := (Visitor{PrincipalID: anon.PrincipalID, WidgetID: w.ID, Subject: "user-2", RoomID: anon.RoomID, CreatedAt: now}); err != nil || verified != want {
+			t.Fatalf("VerifyVisitor = %+v, %v; want %+v", verified, err, want)
+		}
+		if got, err := s.VisitorBySubject(ctx, w.ID, "user-2"); err != nil || got.PrincipalID != anon.PrincipalID {
+			t.Fatalf("VisitorBySubject after verify = %+v, %v", got, err)
+		}
+		if p, err := s.GetPrincipal(ctx, anon.PrincipalID); err != nil || p.DisplayName != "Grace" {
+			t.Fatalf("guest after verify = %+v, %v", p, err)
+		}
+		if r, err := s.GetRoom(ctx, anon.RoomID); err != nil || r.Name != "Help · Grace" {
+			t.Fatalf("thread after verify = %+v, %v", r, err)
+		}
 	})
 }
 

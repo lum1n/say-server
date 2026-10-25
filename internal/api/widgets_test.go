@@ -349,10 +349,34 @@ func TestWidgetIdentity(t *testing.T) {
 	if code != 200 || s2.Principal.ID != s.Principal.ID || s2.Room.ID != s.Room.ID || s2.Token == s.Token {
 		t.Fatalf("second device = %d %+v", code, s2)
 	}
-	// The anonymous token of a visitor who then signs in is not reused.
+	// An anonymous visitor who signs in as a subject that already has a
+	// thread gets that thread.
 	_, anon := e.session(w.PublicKey, "", "")
 	if code, s3 := e.session(w.PublicKey, anon.Token, id); code != 200 || s3.Principal.ID != s.Principal.ID {
 		t.Fatalf("sign-in from anonymous = %d %+v", code, s3)
+	}
+
+	// An anonymous visitor who signs in as a new subject keeps their
+	// thread, now under the host's name. The anonymous token is not
+	// reused and stops working.
+	_, anon = e.session(w.PublicKey, "", "")
+	e.say(anon.Token, anon.Room.ID, "where is my order?")
+	linus := signIdentity(w.Secret, map[string]any{"sub": "user-9", "name": "Linus", "exp": exp})
+	code, s5 := e.session(w.PublicKey, anon.Token, linus)
+	if code != 200 || s5.Principal.ID != anon.Principal.ID || s5.Room.ID != anon.Room.ID || s5.Token == anon.Token ||
+		s5.Principal.DisplayName != "Linus" || s5.Room.Name != "Help · Linus" {
+		t.Fatalf("sign-in keeps the thread = %d %+v", code, s5)
+	}
+	if code, _ := e.session(w.PublicKey, anon.Token, ""); code != 201 {
+		t.Fatalf("old anonymous token = %d, want a new visitor", code)
+	}
+	var log struct{ Events []wireEvent }
+	if code := e.do("GET", "/rooms/"+s5.Room.ID+"/events", s5.Token, nil, &log); code != 200 || len(log.Events) != 1 {
+		t.Fatalf("thread after sign-in = %d %+v", code, log)
+	}
+	// Another device signed in as the same subject finds that thread.
+	if code, s6 := e.session(w.PublicKey, "", linus); code != 200 || s6.Room.ID != anon.Room.ID {
+		t.Fatalf("other device = %d %+v", code, s6)
 	}
 	// Grace's token with someone else's identity is not Grace.
 	other := signIdentity(w.Secret, map[string]any{"sub": "user-7", "exp": exp})

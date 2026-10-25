@@ -1566,6 +1566,23 @@ func (q *Queries) RenamePrincipal(ctx context.Context, arg RenamePrincipalParams
 	return result.RowsAffected()
 }
 
+const renameRoom = `-- name: RenameRoom :execrows
+UPDATE rooms SET name = $2 WHERE id = $1
+`
+
+type RenameRoomParams struct {
+	ID   string
+	Name string
+}
+
+func (q *Queries) RenameRoom(ctx context.Context, arg RenameRoomParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, renameRoom, arg.ID, arg.Name)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const replaceMessage = `-- name: ReplaceMessage :exec
 UPDATE events SET parts = $2, stream = $3, edited_at = $4 WHERE id = $1
 `
@@ -2055,6 +2072,30 @@ func (q *Queries) UpdateWidget(ctx context.Context, arg UpdateWidgetParams) (int
 		arg.Greeting,
 		arg.UpdatedAt,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const verifyVisitor = `-- name: VerifyVisitor :execrows
+UPDATE widget_visitors SET subject = $2
+WHERE widget_visitors.principal_id = $1 AND widget_visitors.subject = ''
+  AND NOT EXISTS (
+    SELECT 1 FROM widget_visitors o
+    WHERE o.widget_id = widget_visitors.widget_id AND o.subject = $2
+  )
+`
+
+type VerifyVisitorParams struct {
+	PrincipalID string
+	Subject     string
+}
+
+// Gives anonymous visitor $1 subject $2, unless its widget already has a
+// visitor with that subject.
+func (q *Queries) VerifyVisitor(ctx context.Context, arg VerifyVisitorParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, verifyVisitor, arg.PrincipalID, arg.Subject)
 	if err != nil {
 		return 0, err
 	}

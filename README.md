@@ -267,7 +267,8 @@ person**. Visitors are anonymous unless your server vouches for them: sign
 a JWT with HS256 and the widget's secret, with `sub` (your user id), `exp`
 (at most 24 hours ahead) and optionally `name`, and set it as the
 `identity` attribute. A signed-in visitor then has the same thread on
-every device ([ADR 0012](./docs/adr/0012-widget.md)).
+every device, and a visitor who chatted before signing in keeps that chat
+([ADR 0012](./docs/adr/0012-widget.md)).
 
 A visitor can press **Delete chat** to erase their thread, their messages
 and themselves; the next message starts a new chat. When a visitor asks

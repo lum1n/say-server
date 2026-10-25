@@ -552,7 +552,10 @@ export interface paths {
          * Sign a visitor in to a widget
          * @description With a bearer token from an earlier session of the same visitor,
          *     returns that session as is. With an identity token, finds or
-         *     creates the verified visitor it names, on any device. Otherwise
+         *     creates the verified visitor it names, on any device; an anonymous
+         *     visitor's bearer token sent with it, when that subject has no
+         *     visitor yet, makes the anonymous visitor the verified one, keeping
+         *     its thread, and stops working. Otherwise
          *     creates an anonymous visitor: a guest principal with a widget
          *     thread, whose members are the widget's team and agent. Visitor
          *     tokens last 90 days.
