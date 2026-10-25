@@ -1,8 +1,15 @@
 STATIC := internal/api/static
 SQLC := github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+# The Python SDK's types: TypedDicts, so the package needs nothing at runtime.
+PYGEN := uvx --from datamodel-code-generator==0.86.0 datamodel-codegen \
+	--input protocol/openapi.yaml --input-file-type openapi \
+	--output sdk/py/say/schema_gen.py --output-model-type typing.TypedDict \
+	--target-python-version 3.11 --formatters builtin --disable-timestamp \
+	--use-schema-description --use-field-description --enum-field-as-literal all \
+	--use-standard-collections --use-union-operator --no-use-closed-typed-dict
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build web go generate test image cluster-test clean libsay android ios
+.PHONY: build web go generate generate-py test image cluster-test clean libsay android ios
 
 build: web go
 
@@ -19,11 +26,17 @@ go:
 generate:
 	cd internal/store && go run $(SQLC) generate
 	pnpm --filter @say/sdk generate
+	$(MAKE) generate-py
+
+generate-py:
+	$(PYGEN)
 
 test:
 	go vet ./...
 	go test ./...
 	pnpm -r typecheck
+	$(MAKE) go
+	SAY_BIN=$(CURDIR)/bin/say python3 -m unittest discover -s sdk/py -t sdk/py
 
 # Embedding say in other programs (docs/adr/0013-embedding.md).
 SOEXT := $(if $(filter Darwin,$(shell uname -s)),.dylib,.so)

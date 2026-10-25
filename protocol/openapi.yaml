@@ -818,6 +818,40 @@ paths:
           $ref: "#/components/responses/Error"
         "422":
           $ref: "#/components/responses/Error"
+  /widget-threads:
+    get:
+      operationId: listWidgetThreads
+      summary: The widget threads I am in (the inbox)
+      description: |
+        Widget threads whose team or agent I am in, with whether an agent
+        still answers each, latest activity first. People and agents only.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+      responses:
+        "200":
+          description: The threads, latest activity first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [threads]
+                properties:
+                  threads:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/WidgetThread"
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
   /embed/{key}:
     parameters:
       - $ref: "#/components/parameters/WidgetKey"
@@ -875,6 +909,50 @@ paths:
         "400":
           $ref: "#/components/responses/Error"
         "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: deleteEmbedSession
+      summary: Delete the visitor's chat
+      description: |
+        The visitor, with its own token, erases itself: its thread with
+        every message in it, what it wrote in other rooms, its tokens and
+        its guest principal. The token stops working; the next session is a
+        new visitor. Messages already mirrored to a bridged network stay
+        there.
+      security:
+        - bearer: []
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /visitors/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: The visitor's guest principal id.
+        schema:
+          type: string
+    delete:
+      operationId: deleteVisitor
+      summary: Delete a widget visitor and its thread
+      description: |
+        Instance admins only. Erases the same as `DELETE
+        /embed/{key}/session`, for a visitor who asked to have their data
+        deleted. A verified visitor who comes back is a new visitor.
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
@@ -1637,6 +1715,41 @@ components:
         created_at:
           type: string
           format: date-time
+    WidgetThread:
+      type: object
+      required: [room_id, widget_id, widget_name, visitor_id, visitor_name, verified, state, waiting, created_at]
+      properties:
+        room_id:
+          type: string
+        widget_id:
+          type: string
+        widget_name:
+          type: string
+        visitor_id:
+          type: string
+        visitor_name:
+          type: string
+        verified:
+          type: boolean
+          description: Whether the host site signed the visitor in (an identity token).
+        state:
+          type: string
+          enum: [open, handed_over, idle]
+          description: |
+            `open`: an agent answers the visitor. `handed_over`: the
+            thread is the team's, and agents answer only when mentioned.
+            `idle`: no message for 30 minutes, unless the visitor of a
+            handed-over thread is still waiting for a person.
+        waiting:
+          type: boolean
+          description: The visitor wrote the latest message, so nobody has answered it yet.
+        last_message_at:
+          type: string
+          format: date-time
+          description: Absent when the thread has no messages.
+        created_at:
+          type: string
+          format: date-time
     EmbedConfig:
       type: object
       required: [name, greeting, origins]
@@ -1918,7 +2031,36 @@ components:
           description: Automated hops since the last human event.
     EventType:
       type: string
-      enum: [message, edit, reaction, typing, receipt]
+      enum: [message, edit, reaction, typing, receipt, agent-settings, handoff]
+      description: |
+        `agent-settings` and `handoff` are system events: they record who
+        changed the room (the event's sender) and when, in the room log.
+    AgentSettingsChange:
+      type: object
+      description: |
+        Body of an `agent-settings` event. Only the settings that changed
+        are present.
+      properties:
+        paused:
+          type: boolean
+          description: The room's "pause agents" switch.
+        max_hop_count:
+          type: integer
+          minimum: 0
+    Handoff:
+      type: object
+      description: |
+        Body of a `handoff` event: who now handles the conversation, such as
+        a widget thread passing from an agent to a human. When the sender is
+        `to`, they took over themselves.
+      required: [to]
+      properties:
+        from:
+          type: string
+          description: Principal that handled the conversation before, if any.
+        to:
+          type: string
+          description: Principal that handles the conversation now.
     StreamState:
       type: string
       enum: [streaming, final]

@@ -40,6 +40,26 @@ jobs:
         run: |
           cd internal/store && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
 
+  py:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Generated Python SDK is up to date
+        run: |
+          make generate-py
+          git diff --exit-code sdk/py
+      - name: Python SDK against a server
+        run: |
+          make go
+          SAY_BIN=$PWD/bin/say python3 -m unittest discover -s sdk/py -t sdk/py -v
+
   cluster:
     runs-on: ubuntu-latest
     steps:

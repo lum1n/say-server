@@ -389,6 +389,81 @@ a {
   color: var(--muted);
 }
 
+/* Inbox: widget threads by state, a count of visitors waiting in the
+   sidebar */
+
+.rooms .count,
+.tabs .count {
+  font-size: 12px;
+  border-radius: 9px;
+  padding: 0 6px;
+  margin-left: 6px;
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 16px 0 8px;
+}
+
+.tabs button {
+  background: none;
+  color: inherit;
+  border: 1px solid var(--line);
+}
+
+.tabs button[aria-pressed="true"] {
+  background: var(--line);
+  font-weight: 600;
+}
+
+.tabs button:not([aria-pressed="true"]) .count {
+  background: var(--line);
+  color: inherit;
+}
+
+.threads {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.threads li {
+  border-bottom: 1px solid var(--line);
+}
+
+.threads li.muted {
+  padding: 8px 0;
+  border: 0;
+}
+
+.threads a {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  padding: 8px 4px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.threads .who {
+  flex: 1;
+  font-weight: 600;
+}
+
+.threads time {
+  font-size: 13px;
+}
+
+.badge.waiting {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
 .builtin-agents {
   margin-top: 32px;
 }
@@ -516,6 +591,8 @@ a {
 
 .embed-header {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
@@ -526,6 +603,32 @@ a {
 .embed-header h1 {
   font-size: 16px;
   margin: 0;
+}
+
+.embed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: end;
+  font-size: 13px;
+}
+
+.embed-delete,
+.embed-confirm button {
+  background: none;
+  color: inherit;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 13px;
+}
+
+.embed-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
 }
 
 .embed-close {
@@ -563,6 +666,27 @@ a {
   align-self: flex-end;
   background: var(--accent);
   color: var(--bg);
+}
+
+.embed-msg > .embed-text,
+.embed-msg > .embed-tool,
+.embed-msg > .embed-other {
+  display: block;
+}
+
+.embed-tool,
+.embed-other {
+  font-size: 13px;
+  opacity: 0.75;
+}
+
+.embed-tool::before {
+  content: "⚙ ";
+}
+
+.embed-tool.failed {
+  color: crimson;
+  opacity: 1;
 }
 
 .embed-name {

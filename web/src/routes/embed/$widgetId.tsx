@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   createEmbedSession,
   createSayClient,
+  deleteEmbedSession,
   type EmbedConfig,
   type EmbedSession,
   type Event,
@@ -11,8 +12,10 @@ import {
   listEvents,
   listMembers,
   type Member,
+  type Part,
   Realtime,
   sendMessage,
+  type ToolCallPartData,
 } from "@say/sdk";
 import { type EmbedMessage, isHostMessage, type Theme } from "@say/sdk/embed";
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -147,16 +150,28 @@ function Widget({ widgetKey: key, config }: { widgetKey: string; config: EmbedCo
     }
   }, [identity, key, signIn]);
 
+  // deleteChat erases the visitor and its thread on the server, then
+  // forgets the token; the next message starts a new visitor.
+  const deleteChat = useCallback(async () => {
+    if (!session) return;
+    await deleteEmbedSession(key, createSayClient("/api/v1", session.token));
+    writeStored(key, null);
+    setSession(null);
+  }, [key, session]);
+
   if (!allowed) return <main className="embed center muted">This chat is not set up for this site.</main>;
   return (
     <main className="embed">
       <header className="embed-header">
         <h1>{config.name}</h1>
-        {closable && (
-          <button type="button" className="embed-close" aria-label="Close chat" onClick={() => post({ source: "say-embed", type: "close" })}>
-            ×
-          </button>
-        )}
+        <span className="embed-actions">
+          {session && <DeleteChat onDelete={deleteChat} />}
+          {closable && (
+            <button type="button" className="embed-close" aria-label="Close chat" onClick={() => post({ source: "say-embed", type: "close" })}>
+              ×
+            </button>
+          )}
+        </span>
       </header>
       <Thread
         config={config}
@@ -168,6 +183,37 @@ function Widget({ widgetKey: key, config }: { widgetKey: string; config: EmbedCo
       />
       {error && <p className="embed-error">{error}</p>}
     </main>
+  );
+}
+
+// DeleteChat asks before deleting the visitor's chat, which cannot be undone.
+function DeleteChat({ onDelete }: { onDelete: () => Promise<void> }) {
+  const [state, setState] = useState<"idle" | "asking" | "deleting" | "failed">("idle");
+  if (state === "idle") {
+    return (
+      <button type="button" className="embed-delete" onClick={() => setState("asking")}>
+        Delete chat
+      </button>
+    );
+  }
+  return (
+    <span className="embed-confirm" role="alertdialog" aria-label="Delete chat">
+      {state === "failed" ? "Not deleted. Try again?" : "Delete this chat and your messages for good?"}
+      <button
+        type="button"
+        disabled={state === "deleting"}
+        onClick={() => {
+          setState("deleting");
+          // On success this component unmounts with the session.
+          onDelete().catch(() => setState("failed"));
+        }}
+      >
+        Delete
+      </button>
+      <button type="button" disabled={state === "deleting"} onClick={() => setState("idle")}>
+        Cancel
+      </button>
+    </span>
   );
 }
 
@@ -248,8 +294,7 @@ function Thread({
         {config.greeting && <p className="embed-msg theirs">{config.greeting}</p>}
         {messages.map((e, i) => {
           const mine = e.sender_id === me;
-          const text = e.parts.flatMap((p) => (p.kind === "text" ? [(p.data as { text: string }).text] : [])).join("\n");
-          if (!text && e.stream !== "streaming") return null;
+          if (e.parts.length === 0 && e.stream !== "streaming") return null;
           const showName = !mine && messages[i - 1]?.sender_id !== e.sender_id;
           return (
             <div key={e.seq} className={`embed-msg ${mine ? "mine" : "theirs"}`}>
@@ -259,7 +304,9 @@ function Thread({
                   {kinds.get(e.sender_id) === "agent" && <span className="embed-tag">AI</span>}
                 </span>
               )}
-              {text}
+              {e.parts.map((p, j) => (
+                <MessagePart key={j} part={p} />
+              ))}
               {e.stream === "streaming" && <span className="caret" aria-hidden="true" />}
             </div>
           );
@@ -269,6 +316,20 @@ function Thread({
       <Composer session={session} signIn={signIn} />
     </>
   );
+}
+
+// MessagePart shows one part of a message. A tool call shows only which
+// tool was used and how it went: its arguments and errors are for the
+// team, not the visitor.
+function MessagePart({ part: p }: { part: Part }) {
+  if (p.kind === "text") return <span className="embed-text">{String(p.data.text)}</span>;
+  if (p.kind === "tool-call") {
+    const call = p.data as ToolCallPartData;
+    const label =
+      call.status === "running" ? `Using ${call.name}…` : call.status === "failed" ? `${call.name} failed` : `Used ${call.name}`;
+    return <span className={`embed-tool ${call.status}`}>{label}</span>;
+  }
+  return <span className="embed-other">[{p.kind}]</span>;
 }
 
 function Handoff({ session }: { session: EmbedSession }) {

@@ -210,4 +210,11 @@ func TestBotSessionResponderAndObserver(t *testing.T) {
 	e.say(ada, team.ID, "anyone?")
 	c.event("anyone?", core.TriggerResponder)
 
+	// The session caches the membership; the room list push that comes
+	// with a change makes it reread.
+	if code := e.do("PATCH", "/rooms/"+team.ID+"/members/"+bot.ID, ada, map[string]any{"responder": false}, nil); code != http.StatusOK {
+		t.Fatalf("unmake responder: %d", code)
+	}
+	e.say(ada, team.ID, "anyone now?")
+	c.event("anyone now?", "")
 }
