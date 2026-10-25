@@ -257,14 +257,23 @@ on the element to theme it. The element fires `open`, `close` and
 `unread` (with `detail.count`) events and has `open()`, `close()` and
 `toggle()` methods.
 
-Each visitor gets their own thread with the widget's agent and team, which
-shows up in the team's room list. The agent answers until a person on the
+Each visitor gets their own thread with the widget's agent and team. The
+team finds the threads in the **Inbox** rather than the room list, sorted
+into open (the agent answers), handed over (the team's) and idle (no
+message for 30 minutes), with the visitors still waiting for an answer
+marked and counted. The agent answers until a person on the
 team writes in the thread, or until the visitor presses **Talk to a
 person**. Visitors are anonymous unless your server vouches for them: sign
 a JWT with HS256 and the widget's secret, with `sub` (your user id), `exp`
 (at most 24 hours ahead) and optionally `name`, and set it as the
 `identity` attribute. A signed-in visitor then has the same thread on
-every device ([ADR 0012](./docs/adr/0012-widget.md)).
+every device, and a visitor who chatted before signing in keeps that chat
+([ADR 0012](./docs/adr/0012-widget.md)).
+
+A visitor can press **Delete chat** to erase their thread, their messages
+and themselves; the next message starts a new chat. When a visitor asks
+you to delete their data, an instance admin can do the same from the
+thread's page (**Delete visitor**) or with `DELETE /api/v1/visitors/{id}`.
 
 **Switch off** takes a widget off your sites for a while: they say the
 chat is not available and its visitors cannot write, until you switch it

@@ -22,6 +22,9 @@ export type AgentPolicy = Schemas["AgentPolicy"];
 export type UpdateRoom = Schemas["UpdateRoom"];
 export type Member = Schemas["Member"];
 export type Event = Schemas["Event"];
+export type EventType = Schemas["EventType"];
+export type AgentSettingsChange = Schemas["AgentSettingsChange"];
+export type Handoff = Schemas["Handoff"];
 export type Part = Schemas["Part"];
 export type TextPartData = Schemas["TextPartData"];
 export type ToolCallPartData = Schemas["ToolCallPartData"];
@@ -50,6 +53,7 @@ export type Trigger = Schemas["Trigger"];
 export type Connector = Schemas["Connector"];
 export type Widget = Schemas["Widget"];
 export type WidgetSettings = Schemas["WidgetSettings"];
+export type WidgetThread = Schemas["WidgetThread"];
 export type EmbedConfig = Schemas["EmbedConfig"];
 export type EmbedSession = Schemas["EmbedSession"];
 export type EmbedSessionRequest = Schemas["EmbedSessionRequest"];
@@ -298,6 +302,13 @@ export async function deleteWidget(id: string, client = defaultClient): Promise<
   if (!response.ok) fail(response, error);
 }
 
+/** listWidgetThreads reads my inbox: the widget threads I am in, latest activity first. */
+export async function listWidgetThreads(client = defaultClient): Promise<WidgetThread[]> {
+  const { data, error, response } = await client.GET("/widget-threads");
+  if (!data) fail(response, error);
+  return data.threads;
+}
+
 /** getEmbedConfig reads a widget's public settings by its public key. */
 export async function getEmbedConfig(key: string, client = defaultClient): Promise<EmbedConfig> {
   const { data, error, response } = await client.GET("/embed/{key}", { params: { path: { key } } });
@@ -317,6 +328,21 @@ export async function createEmbedSession(
   const { data, error, response } = await client.POST("/embed/{key}/session", { params: { path: { key } }, body });
   if (!data) fail(response, error);
   return data;
+}
+
+/**
+ * deleteEmbedSession deletes the visitor's chat: its thread, its messages
+ * and the visitor. Pass a client made with the visitor's token.
+ */
+export async function deleteEmbedSession(key: string, client = defaultClient): Promise<void> {
+  const { error, response } = await client.DELETE("/embed/{key}/session", { params: { path: { key } } });
+  if (!response.ok) fail(response, error);
+}
+
+/** deleteVisitor erases a widget visitor and its thread (instance admins). */
+export async function deleteVisitor(id: string, client = defaultClient): Promise<void> {
+  const { error, response } = await client.DELETE("/visitors/{id}", { params: { path: { id } } });
+  if (!response.ok) fail(response, error);
 }
 
 export async function listNetworks(client = defaultClient): Promise<Network[]> {

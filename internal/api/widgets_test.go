@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/vegard/say-v2/internal/core"
+	"github.com/vegard/say-v2/internal/store"
 )
 
 // signIdentity makes an HS256 identity token the way a host site would.
@@ -106,8 +107,28 @@ func TestWidgetAdmin(t *testing.T) {
 	}
 }
 
+// wakeBeforeScopes is a store that, just before a scope change, wakes the
+// room's followers and gives them time to read it, as a resync or a
+// message from elsewhere landing at that moment would. A handoff that
+// ran after the append would let the bot see a team member's message
+// while its agent is still the responder.
+type wakeBeforeScopes struct {
+	store.Store
+	wake func(ctx context.Context, roomID string)
+}
+
+func (s *wakeBeforeScopes) SetMemberScopes(ctx context.Context, roomID, principalID string, scopes []string) error {
+	if s.wake != nil {
+		s.wake(ctx, roomID)
+		time.Sleep(100 * time.Millisecond)
+	}
+	return s.Store.SetMemberScopes(ctx, roomID, principalID, scopes)
+}
+
 func TestWidgetVisitors(t *testing.T) {
-	e := newEnv(t)
+	race := &wakeBeforeScopes{}
+	e := newEnvWith(t, func(st store.Store) store.Store { race.Store = st; return race })
+	race.wake = e.srv.notify
 	_, root := e.admin("Root")
 	ada, adaTok := e.user("Ada", core.PrincipalHuman)
 	agent, agentTok := e.user("Helper", core.PrincipalAgent)
@@ -215,6 +236,101 @@ func TestWidgetVisitors(t *testing.T) {
 	}
 }
 
+func TestWidgetInbox(t *testing.T) {
+	e := newEnv(t)
+	_, root := e.admin("Root")
+	ada, adaTok := e.user("Ada", core.PrincipalHuman)
+	_, bobTok := e.user("Bob", core.PrincipalHuman)
+	agent, agentTok := e.user("Helper", core.PrincipalAgent)
+	var w wireWidget
+	e.do("POST", "/widgets", root, map[string]any{
+		"name": "Support", "origins": []string{"https://shop.example"},
+		"team": []string{ada.ID}, "agent_id": agent.ID,
+	}, &w)
+	inbox := func(token string) []wireWidgetThread {
+		t.Helper()
+		var out struct{ Threads []wireWidgetThread }
+		if code := e.do("GET", "/widget-threads", token, nil, &out); code != 200 {
+			t.Fatalf("inbox = %d", code)
+		}
+		return out.Threads
+	}
+
+	// Cat asks and the agent answers; then Dan asks for a person.
+	_, cat := e.session(w.PublicKey, "", "")
+	e.do("POST", "/rooms/"+cat.Room.ID+"/messages", cat.Token, textMsg("hi"), nil)
+	e.do("POST", "/rooms/"+cat.Room.ID+"/messages", agentTok, textMsg("hello"), nil)
+	time.Sleep(2 * time.Millisecond) // the inbox orders by message time
+	_, dan := e.session(w.PublicKey, "", signIdentity(w.Secret, map[string]any{"sub": "u1", "name": "Dan", "exp": time.Now().Add(time.Hour).Unix()}))
+	e.do("POST", "/rooms/"+dan.Room.ID+"/messages", dan.Token, textMsg("a person, please"), nil)
+	e.do("POST", "/rooms/"+dan.Room.ID+"/handoff", dan.Token, nil, nil)
+
+	got := inbox(adaTok)
+	if len(got) != 2 || got[0].RoomID != dan.Room.ID || got[1].RoomID != cat.Room.ID {
+		t.Fatalf("inbox = %+v; want Dan, then Cat", got)
+	}
+	d, c := got[0], got[1]
+	if d.State != threadHandedOver || !d.Waiting || !d.Verified || d.VisitorName != "Dan" || d.VisitorID != dan.Principal.ID ||
+		d.WidgetID != w.ID || d.WidgetName != "Support" || d.LastMessageAt == nil {
+		t.Fatalf("Dan's thread = %+v", d)
+	}
+	if c.State != threadOpen || c.Waiting || c.Verified {
+		t.Fatalf("Cat's thread = %+v", c)
+	}
+	// Ada answers Dan.
+	e.do("POST", "/rooms/"+dan.Room.ID+"/messages", adaTok, textMsg("I'm here"), nil)
+	if got := inbox(adaTok); got[0].RoomID != dan.Room.ID || got[0].Waiting {
+		t.Fatalf("after Ada answered = %+v", got[0])
+	}
+	// The agent is in both threads; Bob, not on the team, sees none, and
+	// visitors have no inbox.
+	if got := inbox(agentTok); len(got) != 2 {
+		t.Fatalf("agent's inbox = %+v", got)
+	}
+	if got := inbox(bobTok); len(got) != 0 {
+		t.Fatalf("Bob's inbox = %+v", got)
+	}
+	if code := e.do("GET", "/widget-threads", cat.Token, nil, nil); code != 403 {
+		t.Fatalf("visitor's inbox = %d", code)
+	}
+	var one struct{ Threads []wireWidgetThread }
+	if code := e.do("GET", "/widget-threads?limit=1", adaTok, nil, &one); code != 200 || len(one.Threads) != 1 {
+		t.Fatalf("limit 1 = %d %+v", code, one)
+	}
+}
+
+func TestWidgetThreadState(t *testing.T) {
+	now := time.Now()
+	visitor, agent := "guest", "agent"
+	for _, tc := range []struct {
+		name    string
+		answers bool
+		sender  string
+		ago     time.Duration
+		want    string
+	}{
+		{"agent answering", true, agent, time.Minute, threadOpen},
+		{"handed over", false, agent, time.Minute, threadHandedOver},
+		{"quiet with the agent", true, agent, threadIdleAfter, threadIdle},
+		{"quiet after a person answered", false, agent, time.Hour, threadIdle},
+		{"visitor left waiting on the agent", true, visitor, time.Hour, threadIdle},
+		{"visitor left waiting on a person", false, visitor, time.Hour, threadHandedOver},
+		{"no message yet", true, "", time.Hour, threadIdle},
+	} {
+		th := store.WidgetThread{
+			Visitor:      store.Visitor{PrincipalID: visitor, CreatedAt: now.Add(-tc.ago)},
+			LastSenderID: tc.sender,
+			AgentAnswers: tc.answers,
+		}
+		if tc.sender != "" {
+			th.LastMessageAt = now.Add(-tc.ago)
+		}
+		if got := toWidgetThread(th, now).State; got != tc.want {
+			t.Errorf("%s: state %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestWidgetOffAndDeleted(t *testing.T) {
 	e := newEnv(t)
 	_, root := e.admin("Root")
@@ -297,10 +413,34 @@ func TestWidgetIdentity(t *testing.T) {
 	if code != 200 || s2.Principal.ID != s.Principal.ID || s2.Room.ID != s.Room.ID || s2.Token == s.Token {
 		t.Fatalf("second device = %d %+v", code, s2)
 	}
-	// The anonymous token of a visitor who then signs in is not reused.
+	// An anonymous visitor who signs in as a subject that already has a
+	// thread gets that thread.
 	_, anon := e.session(w.PublicKey, "", "")
 	if code, s3 := e.session(w.PublicKey, anon.Token, id); code != 200 || s3.Principal.ID != s.Principal.ID {
 		t.Fatalf("sign-in from anonymous = %d %+v", code, s3)
+	}
+
+	// An anonymous visitor who signs in as a new subject keeps their
+	// thread, now under the host's name. The anonymous token is not
+	// reused and stops working.
+	_, anon = e.session(w.PublicKey, "", "")
+	e.say(anon.Token, anon.Room.ID, "where is my order?")
+	linus := signIdentity(w.Secret, map[string]any{"sub": "user-9", "name": "Linus", "exp": exp})
+	code, s5 := e.session(w.PublicKey, anon.Token, linus)
+	if code != 200 || s5.Principal.ID != anon.Principal.ID || s5.Room.ID != anon.Room.ID || s5.Token == anon.Token ||
+		s5.Principal.DisplayName != "Linus" || s5.Room.Name != "Help · Linus" {
+		t.Fatalf("sign-in keeps the thread = %d %+v", code, s5)
+	}
+	if code, _ := e.session(w.PublicKey, anon.Token, ""); code != 201 {
+		t.Fatalf("old anonymous token = %d, want a new visitor", code)
+	}
+	var log struct{ Events []wireEvent }
+	if code := e.do("GET", "/rooms/"+s5.Room.ID+"/events", s5.Token, nil, &log); code != 200 || len(log.Events) != 1 {
+		t.Fatalf("thread after sign-in = %d %+v", code, log)
+	}
+	// Another device signed in as the same subject finds that thread.
+	if code, s6 := e.session(w.PublicKey, "", linus); code != 200 || s6.Room.ID != anon.Room.ID {
+		t.Fatalf("other device = %d %+v", code, s6)
 	}
 	// Grace's token with someone else's identity is not Grace.
 	other := signIdentity(w.Secret, map[string]any{"sub": "user-7", "exp": exp})
@@ -347,5 +487,61 @@ func TestWebSocketTokenProtocol(t *testing.T) {
 	_, res, err = websocket.Dial(ctx, url, &websocket.DialOptions{Subprotocols: []string{WSProtocol, TokenProtocol + "say_wrong"}})
 	if err == nil || res == nil || res.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("wrong token: %v %v", err, res)
+	}
+}
+
+func TestDeleteVisitor(t *testing.T) {
+	e := newEnv(t)
+	_, root := e.admin("Root")
+	ada, adaTok := e.user("Ada", core.PrincipalHuman)
+	var w, w2 wireWidget
+	e.do("POST", "/widgets", root, map[string]any{"name": "Support", "origins": []string{"https://shop.example"}, "team": []string{ada.ID}}, &w)
+	e.do("POST", "/widgets", root, map[string]any{"name": "Sales", "origins": []string{"https://shop.example"}, "team": []string{ada.ID}}, &w2)
+
+	// A visitor deletes its own chat.
+	_, s := e.session(w.PublicKey, "", "")
+	e.say(s.Token, s.Room.ID, "please forget me")
+	if code := e.do("DELETE", "/embed/"+w2.PublicKey+"/session", s.Token, nil, nil); code != 403 {
+		t.Fatalf("delete through another widget = %d", code)
+	}
+	if code := e.do("DELETE", "/embed/"+w.PublicKey+"/session", adaTok, nil, nil); code != 403 {
+		t.Fatalf("a person deletes a widget session = %d", code)
+	}
+	if code := e.do("DELETE", "/embed/"+w.PublicKey+"/session", s.Token, nil, nil); code != 204 {
+		t.Fatalf("visitor deletes its chat = %d", code)
+	}
+	if code := e.do("GET", "/rooms/"+s.Room.ID+"/events", adaTok, nil, nil); code != 404 {
+		t.Fatalf("Ada reads the deleted thread = %d", code)
+	}
+	if code := e.do("GET", "/me", s.Token, nil, nil); code != 401 {
+		t.Fatalf("deleted visitor's token = %d", code)
+	}
+	// The same browser starts over as a new visitor.
+	if code, again := e.session(w.PublicKey, s.Token, ""); code != 201 || again.Principal.ID == s.Principal.ID {
+		t.Fatalf("session after delete = %d %+v", code, again)
+	}
+
+	// An admin deletes a verified visitor, who comes back as a new one.
+	id := signIdentity(w.Secret, map[string]any{"sub": "user-1", "exp": time.Now().Add(time.Hour).Unix()})
+	_, v := e.session(w.PublicKey, "", id)
+	e.say(v.Token, v.Room.ID, "hi")
+	if code := e.do("DELETE", "/visitors/"+v.Principal.ID, adaTok, nil, nil); code != 403 {
+		t.Fatalf("non-admin deletes a visitor = %d", code)
+	}
+	if code := e.do("DELETE", "/visitors/"+ada.ID, root, nil, nil); code != 404 {
+		t.Fatalf("delete a person as a visitor = %d", code)
+	}
+	if code := e.do("DELETE", "/visitors/"+v.Principal.ID, root, nil, nil); code != 204 {
+		t.Fatalf("admin deletes a visitor = %d", code)
+	}
+	if code := e.do("DELETE", "/visitors/"+v.Principal.ID, root, nil, nil); code != 404 {
+		t.Fatalf("delete twice = %d", code)
+	}
+	if code, again := e.session(w.PublicKey, "", id); code != 201 || again.Principal.ID == v.Principal.ID || again.Room.ID == v.Room.ID {
+		t.Fatalf("verified visitor after delete = %d %+v", code, again)
+	}
+	var rooms struct{ Rooms []wireRoom }
+	if e.do("GET", "/rooms", adaTok, nil, &rooms); len(rooms.Rooms) != 2 {
+		t.Fatalf("Ada's rooms = %+v; want the two new threads", rooms)
 	}
 }

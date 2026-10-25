@@ -31,6 +31,12 @@
   allocated by the database and increases monotonically per room. Message,
   edit, reaction, typing and receipt are event types.
 
+**System event**
+: An event that records a change to the room rather than a message:
+  `agent-settings` (such as pausing agents) and `handoff` (such as a human
+  taking over a widget thread from an agent). Its sender is who made the
+  change, so the log shows who did it and when.
+
 **Part**
 : A typed piece of a message event: text/markdown, attachment,
   tool-call/result, card/form. A message has a streaming state, `streaming`
@@ -179,7 +185,8 @@
 
 **Visitor**
 : A guest principal that chats through a widget, with its own widget
-  thread. Anonymous, or verified by an identity token.
+  thread. Anonymous, or verified by an identity token; an anonymous
+  visitor who signs in becomes verified and keeps its thread.
 
 **Widget thread**
 : A `widget-thread` room with one visitor, the widget's team and its agent.
@@ -192,3 +199,10 @@
 **Handoff**
 : The agent in a widget thread stops answering every message, because a
   person on the team wrote there or the visitor asked for a person.
+
+**Inbox**
+: The widget threads a person is in, kept out of their room list. A
+  thread is *open* while an agent answers it, *handed over* after a
+  handoff (or from the start, for a widget without an agent) and *idle*
+  after 30 minutes without a message. A handed-over thread whose visitor
+  wrote last stays handed over: the visitor is *waiting*.

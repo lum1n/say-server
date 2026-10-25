@@ -34,6 +34,9 @@ const (
 	maxIdentityTTL = 24 * time.Hour
 	clockSkew      = time.Minute
 	maxOrigins     = 20
+	// threadIdleAfter is how long a widget thread goes without a message
+	// before the inbox calls it idle.
+	threadIdleAfter = 30 * time.Minute
 )
 
 var (
@@ -310,10 +313,12 @@ func (s *Server) embedConfig(w http.ResponseWriter, r *http.Request) {
 
 // embedSession signs a visitor in to the widget and returns its thread.
 // A token from an earlier session of the same visitor is returned as is;
-// a valid identity token finds or creates the verified visitor with that
-// subject; otherwise a new anonymous visitor is created. The embed page
-// calls it only when it has a token or an identity, or on the first
-// message, so page views alone create nothing.
+// a valid identity token finds the verified visitor with that subject,
+// else makes the anonymous visitor of the request's token that visitor (so
+// it keeps its thread), else creates one; otherwise a new anonymous
+// visitor is created. The embed page calls it only when it has a token or
+// an identity, or on the first message, so page views alone create
+// nothing.
 func (s *Server) embedSession(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var body struct {
@@ -336,13 +341,17 @@ func (s *Server) embedSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The same visitor again.
+	// The same visitor again, or an anonymous one who has signed in.
+	var anon core.Principal
 	if token := requestToken(r); token != "" {
 		if p, err := s.store.PrincipalByToken(ctx, token); err == nil && p.Kind == core.PrincipalGuest {
 			v, err := s.store.VisitorByPrincipal(ctx, p.ID)
 			if err == nil && v.WidgetID == wg.ID && v.Subject == id.Subject {
 				s.writeSession(w, ctx, http.StatusOK, p, v, token)
 				return
+			}
+			if err == nil && v.WidgetID == wg.ID && v.Subject == "" {
+				anon = p
 			}
 		}
 	}
@@ -351,6 +360,9 @@ func (s *Server) embedSession(w http.ResponseWriter, r *http.Request) {
 	var v store.Visitor
 	if id.Subject != "" {
 		v, err = s.store.VisitorBySubject(ctx, wg.ID, id.Subject)
+	}
+	if anon.ID != "" && errors.Is(err, store.ErrNotFound) {
+		v, err = s.verifyVisitor(ctx, wg, anon, id)
 	}
 	if id.Subject == "" || errors.Is(err, store.ErrNotFound) {
 		v, err = s.newVisitor(ctx, wg, id)
@@ -416,6 +428,129 @@ func (s *Server) newVisitor(ctx context.Context, wg store.Widget, id identity) (
 	return v, nil
 }
 
+// verifyVisitor makes anonymous visitor anon the verified visitor id,
+// when the widget has none yet, so a visitor who signs in on the host site
+// keeps the thread they started. The guest takes the identity's name, and
+// its anonymous tokens stop working: the thread now holds what the
+// verified visitor writes on any device.
+func (s *Server) verifyVisitor(ctx context.Context, wg store.Widget, anon core.Principal, id identity) (store.Visitor, error) {
+	old, err := s.store.VisitorByPrincipal(ctx, anon.ID)
+	if err != nil {
+		return store.Visitor{}, err
+	}
+	room, err := s.store.GetRoom(ctx, old.RoomID)
+	if err != nil {
+		return store.Visitor{}, err
+	}
+	roomName := ""
+	if prefix, ok := strings.CutSuffix(room.Name, " · "+anon.DisplayName); ok && id.Name != "" {
+		roomName = prefix + " · " + id.Name
+	}
+	v, err := s.store.VerifyVisitor(ctx, anon.ID, id.Subject, id.Name, roomName)
+	if errors.Is(err, store.ErrVisitorExists) {
+		// A concurrent first visit by the same verified visitor won; the
+		// anonymous thread stays as it is.
+		return s.store.VisitorBySubject(ctx, wg.ID, id.Subject)
+	}
+	if err != nil {
+		return store.Visitor{}, err
+	}
+	if err := s.store.RevokeTokensNamed(ctx, anon.ID, "widget"); err != nil {
+		return store.Visitor{}, err
+	}
+	if id.Name != "" {
+		// The team's room lists and member panels show the new name.
+		if ms, err := s.store.Members(ctx, v.RoomID); err == nil {
+			for _, m := range ms {
+				s.notifyRooms(ctx, m.PrincipalID)
+			}
+		}
+	}
+	return v, nil
+}
+
+// deleteEmbedSession is a visitor deleting its own chat: the thread,
+// what it wrote and the visitor itself. Its token stops working.
+func (s *Server) deleteEmbedSession(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	ctx := r.Context()
+	wg, err := s.store.WidgetByKey(ctx, r.PathValue("key"))
+	if errors.Is(err, store.ErrNotFound) {
+		err = errWidgetNotFound
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	v, err := s.store.VisitorByPrincipal(ctx, me.ID)
+	if errors.Is(err, store.ErrNotFound) || err == nil && v.WidgetID != wg.ID {
+		err = errorf(http.StatusForbidden, "forbidden", "only the widget's visitors delete their chat")
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := s.eraseVisitor(ctx, v); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// deleteVisitor is an instance admin erasing a visitor and its thread,
+// such as when a visitor asks for their data to be deleted.
+func (s *Server) deleteVisitor(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	if !me.Admin {
+		writeError(w, errorf(http.StatusForbidden, "forbidden", "only instance admins delete visitors"))
+		return
+	}
+	v, err := s.store.VisitorByPrincipal(r.Context(), r.PathValue("id"))
+	if errors.Is(err, store.ErrNotFound) {
+		err = errorf(http.StatusNotFound, "not_found", "no such visitor")
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := s.eraseVisitor(r.Context(), v); err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// eraseVisitor deletes v with its thread, then tells everyone who shared a
+// room with it to reread their rooms and members.
+func (s *Server) eraseVisitor(ctx context.Context, v store.Visitor) error {
+	rooms, err := s.store.RoomsFor(ctx, v.PrincipalID)
+	if err != nil {
+		return err
+	}
+	var others []string
+	for _, room := range rooms {
+		ms, err := s.store.Members(ctx, room.ID)
+		if err != nil {
+			return err
+		}
+		for _, m := range ms {
+			if m.PrincipalID != v.PrincipalID && !slices.Contains(others, m.PrincipalID) {
+				others = append(others, m.PrincipalID)
+			}
+		}
+	}
+	if err := s.store.DeleteVisitor(ctx, v.PrincipalID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			// A concurrent delete won.
+			return nil
+		}
+		return err
+	}
+	slog.Info("widget visitor deleted", "widget", v.WidgetID, "visitor", v.PrincipalID)
+	for _, id := range others {
+		s.notifyRooms(ctx, id)
+	}
+	return nil
+}
+
 // handoffRoom hands a widget thread from its agent to the people in it.
 func (s *Server) handoffRoom(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	id := r.PathValue("id")
@@ -476,6 +611,81 @@ func (s *Server) handoffOnReply(ctx context.Context, me core.Principal, room cor
 	if err := s.handoff(ctx, room.ID); err != nil {
 		slog.Warn("widget handoff failed", "room", room.ID, "err", err)
 	}
+}
+
+// The states of a widget thread in the inbox.
+const (
+	// threadOpen: an agent answers the visitor.
+	threadOpen = "open"
+	// threadHandedOver: the thread is the team's, and an agent answers
+	// only when mentioned. Threads of widgets without an agent start here.
+	threadHandedOver = "handed_over"
+	// threadIdle: nobody has written for threadIdleAfter, and no visitor
+	// waits for a person.
+	threadIdle = "idle"
+)
+
+// wireWidgetThread is a widget thread in the team's inbox.
+type wireWidgetThread struct {
+	RoomID      string `json:"room_id"`
+	WidgetID    string `json:"widget_id"`
+	WidgetName  string `json:"widget_name"`
+	VisitorID   string `json:"visitor_id"`
+	VisitorName string `json:"visitor_name"`
+	// Verified is whether the host site said who the visitor is.
+	Verified bool   `json:"verified"`
+	State    string `json:"state"`
+	// Waiting is whether the visitor wrote last, so nobody has answered.
+	Waiting       bool       `json:"waiting"`
+	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+}
+
+func toWidgetThread(th store.WidgetThread, now time.Time) wireWidgetThread {
+	out := wireWidgetThread{
+		RoomID: th.RoomID, WidgetID: th.WidgetID, WidgetName: th.WidgetName,
+		VisitorID: th.PrincipalID, VisitorName: th.VisitorName, Verified: th.Subject != "",
+		Waiting: th.LastSenderID == th.PrincipalID, CreatedAt: th.CreatedAt.UTC(),
+	}
+	active := th.CreatedAt
+	if !th.LastMessageAt.IsZero() {
+		at := th.LastMessageAt.UTC()
+		out.LastMessageAt, active = &at, at
+	}
+	switch {
+	case now.Sub(active) >= threadIdleAfter && !(out.Waiting && !th.AgentAnswers):
+		out.State = threadIdle
+	case th.AgentAnswers:
+		out.State = threadOpen
+	default:
+		out.State = threadHandedOver
+	}
+	return out
+}
+
+// listWidgetThreads is the inbox: the widget threads I am in, latest
+// activity first, so a busy widget need not crowd the room list.
+func (s *Server) listWidgetThreads(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	if me.Kind != core.PrincipalHuman && me.Kind != core.PrincipalAgent {
+		writeError(w, errorf(http.StatusForbidden, "forbidden", "only people and agents have an inbox"))
+		return
+	}
+	limit, err := intParam(r.URL.Query().Get("limit"), 200, 1, maxPage)
+	if err != nil {
+		writeError(w, errorf(http.StatusBadRequest, "bad_request", "limit: %v", err))
+		return
+	}
+	threads, err := s.store.WidgetThreads(r.Context(), me.ID, int(limit))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	now := time.Now()
+	out := make([]wireWidgetThread, len(threads))
+	for i, th := range threads {
+		out[i] = toWidgetThread(th, now)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"threads": out})
 }
 
 // frameAncestors is the Content-Security-Policy for /embed/{key}: only the

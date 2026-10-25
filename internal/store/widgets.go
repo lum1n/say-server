@@ -47,6 +47,20 @@ type Visitor struct {
 	CreatedAt   time.Time
 }
 
+// WidgetThread is a visitor's thread as its team sees it in the inbox.
+type WidgetThread struct {
+	Visitor
+	WidgetName  string
+	VisitorName string
+	// LastSenderID and LastMessageAt are the thread's latest message;
+	// both are zero when it has none.
+	LastSenderID  string
+	LastMessageAt time.Time
+	// AgentAnswers is whether a member is still the thread's responder,
+	// that is, the thread has not been handed over.
+	AgentAnswers bool
+}
+
 func (s *sqlStore) CreateWidget(ctx context.Context, w Widget) error {
 	origins, team, err := widgetLists(w)
 	if err != nil {
@@ -232,6 +246,78 @@ func (s *sqlStore) VisitorBySubject(ctx context.Context, widgetID, subject strin
 	return visitor(row), nil
 }
 
+func (s *sqlStore) VerifyVisitor(ctx context.Context, principalID, subject, displayName, roomName string) (Visitor, error) {
+	var v Visitor
+	err := s.tx(ctx, func(q *db.Queries) error {
+		n, err := q.VerifyVisitor(ctx, db.VerifyVisitorParams{PrincipalID: principalID, Subject: subject})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrVisitorExists
+		}
+		row, err := q.VisitorByPrincipal(ctx, principalID)
+		if err != nil {
+			return err
+		}
+		v = visitor(row)
+		if displayName != "" {
+			if _, err := q.RenamePrincipal(ctx, db.RenamePrincipalParams{ID: principalID, DisplayName: displayName}); err != nil {
+				return err
+			}
+		}
+		if roomName != "" {
+			if _, err := q.RenameRoom(ctx, db.RenameRoomParams{ID: v.RoomID, Name: roomName}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return v, err
+}
+
+func (s *sqlStore) DeleteVisitor(ctx context.Context, principalID string) error {
+	return s.tx(ctx, func(q *db.Queries) error {
+		row, err := q.VisitorByPrincipal(ctx, principalID)
+		if err != nil {
+			return notFound(err)
+		}
+		room := row.RoomID
+		// Bumping the seq locks the room row first, so an append that is
+		// running finishes before its events are deleted, and one that
+		// comes later finds no room.
+		if _, err := q.BumpSeq(ctx, room); err != nil {
+			return notFound(err)
+		}
+		steps := []func(context.Context, string) error{
+			q.DeleteRoomBridgeMessages, q.DeleteRoomBridgeLinks, q.DeleteRoomAgentCursors,
+			q.DeleteRoomEvents, q.DeleteRoomMembers,
+		}
+		for _, step := range steps {
+			if err := step(ctx, room); err != nil {
+				return err
+			}
+		}
+		if err := q.DeleteVisitorRow(ctx, principalID); err != nil {
+			return err
+		}
+		if err := q.DeleteRoom(ctx, room); err != nil {
+			return err
+		}
+		// The rooms it was added to besides its thread.
+		steps = []func(context.Context, string) error{
+			q.DeleteSenderBridgeMessages, q.DeleteSenderEvents, q.DeletePrincipalMemberships,
+			q.DeletePrincipalTokens, q.DeletePrincipal,
+		}
+		for _, step := range steps {
+			if err := step(ctx, principalID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func visitor(row db.WidgetVisitor) Visitor {
 	return Visitor{
 		PrincipalID: row.PrincipalID,
@@ -240,4 +326,31 @@ func visitor(row db.WidgetVisitor) Visitor {
 		RoomID:      row.RoomID,
 		CreatedAt:   unmillis(row.CreatedAt),
 	}
+}
+
+func (s *sqlStore) WidgetThreads(ctx context.Context, principalID string, limit int) ([]WidgetThread, error) {
+	rows, err := s.q().WidgetThreadsFor(ctx, db.WidgetThreadsForParams{PrincipalID: principalID, Limit: int32(limit)})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]WidgetThread, len(rows))
+	for i, row := range rows {
+		out[i] = WidgetThread{
+			Visitor: visitor(db.WidgetVisitor{
+				PrincipalID: row.PrincipalID,
+				WidgetID:    row.WidgetID,
+				Subject:     row.Subject,
+				RoomID:      row.RoomID,
+				CreatedAt:   row.CreatedAt,
+			}),
+			WidgetName:   row.WidgetName,
+			VisitorName:  row.VisitorName,
+			LastSenderID: row.LastSenderID.String,
+			AgentAnswers: row.AgentAnswers,
+		}
+		if row.LastMessageAt.Valid {
+			out[i].LastMessageAt = unmillis(row.LastMessageAt.Int64)
+		}
+	}
+	return out, nil
 }

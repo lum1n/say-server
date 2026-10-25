@@ -20,7 +20,7 @@ function Widgets() {
       <h1>Widgets</h1>
       <p className="muted">
         A widget puts a chat on your own site. Each visitor gets a thread with the widget's agent and team, which shows up
-        in the team's room list. When a person on the team writes in a thread, the agent stops answering it.
+        in the team's inbox. When a person on the team writes in a thread, the agent stops answering it.
       </p>
       {widgets.error && <FormError error={widgets.error} />}
       <ul className="directory widgets">

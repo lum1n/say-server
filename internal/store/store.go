@@ -198,6 +198,20 @@ type Store interface {
 	CreateVisitor(ctx context.Context, guest core.Principal, room core.Room, members []core.Membership, v Visitor) error
 	VisitorByPrincipal(ctx context.Context, principalID string) (Visitor, error)
 	VisitorBySubject(ctx context.Context, widgetID, subject string) (Visitor, error)
+	// VerifyVisitor gives anonymous visitor principalID the subject, so
+	// it keeps its thread once the host site verifies it, and renames the
+	// guest to displayName and its thread to roomName unless they are
+	// empty. It returns ErrVisitorExists if the visitor is not anonymous
+	// or its widget already has a visitor with that subject.
+	VerifyVisitor(ctx context.Context, principalID, subject, displayName, roomName string) (Visitor, error)
+	// DeleteVisitor erases a visitor in one transaction: its thread with
+	// every event and member, the messages it wrote in other rooms, its
+	// memberships and tokens, and its guest principal. An unknown visitor
+	// is ErrNotFound.
+	DeleteVisitor(ctx context.Context, principalID string) error
+	// WidgetThreads returns up to limit widget threads principalID is a
+	// member of, latest activity first.
+	WidgetThreads(ctx context.Context, principalID string, limit int) ([]WidgetThread, error)
 
 	// CreateBridge and UpdateBridge write a bridge; UpdateBridge changes
 	// only its name, config and enabled switch.

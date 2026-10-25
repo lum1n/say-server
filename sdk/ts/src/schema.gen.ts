@@ -499,6 +499,27 @@ export interface paths {
         patch: operations["updateWidget"];
         trace?: never;
     };
+    "/widget-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The widget threads I am in (the inbox)
+         * @description Widget threads whose team or agent I am in, with whether an agent
+         *     still answers each, latest activity first. People and agents only.
+         */
+        get: operations["listWidgetThreads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/embed/{key}": {
         parameters: {
             query?: never;
@@ -538,13 +559,49 @@ export interface paths {
          * Sign a visitor in to a widget
          * @description With a bearer token from an earlier session of the same visitor,
          *     returns that session as is. With an identity token, finds or
-         *     creates the verified visitor it names, on any device. Otherwise
+         *     creates the verified visitor it names, on any device; an anonymous
+         *     visitor's bearer token sent with it, when that subject has no
+         *     visitor yet, makes the anonymous visitor the verified one, keeping
+         *     its thread, and stops working. Otherwise
          *     creates an anonymous visitor: a guest principal with a widget
          *     thread, whose members are the widget's team and agent. Visitor
          *     tokens last 90 days.
          */
         post: operations["createEmbedSession"];
-        delete?: never;
+        /**
+         * Delete the visitor's chat
+         * @description The visitor, with its own token, erases itself: its thread with
+         *     every message in it, what it wrote in other rooms, its tokens and
+         *     its guest principal. The token stops working; the next session is a
+         *     new visitor. Messages already mirrored to a bridged network stay
+         *     there.
+         */
+        delete: operations["deleteEmbedSession"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/visitors/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The visitor's guest principal id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a widget visitor and its thread
+         * @description Instance admins only. Erases the same as `DELETE
+         *     /embed/{key}/session`, for a visitor who asked to have their data
+         *     deleted. A verified visitor who comes back is a new visitor.
+         */
+        delete: operations["deleteVisitor"];
         options?: never;
         head?: never;
         patch?: never;
@@ -976,6 +1033,32 @@ export interface components {
             /** Format: date-time */
             created_at: string;
         };
+        WidgetThread: {
+            room_id: string;
+            widget_id: string;
+            widget_name: string;
+            visitor_id: string;
+            visitor_name: string;
+            /** @description Whether the host site signed the visitor in (an identity token). */
+            verified: boolean;
+            /**
+             * @description `open`: an agent answers the visitor. `handed_over`: the
+             *     thread is the team's, and agents answer only when mentioned.
+             *     `idle`: no message for 30 minutes, unless the visitor of a
+             *     handed-over thread is still waiting for a person.
+             * @enum {string}
+             */
+            state: "open" | "handed_over" | "idle";
+            /** @description The visitor wrote the latest message, so nobody has answered it yet. */
+            waiting: boolean;
+            /**
+             * Format: date-time
+             * @description Absent when the thread has no messages.
+             */
+            last_message_at?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
         EmbedConfig: {
             name: string;
             greeting: string;
@@ -1135,8 +1218,32 @@ export interface components {
             /** @description Automated hops since the last human event. */
             hop_count: number;
         };
-        /** @enum {string} */
-        EventType: "message" | "edit" | "reaction" | "typing" | "receipt";
+        /**
+         * @description `agent-settings` and `handoff` are system events: they record who
+         *     changed the room (the event's sender) and when, in the room log.
+         * @enum {string}
+         */
+        EventType: "message" | "edit" | "reaction" | "typing" | "receipt" | "agent-settings" | "handoff";
+        /**
+         * @description Body of an `agent-settings` event. Only the settings that changed
+         *     are present.
+         */
+        AgentSettingsChange: {
+            /** @description The room's "pause agents" switch. */
+            paused?: boolean;
+            max_hop_count?: number;
+        };
+        /**
+         * @description Body of a `handoff` event: who now handles the conversation, such as
+         *     a widget thread passing from an agent to a human. When the sender is
+         *     `to`, they took over themselves.
+         */
+        Handoff: {
+            /** @description Principal that handled the conversation before, if any. */
+            from?: string;
+            /** @description Principal that handles the conversation now. */
+            to: string;
+        };
         /**
          * @description A streaming message's parts change in place until an edit ends the
          *     stream. On an edit event, `final` means the edit ended a stream.
@@ -2107,6 +2214,33 @@ export interface operations {
             422: components["responses"]["Error"];
         };
     };
+    listWidgetThreads: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The threads, latest activity first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        threads: components["schemas"]["WidgetThread"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
     getEmbedConfig: {
         parameters: {
             query?: never;
@@ -2167,6 +2301,54 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    deleteEmbedSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The widget's public key (pk_…) */
+                key: components["parameters"]["WidgetKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    deleteVisitor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The visitor's guest principal id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
             404: components["responses"]["Error"];
         };
     };

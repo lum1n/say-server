@@ -246,6 +246,81 @@ SELECT * FROM widget_visitors WHERE principal_id = $1;
 -- name: VisitorBySubject :one
 SELECT * FROM widget_visitors WHERE widget_id = $1 AND subject = $2;
 
+-- name: VerifyVisitor :execrows
+-- Gives anonymous visitor $1 subject $2, unless its widget already has a
+-- visitor with that subject.
+UPDATE widget_visitors SET subject = $2
+WHERE widget_visitors.principal_id = $1 AND widget_visitors.subject = ''
+  AND NOT EXISTS (
+    SELECT 1 FROM widget_visitors o
+    WHERE o.widget_id = widget_visitors.widget_id AND o.subject = $2
+  );
+
+-- name: RenameRoom :execrows
+UPDATE rooms SET name = $2 WHERE id = $1;
+
+-- Deleting a visitor (DeleteVisitor) removes its thread and everything
+-- it wrote, wherever it wrote it.
+-- name: DeleteVisitorRow :exec
+DELETE FROM widget_visitors WHERE principal_id = $1;
+
+-- name: DeleteRoomBridgeMessages :exec
+DELETE FROM bridge_messages
+WHERE link_id IN (SELECT id FROM bridge_links WHERE room_id = $1);
+
+-- name: DeleteRoomBridgeLinks :exec
+DELETE FROM bridge_links WHERE room_id = $1;
+
+-- name: DeleteRoomAgentCursors :exec
+DELETE FROM agent_cursors WHERE room_id = $1;
+
+-- name: DeleteRoomEvents :exec
+DELETE FROM events WHERE room_id = $1;
+
+-- name: DeleteRoomMembers :exec
+DELETE FROM memberships WHERE room_id = $1;
+
+-- name: DeleteRoom :exec
+DELETE FROM rooms WHERE id = $1;
+
+-- name: DeleteSenderBridgeMessages :exec
+DELETE FROM bridge_messages
+WHERE event_id IN (SELECT id FROM events WHERE sender_id = $1);
+
+-- name: DeleteSenderEvents :exec
+DELETE FROM events WHERE sender_id = $1;
+
+-- name: DeletePrincipalMemberships :exec
+DELETE FROM memberships WHERE principal_id = $1;
+
+-- name: DeletePrincipalTokens :exec
+DELETE FROM tokens WHERE principal_id = $1;
+
+-- name: DeletePrincipal :exec
+DELETE FROM principals WHERE id = $1;
+
+-- The widget threads principal $1 is in, with each thread's latest
+-- message and whether an agent still answers it, latest activity first
+-- (docs/adr/0012-widget.md).
+-- name: WidgetThreadsFor :many
+SELECT v.room_id, v.widget_id, v.principal_id, v.subject, v.created_at,
+       w.name AS widget_name, g.display_name AS visitor_name,
+       e.sender_id AS last_sender_id, e.created_at AS last_message_at,
+       EXISTS (
+           SELECT 1 FROM memberships rm
+           WHERE rm.room_id = v.room_id AND rm.scopes LIKE '%"responder"%'
+       ) AS agent_answers
+FROM widget_visitors v
+JOIN memberships m ON m.room_id = v.room_id AND m.principal_id = $1
+JOIN widgets w ON w.id = v.widget_id
+JOIN principals g ON g.id = v.principal_id
+LEFT JOIN events e ON e.room_id = v.room_id AND e.seq = (
+    SELECT MAX(x.seq) FROM events x
+    WHERE x.room_id = v.room_id AND x.type = 'message'
+)
+ORDER BY COALESCE(e.created_at, v.created_at) DESC, v.room_id DESC
+LIMIT $2;
+
 -- name: DeleteTokensNamed :exec
 DELETE FROM tokens WHERE principal_id = $1 AND name = $2;
 
