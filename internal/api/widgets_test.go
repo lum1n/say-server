@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/vegard/say-v2/internal/core"
+	"github.com/vegard/say-v2/internal/store"
 )
 
 // signIdentity makes an HS256 identity token the way a host site would.
@@ -212,6 +213,101 @@ func TestWidgetVisitors(t *testing.T) {
 	// A token that is not a visitor's starts a new visitor.
 	if code, s4 := e.session(w.PublicKey, adaTok, ""); code != 201 || s4.Principal.ID == ada.ID {
 		t.Fatalf("session with Ada's token = %d %+v", code, s4)
+	}
+}
+
+func TestWidgetInbox(t *testing.T) {
+	e := newEnv(t)
+	_, root := e.admin("Root")
+	ada, adaTok := e.user("Ada", core.PrincipalHuman)
+	_, bobTok := e.user("Bob", core.PrincipalHuman)
+	agent, agentTok := e.user("Helper", core.PrincipalAgent)
+	var w wireWidget
+	e.do("POST", "/widgets", root, map[string]any{
+		"name": "Support", "origins": []string{"https://shop.example"},
+		"team": []string{ada.ID}, "agent_id": agent.ID,
+	}, &w)
+	inbox := func(token string) []wireWidgetThread {
+		t.Helper()
+		var out struct{ Threads []wireWidgetThread }
+		if code := e.do("GET", "/widget-threads", token, nil, &out); code != 200 {
+			t.Fatalf("inbox = %d", code)
+		}
+		return out.Threads
+	}
+
+	// Cat asks and the agent answers; then Dan asks for a person.
+	_, cat := e.session(w.PublicKey, "", "")
+	e.do("POST", "/rooms/"+cat.Room.ID+"/messages", cat.Token, textMsg("hi"), nil)
+	e.do("POST", "/rooms/"+cat.Room.ID+"/messages", agentTok, textMsg("hello"), nil)
+	time.Sleep(2 * time.Millisecond) // the inbox orders by message time
+	_, dan := e.session(w.PublicKey, "", signIdentity(w.Secret, map[string]any{"sub": "u1", "name": "Dan", "exp": time.Now().Add(time.Hour).Unix()}))
+	e.do("POST", "/rooms/"+dan.Room.ID+"/messages", dan.Token, textMsg("a person, please"), nil)
+	e.do("POST", "/rooms/"+dan.Room.ID+"/handoff", dan.Token, nil, nil)
+
+	got := inbox(adaTok)
+	if len(got) != 2 || got[0].RoomID != dan.Room.ID || got[1].RoomID != cat.Room.ID {
+		t.Fatalf("inbox = %+v; want Dan, then Cat", got)
+	}
+	d, c := got[0], got[1]
+	if d.State != threadHandedOver || !d.Waiting || !d.Verified || d.VisitorName != "Dan" || d.VisitorID != dan.Principal.ID ||
+		d.WidgetID != w.ID || d.WidgetName != "Support" || d.LastMessageAt == nil {
+		t.Fatalf("Dan's thread = %+v", d)
+	}
+	if c.State != threadOpen || c.Waiting || c.Verified {
+		t.Fatalf("Cat's thread = %+v", c)
+	}
+	// Ada answers Dan.
+	e.do("POST", "/rooms/"+dan.Room.ID+"/messages", adaTok, textMsg("I'm here"), nil)
+	if got := inbox(adaTok); got[0].RoomID != dan.Room.ID || got[0].Waiting {
+		t.Fatalf("after Ada answered = %+v", got[0])
+	}
+	// The agent is in both threads; Bob, not on the team, sees none, and
+	// visitors have no inbox.
+	if got := inbox(agentTok); len(got) != 2 {
+		t.Fatalf("agent's inbox = %+v", got)
+	}
+	if got := inbox(bobTok); len(got) != 0 {
+		t.Fatalf("Bob's inbox = %+v", got)
+	}
+	if code := e.do("GET", "/widget-threads", cat.Token, nil, nil); code != 403 {
+		t.Fatalf("visitor's inbox = %d", code)
+	}
+	var one struct{ Threads []wireWidgetThread }
+	if code := e.do("GET", "/widget-threads?limit=1", adaTok, nil, &one); code != 200 || len(one.Threads) != 1 {
+		t.Fatalf("limit 1 = %d %+v", code, one)
+	}
+}
+
+func TestWidgetThreadState(t *testing.T) {
+	now := time.Now()
+	visitor, agent := "guest", "agent"
+	for _, tc := range []struct {
+		name    string
+		answers bool
+		sender  string
+		ago     time.Duration
+		want    string
+	}{
+		{"agent answering", true, agent, time.Minute, threadOpen},
+		{"handed over", false, agent, time.Minute, threadHandedOver},
+		{"quiet with the agent", true, agent, threadIdleAfter, threadIdle},
+		{"quiet after a person answered", false, agent, time.Hour, threadIdle},
+		{"visitor left waiting on the agent", true, visitor, time.Hour, threadIdle},
+		{"visitor left waiting on a person", false, visitor, time.Hour, threadHandedOver},
+		{"no message yet", true, "", time.Hour, threadIdle},
+	} {
+		th := store.WidgetThread{
+			Visitor:      store.Visitor{PrincipalID: visitor, CreatedAt: now.Add(-tc.ago)},
+			LastSenderID: tc.sender,
+			AgentAnswers: tc.answers,
+		}
+		if tc.sender != "" {
+			th.LastMessageAt = now.Add(-tc.ago)
+		}
+		if got := toWidgetThread(th, now).State; got != tc.want {
+			t.Errorf("%s: state %q, want %q", tc.name, got, tc.want)
+		}
 	}
 }
 

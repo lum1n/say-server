@@ -37,7 +37,11 @@ function RoomPage() {
   return (
     <main className="room">
       <header className="room-header">
-        <Link to="/" className="back">‹ Rooms</Link>
+        {room.data?.kind === "widget-thread" ? (
+          <Link to="/inbox" className="back">‹ Inbox</Link>
+        ) : (
+          <Link to="/" className="back">‹ Rooms</Link>
+        )}
         <h1>{room.data ? room.data.name || "Untitled room" : "…"}</h1>
         {room.data?.bridges?.map((b) => <BridgeChip key={b.bridge_id} bridge={b} />)}
         {room.data && <PauseAgents room={room.data} />}

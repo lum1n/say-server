@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 const acquireLease = `-- name: AcquireLease :one
@@ -2007,4 +2008,79 @@ func (q *Queries) WidgetByKey(ctx context.Context, publicKey string) (Widget, er
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const widgetThreadsFor = `-- name: WidgetThreadsFor :many
+SELECT v.room_id, v.widget_id, v.principal_id, v.subject, v.created_at,
+       w.name AS widget_name, g.display_name AS visitor_name,
+       e.sender_id AS last_sender_id, e.created_at AS last_message_at,
+       EXISTS (
+           SELECT 1 FROM memberships rm
+           WHERE rm.room_id = v.room_id AND rm.scopes LIKE '%"responder"%'
+       ) AS agent_answers
+FROM widget_visitors v
+JOIN memberships m ON m.room_id = v.room_id AND m.principal_id = $1
+JOIN widgets w ON w.id = v.widget_id
+JOIN principals g ON g.id = v.principal_id
+LEFT JOIN events e ON e.room_id = v.room_id AND e.seq = (
+    SELECT MAX(x.seq) FROM events x
+    WHERE x.room_id = v.room_id AND x.type = 'message'
+)
+ORDER BY COALESCE(e.created_at, v.created_at) DESC, v.room_id DESC
+LIMIT $2
+`
+
+type WidgetThreadsForParams struct {
+	PrincipalID string
+	Limit       int32
+}
+
+type WidgetThreadsForRow struct {
+	RoomID        string
+	WidgetID      string
+	PrincipalID   string
+	Subject       string
+	CreatedAt     int64
+	WidgetName    string
+	VisitorName   string
+	LastSenderID  sql.NullString
+	LastMessageAt sql.NullInt64
+	AgentAnswers  bool
+}
+
+// The widget threads principal $1 is in, with each thread's latest
+// message and whether an agent still answers it, latest activity first
+// (docs/adr/0012-widget.md).
+func (q *Queries) WidgetThreadsFor(ctx context.Context, arg WidgetThreadsForParams) ([]WidgetThreadsForRow, error) {
+	rows, err := q.db.QueryContext(ctx, widgetThreadsFor, arg.PrincipalID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WidgetThreadsForRow
+	for rows.Next() {
+		var i WidgetThreadsForRow
+		if err := rows.Scan(
+			&i.RoomID,
+			&i.WidgetID,
+			&i.PrincipalID,
+			&i.Subject,
+			&i.CreatedAt,
+			&i.WidgetName,
+			&i.VisitorName,
+			&i.LastSenderID,
+			&i.LastMessageAt,
+			&i.AgentAnswers,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

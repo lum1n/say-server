@@ -495,6 +495,27 @@ export interface paths {
         patch: operations["updateWidget"];
         trace?: never;
     };
+    "/widget-threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The widget threads I am in (the inbox)
+         * @description Widget threads whose team or agent I am in, with whether an agent
+         *     still answers each, latest activity first. People and agents only.
+         */
+        get: operations["listWidgetThreads"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/embed/{key}": {
         parameters: {
             query?: never;
@@ -963,6 +984,32 @@ export interface components {
             greeting: string;
             /** Format: date-time */
             updated_at: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        WidgetThread: {
+            room_id: string;
+            widget_id: string;
+            widget_name: string;
+            visitor_id: string;
+            visitor_name: string;
+            /** @description Whether the host site signed the visitor in (an identity token). */
+            verified: boolean;
+            /**
+             * @description `open`: an agent answers the visitor. `handed_over`: the
+             *     thread is the team's, and agents answer only when mentioned.
+             *     `idle`: no message for 30 minutes, unless the visitor of a
+             *     handed-over thread is still waiting for a person.
+             * @enum {string}
+             */
+            state: "open" | "handed_over" | "idle";
+            /** @description The visitor wrote the latest message, so nobody has answered it yet. */
+            waiting: boolean;
+            /**
+             * Format: date-time
+             * @description Absent when the thread has no messages.
+             */
+            last_message_at?: string;
             /** Format: date-time */
             created_at: string;
         };
@@ -2072,6 +2119,33 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             422: components["responses"]["Error"];
+        };
+    };
+    listWidgetThreads: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The threads, latest activity first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        threads: components["schemas"]["WidgetThread"][];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     getEmbedConfig: {

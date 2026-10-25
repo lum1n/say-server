@@ -194,6 +194,9 @@ type Store interface {
 	CreateVisitor(ctx context.Context, guest core.Principal, room core.Room, members []core.Membership, v Visitor) error
 	VisitorByPrincipal(ctx context.Context, principalID string) (Visitor, error)
 	VisitorBySubject(ctx context.Context, widgetID, subject string) (Visitor, error)
+	// WidgetThreads returns up to limit widget threads principalID is a
+	// member of, latest activity first.
+	WidgetThreads(ctx context.Context, principalID string, limit int) ([]WidgetThread, error)
 
 	// CreateBridge and UpdateBridge write a bridge; UpdateBridge changes
 	// only its name, config and enabled switch.
