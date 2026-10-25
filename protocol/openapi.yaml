@@ -1984,7 +1984,36 @@ components:
           description: Automated hops since the last human event.
     EventType:
       type: string
-      enum: [message, edit, reaction, typing, receipt]
+      enum: [message, edit, reaction, typing, receipt, agent-settings, handoff]
+      description: |
+        `agent-settings` and `handoff` are system events: they record who
+        changed the room (the event's sender) and when, in the room log.
+    AgentSettingsChange:
+      type: object
+      description: |
+        Body of an `agent-settings` event. Only the settings that changed
+        are present.
+      properties:
+        paused:
+          type: boolean
+          description: The room's "pause agents" switch.
+        max_hop_count:
+          type: integer
+          minimum: 0
+    Handoff:
+      type: object
+      description: |
+        Body of a `handoff` event: who now handles the conversation, such as
+        a widget thread passing from an agent to a human. When the sender is
+        `to`, they took over themselves.
+      required: [to]
+      properties:
+        from:
+          type: string
+          description: Principal that handled the conversation before, if any.
+        to:
+          type: string
+          description: Principal that handles the conversation now.
     StreamState:
       type: string
       enum: [streaming, final]

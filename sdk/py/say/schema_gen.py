@@ -232,6 +232,35 @@ class Widget(TypedDict):
     created_at: str
 
 
+class WidgetThread(TypedDict):
+    room_id: str
+    widget_id: str
+    widget_name: str
+    visitor_id: str
+    visitor_name: str
+    verified: bool
+    """
+    Whether the host site signed the visitor in (an identity token).
+    """
+    state: Literal['open', 'handed_over', 'idle']
+    """
+    `open`: an agent answers the visitor. `handed_over`: the
+    thread is the team's, and agents answer only when mentioned.
+    `idle`: no message for 30 minutes, unless the visitor of a
+    handed-over thread is still waiting for a person.
+
+    """
+    waiting: bool
+    """
+    The visitor wrote the latest message, so nobody has answered it yet.
+    """
+    last_message_at: NotRequired[str]
+    """
+    Absent when the thread has no messages.
+    """
+    created_at: str
+
+
 class EmbedConfig(TypedDict):
     name: str
     greeting: str
@@ -434,7 +463,35 @@ class Causation(TypedDict):
     """
 
 
-EventType: TypeAlias = Literal['message', 'edit', 'reaction', 'typing', 'receipt']
+EventType: TypeAlias = Literal['message', 'edit', 'reaction', 'typing', 'receipt', 'agent-settings', 'handoff']
+"""
+`agent-settings` and `handoff` are system events: they record who
+changed the room (the event's sender) and when, in the room log.
+
+"""
+
+
+class AgentSettingsChange(TypedDict):
+    """
+    Body of an `agent-settings` event. Only the settings that changed
+    are present.
+
+    """
+
+    paused: NotRequired[bool]
+    """
+    The room's "pause agents" switch.
+    """
+    max_hop_count: NotRequired[int]
+
+
+Handoff = TypedDict(
+    'Handoff',
+    {
+        'from': NotRequired[str],
+        'to': str,
+    },
+)
 
 
 StreamState: TypeAlias = Literal['streaming', 'final']

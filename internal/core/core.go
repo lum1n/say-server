@@ -87,6 +87,11 @@ const (
 	EventReaction EventType = "reaction"
 	EventTyping   EventType = "typing"
 	EventReceipt  EventType = "receipt"
+
+	// System events record who changed the room and when. They are logged
+	// like any other event so the room's history shows them.
+	EventAgentSettings EventType = "agent-settings"
+	EventHandoff       EventType = "handoff"
 )
 
 // Event is one entry in a room's log. Seq is allocated by the store and
@@ -108,6 +113,8 @@ type Event struct {
 	Edits string
 	// EditedAt is when a final message was last edited; zero if never.
 	EditedAt  time.Time
+	Settings  *AgentSettingsChange // for EventAgentSettings
+	Handoff   *Handoff             // for EventHandoff
 	CreatedAt time.Time
 }
 

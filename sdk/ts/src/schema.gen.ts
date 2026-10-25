@@ -1172,8 +1172,32 @@ export interface components {
             /** @description Automated hops since the last human event. */
             hop_count: number;
         };
-        /** @enum {string} */
-        EventType: "message" | "edit" | "reaction" | "typing" | "receipt";
+        /**
+         * @description `agent-settings` and `handoff` are system events: they record who
+         *     changed the room (the event's sender) and when, in the room log.
+         * @enum {string}
+         */
+        EventType: "message" | "edit" | "reaction" | "typing" | "receipt" | "agent-settings" | "handoff";
+        /**
+         * @description Body of an `agent-settings` event. Only the settings that changed
+         *     are present.
+         */
+        AgentSettingsChange: {
+            /** @description The room's "pause agents" switch. */
+            paused?: boolean;
+            max_hop_count?: number;
+        };
+        /**
+         * @description Body of a `handoff` event: who now handles the conversation, such as
+         *     a widget thread passing from an agent to a human. When the sender is
+         *     `to`, they took over themselves.
+         */
+        Handoff: {
+            /** @description Principal that handled the conversation before, if any. */
+            from?: string;
+            /** @description Principal that handles the conversation now. */
+            to: string;
+        };
         /**
          * @description A streaming message's parts change in place until an edit ends the
          *     stream. On an edit event, `final` means the edit ended a stream.

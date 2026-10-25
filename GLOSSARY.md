@@ -31,6 +31,12 @@
   allocated by the database and increases monotonically per room. Message,
   edit, reaction, typing and receipt are event types.
 
+**System event**
+: An event that records a change to the room rather than a message:
+  `agent-settings` (such as pausing agents) and `handoff` (such as a human
+  taking over a widget thread from an agent). Its sender is who made the
+  change, so the log shows who did it and when.
+
 **Part**
 : A typed piece of a message event: text/markdown, attachment,
   tool-call/result, card/form. A message has a streaming state, `streaming`
