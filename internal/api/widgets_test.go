@@ -107,8 +107,28 @@ func TestWidgetAdmin(t *testing.T) {
 	}
 }
 
+// wakeBeforeScopes is a store that, just before a scope change, wakes the
+// room's followers and gives them time to read it, as a resync or a
+// message from elsewhere landing at that moment would. A handoff that
+// ran after the append would let the bot see a team member's message
+// while its agent is still the responder.
+type wakeBeforeScopes struct {
+	store.Store
+	wake func(ctx context.Context, roomID string)
+}
+
+func (s *wakeBeforeScopes) SetMemberScopes(ctx context.Context, roomID, principalID string, scopes []string) error {
+	if s.wake != nil {
+		s.wake(ctx, roomID)
+		time.Sleep(100 * time.Millisecond)
+	}
+	return s.Store.SetMemberScopes(ctx, roomID, principalID, scopes)
+}
+
 func TestWidgetVisitors(t *testing.T) {
-	e := newEnv(t)
+	race := &wakeBeforeScopes{}
+	e := newEnvWith(t, func(st store.Store) store.Store { race.Store = st; return race })
+	race.wake = e.srv.notify
 	_, root := e.admin("Root")
 	ada, adaTok := e.user("Ada", core.PrincipalHuman)
 	agent, agentTok := e.user("Helper", core.PrincipalAgent)
