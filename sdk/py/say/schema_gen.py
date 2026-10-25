@@ -207,6 +207,10 @@ class WidgetSettings(TypedDict):
     People added to each new thread as admins.
     """
     greeting: NotRequired[str]
+    enabled: NotRequired[bool]
+    """
+    Off hides the widget on host sites and stops its visitors chatting; their threads stay.
+    """
     rotate_secret: NotRequired[bool]
     """
     Replace the secret; identity tokens signed with the old one stop working.
@@ -228,6 +232,7 @@ class Widget(TypedDict):
     agent_id: NotRequired[str]
     team: list[str]
     greeting: str
+    enabled: bool
     updated_at: str
     created_at: str
 

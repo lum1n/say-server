@@ -296,6 +296,12 @@ export async function updateWidget(id: string, body: WidgetSettings, client = de
   return data;
 }
 
+/** deleteWidget deletes a widget and signs its visitors out; their threads stay. */
+export async function deleteWidget(id: string, client = defaultClient): Promise<void> {
+  const { error, response } = await client.DELETE("/widgets/{id}", { params: { path: { id } } });
+  if (!response.ok) fail(response, error);
+}
+
 /** listWidgetThreads reads my inbox: the widget threads I am in, latest activity first. */
 export async function listWidgetThreads(client = defaultClient): Promise<WidgetThread[]> {
   const { data, error, response } = await client.GET("/widget-threads");

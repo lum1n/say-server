@@ -485,7 +485,11 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a chat widget (instance admins only)
+         * @description Its visitors are signed out. Their threads stay with the team.
+         */
+        delete: operations["deleteWidget"];
         options?: never;
         head?: never;
         /**
@@ -526,7 +530,10 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** A widget's public settings, for its embed page */
+        /**
+         * A widget's public settings, for its embed page
+         * @description A widget that is switched off is not found.
+         */
         get: operations["getEmbedConfig"];
         put?: never;
         post?: never;
@@ -1004,6 +1011,8 @@ export interface components {
             /** @description People added to each new thread as admins. */
             team?: string[];
             greeting?: string;
+            /** @description Off hides the widget on host sites and stops its visitors chatting; their threads stay. */
+            enabled?: boolean;
             /** @description Replace the secret; identity tokens signed with the old one stop working. */
             rotate_secret?: boolean;
         };
@@ -1018,6 +1027,7 @@ export interface components {
             agent_id?: string;
             team: string[];
             greeting: string;
+            enabled: boolean;
             /** Format: date-time */
             updated_at: string;
             /** Format: date-time */
@@ -2148,6 +2158,29 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             422: components["responses"]["Error"];
+        };
+    };
+    deleteWidget: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     updateWidget: {

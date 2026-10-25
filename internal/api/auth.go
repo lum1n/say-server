@@ -35,7 +35,13 @@ func (s *Server) authenticate(r *http.Request) (core.Principal, error) {
 	if errors.Is(err, store.ErrNotFound) {
 		return core.Principal{}, errUnauthorized
 	}
-	return me, err
+	if err != nil {
+		return core.Principal{}, err
+	}
+	if err := s.checkVisitor(r.Context(), me); err != nil {
+		return core.Principal{}, err
+	}
+	return me, nil
 }
 
 // TokenProtocol prefixes the access token offered as a WebSocket

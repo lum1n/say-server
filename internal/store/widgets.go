@@ -27,9 +27,12 @@ type Widget struct {
 	Origins []string
 	// AgentID is the agent that answers visitors, if any; Team are the
 	// people added to every new thread.
-	AgentID   string
-	Team      []string
-	Greeting  string
+	AgentID  string
+	Team     []string
+	Greeting string
+	// Enabled is off for a widget switched off: it shows nothing on host
+	// sites and its visitors cannot chat.
+	Enabled   bool
 	UpdatedAt time.Time
 	CreatedAt time.Time
 }
@@ -72,6 +75,7 @@ func (s *sqlStore) CreateWidget(ctx context.Context, w Widget) error {
 		AgentID:   w.AgentID,
 		Team:      team,
 		Greeting:  w.Greeting,
+		Enabled:   flag(w.Enabled),
 		UpdatedAt: millis(w.UpdatedAt),
 		CreatedAt: millis(w.CreatedAt),
 	})
@@ -90,6 +94,7 @@ func (s *sqlStore) UpdateWidget(ctx context.Context, w Widget) error {
 		AgentID:   w.AgentID,
 		Team:      team,
 		Greeting:  w.Greeting,
+		Enabled:   flag(w.Enabled),
 		UpdatedAt: millis(w.UpdatedAt),
 	})
 	if err != nil {
@@ -99,6 +104,25 @@ func (s *sqlStore) UpdateWidget(ctx context.Context, w Widget) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *sqlStore) DeleteWidget(ctx context.Context, id string) error {
+	return s.tx(ctx, func(q *db.Queries) error {
+		if err := q.DeleteWidgetVisitorTokens(ctx, id); err != nil {
+			return err
+		}
+		if err := q.DeleteWidgetVisitors(ctx, id); err != nil {
+			return err
+		}
+		n, err := q.DeleteWidget(ctx, id)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func widgetLists(w Widget) (origins, team string, err error) {
@@ -151,6 +175,7 @@ func widget(row db.Widget) (Widget, error) {
 		Secret:    row.Secret,
 		AgentID:   row.AgentID,
 		Greeting:  row.Greeting,
+		Enabled:   row.Enabled != 0,
 		UpdatedAt: unmillis(row.UpdatedAt),
 		CreatedAt: unmillis(row.CreatedAt),
 	}

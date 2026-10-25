@@ -39,7 +39,10 @@ const (
 	threadIdleAfter = 30 * time.Minute
 )
 
-var errWidgetNotFound = errorf(http.StatusNotFound, "not_found", "no such widget")
+var (
+	errWidgetNotFound = errorf(http.StatusNotFound, "not_found", "no such widget")
+	errWidgetOff      = errorf(http.StatusForbidden, "widget_disabled", "this chat is switched off")
+)
 
 // wireWidget is a widget as admins see it, secret included: they paste it
 // into the host site's server.
@@ -52,6 +55,7 @@ type wireWidget struct {
 	AgentID   string    `json:"agent_id,omitempty"`
 	Team      []string  `json:"team"`
 	Greeting  string    `json:"greeting"`
+	Enabled   bool      `json:"enabled"`
 	UpdatedAt time.Time `json:"updated_at"`
 	CreatedAt time.Time `json:"created_at"`
 }
@@ -60,7 +64,7 @@ func toWidget(w store.Widget) wireWidget {
 	return wireWidget{
 		ID: w.ID, Name: w.Name, PublicKey: w.PublicKey, Secret: w.Secret,
 		Origins: nonNil(w.Origins), AgentID: w.AgentID, Team: nonNil(w.Team),
-		Greeting: w.Greeting, UpdatedAt: w.UpdatedAt, CreatedAt: w.CreatedAt,
+		Greeting: w.Greeting, Enabled: w.Enabled, UpdatedAt: w.UpdatedAt, CreatedAt: w.CreatedAt,
 	}
 }
 
@@ -79,6 +83,7 @@ type widgetSettings struct {
 	AgentID      *string   `json:"agent_id"`
 	Team         *[]string `json:"team"`
 	Greeting     *string   `json:"greeting"`
+	Enabled      *bool     `json:"enabled"`
 	RotateSecret bool      `json:"rotate_secret"`
 }
 
@@ -145,6 +150,9 @@ func (s *Server) applyWidget(ctx context.Context, b widgetSettings, w *store.Wid
 	if w.AgentID == "" && len(w.Team) == 0 {
 		return errorf(http.StatusUnprocessableEntity, "invalid", "a widget needs an agent, a team, or both to answer visitors")
 	}
+	if b.Enabled != nil {
+		w.Enabled = *b.Enabled
+	}
 	if b.RotateSecret || w.Secret == "" {
 		w.Secret = "sk_" + rand.Text()
 	}
@@ -197,7 +205,7 @@ func (s *Server) createWidget(w http.ResponseWriter, r *http.Request, me core.Pr
 		return
 	}
 	now := time.Now().Truncate(time.Millisecond)
-	wg := store.Widget{ID: core.NewID(), PublicKey: "pk_" + rand.Text(), CreatedAt: now, UpdatedAt: now}
+	wg := store.Widget{ID: core.NewID(), PublicKey: "pk_" + rand.Text(), Enabled: true, CreatedAt: now, UpdatedAt: now}
 	if err := s.applyWidget(r.Context(), body, &wg); err != nil {
 		writeError(w, err)
 		return
@@ -241,12 +249,57 @@ func (s *Server) updateWidget(w http.ResponseWriter, r *http.Request, me core.Pr
 	writeJSON(w, http.StatusOK, toWidget(wg))
 }
 
-// embedConfig is what the /embed page reads before anyone has a session.
-func (s *Server) embedConfig(w http.ResponseWriter, r *http.Request) {
-	wg, err := s.store.WidgetByKey(r.Context(), r.PathValue("key"))
+// deleteWidget deletes a widget. Its visitors are signed out; their
+// threads stay with the team.
+func (s *Server) deleteWidget(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	if !me.Admin {
+		writeError(w, errorf(http.StatusForbidden, "forbidden", "only instance admins manage widgets"))
+		return
+	}
+	err := s.store.DeleteWidget(r.Context(), r.PathValue("id"))
 	if errors.Is(err, store.ErrNotFound) {
 		err = errWidgetNotFound
 	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// liveWidget finds a widget by public key for visitors, to whom a widget
+// that is switched off does not exist.
+func (s *Server) liveWidget(ctx context.Context, key string) (store.Widget, error) {
+	wg, err := s.store.WidgetByKey(ctx, key)
+	if errors.Is(err, store.ErrNotFound) || err == nil && !wg.Enabled {
+		return store.Widget{}, errWidgetNotFound
+	}
+	return wg, err
+}
+
+// checkVisitor refuses a guest whose widget is switched off or deleted.
+// Everyone else passes.
+func (s *Server) checkVisitor(ctx context.Context, me core.Principal) error {
+	if me.Kind != core.PrincipalGuest {
+		return nil
+	}
+	v, err := s.store.VisitorByPrincipal(ctx, me.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		return errWidgetOff
+	}
+	if err != nil {
+		return err
+	}
+	wg, err := s.store.GetWidget(ctx, v.WidgetID)
+	if errors.Is(err, store.ErrNotFound) || err == nil && !wg.Enabled {
+		return errWidgetOff
+	}
+	return err
+}
+
+// embedConfig is what the /embed page reads before anyone has a session.
+func (s *Server) embedConfig(w http.ResponseWriter, r *http.Request) {
+	wg, err := s.liveWidget(r.Context(), r.PathValue("key"))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -275,10 +328,7 @@ func (s *Server) embedSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	wg, err := s.store.WidgetByKey(ctx, r.PathValue("key"))
-	if errors.Is(err, store.ErrNotFound) {
-		err = errWidgetNotFound
-	}
+	wg, err := s.liveWidget(ctx, r.PathValue("key"))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -639,7 +689,8 @@ func (s *Server) listWidgetThreads(w http.ResponseWriter, r *http.Request, me co
 }
 
 // frameAncestors is the Content-Security-Policy for /embed/{key}: only the
-// widget's origins, and say itself, may frame it.
+// widget's origins, and say itself, may frame it. A widget that is
+// switched off may still be framed, to say it is not available.
 func (s *Server) frameAncestors(r *http.Request, path string) string {
 	sources := []string{"'self'"}
 	key, _, _ := strings.Cut(strings.TrimPrefix(path, "embed/"), "/")

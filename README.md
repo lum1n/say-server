@@ -275,6 +275,11 @@ and themselves; the next message starts a new chat. When a visitor asks
 you to delete their data, an instance admin can do the same from the
 thread's page (**Delete visitor**) or with `DELETE /api/v1/visitors/{id}`.
 
+**Switch off** takes a widget off your sites for a while: they say the
+chat is not available and its visitors cannot write, until you switch it
+on again. **Delete** removes it for good and signs its visitors out; the
+team keeps their threads.
+
 ### Accounts on other networks
 
 On the **Accounts** page, anyone connects their own account on another

@@ -601,8 +601,8 @@ func (q *Queries) CreateVisitor(ctx context.Context, arg CreateVisitorParams) (i
 
 const createWidget = `-- name: CreateWidget :exec
 INSERT INTO widgets (id, name, public_key, secret, origins, agent_id, team,
-                     greeting, updated_at, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     greeting, enabled, updated_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 `
 
 type CreateWidgetParams struct {
@@ -614,6 +614,7 @@ type CreateWidgetParams struct {
 	AgentID   string
 	Team      string
 	Greeting  string
+	Enabled   int32
 	UpdatedAt int64
 	CreatedAt int64
 }
@@ -628,6 +629,7 @@ func (q *Queries) CreateWidget(ctx context.Context, arg CreateWidgetParams) erro
 		arg.AgentID,
 		arg.Team,
 		arg.Greeting,
+		arg.Enabled,
 		arg.UpdatedAt,
 		arg.CreatedAt,
 	)
@@ -801,6 +803,37 @@ DELETE FROM widget_visitors WHERE principal_id = $1
 // it wrote, wherever it wrote it.
 func (q *Queries) DeleteVisitorRow(ctx context.Context, principalID string) error {
 	_, err := q.db.ExecContext(ctx, deleteVisitorRow, principalID)
+	return err
+}
+
+const deleteWidget = `-- name: DeleteWidget :execrows
+DELETE FROM widgets WHERE id = $1
+`
+
+func (q *Queries) DeleteWidget(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteWidget, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteWidgetVisitorTokens = `-- name: DeleteWidgetVisitorTokens :exec
+DELETE FROM tokens
+WHERE principal_id IN (SELECT principal_id FROM widget_visitors WHERE widget_id = $1)
+`
+
+func (q *Queries) DeleteWidgetVisitorTokens(ctx context.Context, widgetID string) error {
+	_, err := q.db.ExecContext(ctx, deleteWidgetVisitorTokens, widgetID)
+	return err
+}
+
+const deleteWidgetVisitors = `-- name: DeleteWidgetVisitors :exec
+DELETE FROM widget_visitors WHERE widget_id = $1
+`
+
+func (q *Queries) DeleteWidgetVisitors(ctx context.Context, widgetID string) error {
+	_, err := q.db.ExecContext(ctx, deleteWidgetVisitors, widgetID)
 	return err
 }
 
@@ -1177,7 +1210,7 @@ func (q *Queries) GetRoom(ctx context.Context, id string) (Room, error) {
 }
 
 const getWidget = `-- name: GetWidget :one
-SELECT id, name, public_key, secret, origins, agent_id, team, greeting, updated_at, created_at FROM widgets WHERE id = $1
+SELECT id, name, public_key, secret, origins, agent_id, team, greeting, updated_at, created_at, enabled FROM widgets WHERE id = $1
 `
 
 func (q *Queries) GetWidget(ctx context.Context, id string) (Widget, error) {
@@ -1194,6 +1227,7 @@ func (q *Queries) GetWidget(ctx context.Context, id string) (Widget, error) {
 		&i.Greeting,
 		&i.UpdatedAt,
 		&i.CreatedAt,
+		&i.Enabled,
 	)
 	return i, err
 }
@@ -1359,7 +1393,7 @@ func (q *Queries) ListPrincipals(ctx context.Context) ([]Principal, error) {
 }
 
 const listWidgets = `-- name: ListWidgets :many
-SELECT id, name, public_key, secret, origins, agent_id, team, greeting, updated_at, created_at FROM widgets ORDER BY created_at, id
+SELECT id, name, public_key, secret, origins, agent_id, team, greeting, updated_at, created_at, enabled FROM widgets ORDER BY created_at, id
 `
 
 func (q *Queries) ListWidgets(ctx context.Context) ([]Widget, error) {
@@ -1382,6 +1416,7 @@ func (q *Queries) ListWidgets(ctx context.Context) ([]Widget, error) {
 			&i.Greeting,
 			&i.UpdatedAt,
 			&i.CreatedAt,
+			&i.Enabled,
 		); err != nil {
 			return nil, err
 		}
@@ -2046,7 +2081,7 @@ func (q *Queries) UpdateStreaming(ctx context.Context, arg UpdateStreamingParams
 const updateWidget = `-- name: UpdateWidget :execrows
 UPDATE widgets
 SET name = $2, secret = $3, origins = $4, agent_id = $5, team = $6,
-    greeting = $7, updated_at = $8
+    greeting = $7, enabled = $8, updated_at = $9
 WHERE id = $1
 `
 
@@ -2058,6 +2093,7 @@ type UpdateWidgetParams struct {
 	AgentID   string
 	Team      string
 	Greeting  string
+	Enabled   int32
 	UpdatedAt int64
 }
 
@@ -2070,6 +2106,7 @@ func (q *Queries) UpdateWidget(ctx context.Context, arg UpdateWidgetParams) (int
 		arg.AgentID,
 		arg.Team,
 		arg.Greeting,
+		arg.Enabled,
 		arg.UpdatedAt,
 	)
 	if err != nil {
@@ -2142,7 +2179,7 @@ func (q *Queries) VisitorBySubject(ctx context.Context, arg VisitorBySubjectPara
 }
 
 const widgetByKey = `-- name: WidgetByKey :one
-SELECT id, name, public_key, secret, origins, agent_id, team, greeting, updated_at, created_at FROM widgets WHERE public_key = $1
+SELECT id, name, public_key, secret, origins, agent_id, team, greeting, updated_at, created_at, enabled FROM widgets WHERE public_key = $1
 `
 
 func (q *Queries) WidgetByKey(ctx context.Context, publicKey string) (Widget, error) {
@@ -2159,6 +2196,7 @@ func (q *Queries) WidgetByKey(ctx context.Context, publicKey string) (Widget, er
 		&i.Greeting,
 		&i.UpdatedAt,
 		&i.CreatedAt,
+		&i.Enabled,
 	)
 	return i, err
 }

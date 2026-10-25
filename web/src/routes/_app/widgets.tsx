@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { createWidget, listWidgets, updateWidget, type Widget, type WidgetSettings } from "@say/sdk";
+import { createWidget, deleteWidget, listWidgets, updateWidget, type Widget, type WidgetSettings } from "@say/sdk";
 import { type FormEvent, useState } from "react";
 import { keys, useDirectory } from "../../chat";
 import { Field, FormError } from "../../components/form";
@@ -43,6 +43,14 @@ function WidgetRow({ widget: w }: { widget: Widget }) {
     mutationFn: () => updateWidget(w.id, { rotate_secret: true }),
     onSuccess: (nw) => queryClient.setQueryData<Widget[]>(keys.widgets, (l) => l?.map((x) => (x.id === nw.id ? nw : x))),
   });
+  const toggle = useMutation({
+    mutationFn: () => updateWidget(w.id, { enabled: !w.enabled }),
+    onSuccess: (nw) => queryClient.setQueryData<Widget[]>(keys.widgets, (l) => l?.map((x) => (x.id === nw.id ? nw : x))),
+  });
+  const remove = useMutation({
+    mutationFn: () => deleteWidget(w.id),
+    onSuccess: () => queryClient.setQueryData<Widget[]>(keys.widgets, (l) => l?.filter((x) => x.id !== w.id)),
+  });
   const answers = [
     w.agent_id && `${dir.byId.get(w.agent_id)?.display_name ?? "an agent"} (agent)`,
     ...w.team.map((id) => dir.byId.get(id)?.display_name ?? "someone"),
@@ -53,9 +61,25 @@ function WidgetRow({ widget: w }: { widget: Widget }) {
         <strong>{w.name}</strong> <span className="muted">on {w.origins.join(", ")}</span>{" "}
         <button type="button" className="link" onClick={() => setEditing(!editing)}>
           {editing ? "Close" : "Edit"}
+        </button>{" "}
+        <button type="button" className="link" onClick={() => toggle.mutate()} disabled={toggle.isPending}>
+          {w.enabled ? "Switch off" : "Switch on"}
+        </button>{" "}
+        <button
+          type="button"
+          className="link"
+          disabled={remove.isPending}
+          onClick={() =>
+            confirm(`Delete ${w.name}? It disappears from your sites and its visitors are signed out. Their threads stay.`) &&
+            remove.mutate()
+          }
+        >
+          Delete
         </button>
       </div>
+      {!w.enabled && <p className="muted">Switched off: your sites say the chat is not available, and visitors cannot write.</p>}
       <p className="muted">Answered by {answers.join(", ")}</p>
+      <FormError error={toggle.error ?? remove.error} />
       <label className="snippet">
         Paste into your site's HTML
         <textarea readOnly rows={2} value={snippet(w)} onFocus={(e) => e.currentTarget.select()} />

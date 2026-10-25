@@ -331,6 +331,70 @@ func TestWidgetThreadState(t *testing.T) {
 	}
 }
 
+func TestWidgetOffAndDeleted(t *testing.T) {
+	e := newEnv(t)
+	_, root := e.admin("Root")
+	ada, adaTok := e.user("Ada", core.PrincipalHuman)
+	var w wireWidget
+	if code := e.do("POST", "/widgets", root, map[string]any{
+		"name": "Support", "origins": []string{"https://shop.example"}, "team": []string{ada.ID},
+	}, &w); code != 201 || !w.Enabled {
+		t.Fatalf("create = %d %+v", code, w)
+	}
+	_, s := e.session(w.PublicKey, "", "")
+	e.say(s.Token, s.Room.ID, "hello?")
+
+	// Switched off, the widget is gone for visitors, and its visitors
+	// cannot chat; switched on again, they can.
+	if code := e.do("PATCH", "/widgets/"+w.ID, adaTok, map[string]any{"enabled": false}, nil); code != 403 {
+		t.Fatalf("non-admin switch off = %d", code)
+	}
+	if code := e.do("PATCH", "/widgets/"+w.ID, root, map[string]any{"enabled": false}, &w); code != 200 || w.Enabled {
+		t.Fatalf("switch off = %d %+v", code, w)
+	}
+	if code := e.do("GET", "/embed/"+w.PublicKey, "", nil, nil); code != 404 {
+		t.Fatalf("config of a widget that is off = %d", code)
+	}
+	if code, _ := e.session(w.PublicKey, "", ""); code != 404 {
+		t.Fatalf("new session on a widget that is off = %d", code)
+	}
+	if code := e.do("POST", "/rooms/"+s.Room.ID+"/messages", s.Token, textMsg("still there?"), nil); code != 403 {
+		t.Fatalf("visitor sends while off = %d", code)
+	}
+	if _, _, h := get(t, e.ts.URL+"/embed/"+w.PublicKey); h.Get("Content-Security-Policy") != "frame-ancestors 'self' https://shop.example" {
+		t.Fatalf("embed CSP while off = %q", h.Get("Content-Security-Policy"))
+	}
+	e.do("PATCH", "/widgets/"+w.ID, root, map[string]any{"enabled": true}, nil)
+	if code, again := e.session(w.PublicKey, s.Token, ""); code != 200 || again.Room.ID != s.Room.ID {
+		t.Fatalf("resume after switching on = %d %+v", code, again)
+	}
+
+	// Deleted, its visitors are signed out and the team keeps the threads.
+	if code := e.do("DELETE", "/widgets/"+w.ID, adaTok, nil, nil); code != 403 {
+		t.Fatalf("non-admin delete = %d", code)
+	}
+	if code := e.do("DELETE", "/widgets/"+w.ID, root, nil, nil); code != 204 {
+		t.Fatalf("delete = %d", code)
+	}
+	if code := e.do("DELETE", "/widgets/"+w.ID, root, nil, nil); code != 404 {
+		t.Fatalf("delete again = %d", code)
+	}
+	var list struct{ Widgets []wireWidget }
+	if e.do("GET", "/widgets", root, nil, &list); len(list.Widgets) != 0 {
+		t.Fatalf("widgets after delete = %+v", list.Widgets)
+	}
+	if code := e.do("GET", "/rooms/"+s.Room.ID+"/events", s.Token, nil, nil); code != 401 {
+		t.Fatalf("visitor after delete = %d", code)
+	}
+	if code, _ := e.session(w.PublicKey, s.Token, ""); code != 404 {
+		t.Fatalf("session after delete = %d", code)
+	}
+	var events struct{ Events []wireEvent }
+	if code := e.do("GET", "/rooms/"+s.Room.ID+"/events", adaTok, nil, &events); code != 200 || len(events.Events) == 0 {
+		t.Fatalf("Ada reads the thread after delete = %d %+v", code, events)
+	}
+}
+
 func TestWidgetIdentity(t *testing.T) {
 	e := newEnv(t)
 	_, root := e.admin("Root")

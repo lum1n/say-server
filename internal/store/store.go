@@ -187,6 +187,10 @@ type Store interface {
 	WidgetByKey(ctx context.Context, publicKey string) (Widget, error)
 	// Widgets returns every widget, oldest first.
 	Widgets(ctx context.Context) ([]Widget, error)
+	// DeleteWidget deletes a widget and its visitors and signs them out.
+	// Their guest principals and threads stay, so the team keeps the
+	// conversations.
+	DeleteWidget(ctx context.Context, id string) error
 	// CreateVisitor writes a widget visitor's guest principal, its thread
 	// with members and the visitor in one transaction. It returns
 	// ErrVisitorExists if the widget already has a visitor with

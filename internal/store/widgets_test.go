@@ -21,7 +21,7 @@ func TestWidgetsAndVisitors(t *testing.T) {
 		w := Widget{
 			ID: core.NewID(), Name: "Support", PublicKey: "pk_test", Secret: "sk_test",
 			Origins: []string{"https://shop.example"}, Team: []string{ada.ID},
-			Greeting: "Hi!", UpdatedAt: now, CreatedAt: now,
+			Greeting: "Hi!", Enabled: true, UpdatedAt: now, CreatedAt: now,
 		}
 		if err := s.CreateWidget(ctx, w); err != nil {
 			t.Fatal(err)
@@ -33,11 +33,14 @@ func TestWidgetsAndVisitors(t *testing.T) {
 		if _, err := s.WidgetByKey(ctx, "pk_nope"); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("unknown key: %v", err)
 		}
-		w.Name, w.Origins, w.Team = "Help", []string{"https://a.example", "https://b.example"}, nil
+		if !got.Enabled {
+			t.Fatal("created widget is off")
+		}
+		w.Name, w.Origins, w.Team, w.Enabled = "Help", []string{"https://a.example", "https://b.example"}, nil, false
 		if err := s.UpdateWidget(ctx, w); err != nil {
 			t.Fatal(err)
 		}
-		if got, err = s.GetWidget(ctx, w.ID); err != nil || got.Name != "Help" || len(got.Origins) != 2 || len(got.Team) != 0 || got.PublicKey != "pk_test" {
+		if got, err = s.GetWidget(ctx, w.ID); err != nil || got.Name != "Help" || len(got.Origins) != 2 || len(got.Team) != 0 || got.PublicKey != "pk_test" || got.Enabled {
 			t.Fatalf("GetWidget after update = %+v, %v", got, err)
 		}
 		if err := s.UpdateWidget(ctx, Widget{ID: "nope"}); !errors.Is(err, ErrNotFound) {
@@ -108,6 +111,30 @@ func TestWidgetsAndVisitors(t *testing.T) {
 		}
 		if r, err := s.GetRoom(ctx, anon.RoomID); err != nil || r.Name != "Help · Grace" {
 			t.Fatalf("thread after verify = %+v, %v", r, err)
+		}
+
+		// Deleting the widget signs its visitors out and keeps their threads.
+		token, err := s.CreateToken(ctx, v.PrincipalID, "widget", time.Time{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DeleteWidget(ctx, w.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.GetWidget(ctx, w.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("deleted widget: %v", err)
+		}
+		if _, err := s.VisitorByPrincipal(ctx, v.PrincipalID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("visitor of a deleted widget: %v", err)
+		}
+		if _, err := s.PrincipalByToken(ctx, token); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("visitor token after delete: %v", err)
+		}
+		if _, err := s.GetRoom(ctx, v.RoomID); err != nil {
+			t.Fatalf("thread after delete: %v", err)
+		}
+		if err := s.DeleteWidget(ctx, w.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("delete again: %v", err)
 		}
 	})
 }

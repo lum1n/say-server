@@ -175,6 +175,7 @@ type Widget struct {
 	Greeting  string
 	UpdatedAt int64
 	CreatedAt int64
+	Enabled   int32
 }
 
 type WidgetVisitor struct {
