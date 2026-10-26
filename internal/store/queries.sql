@@ -338,6 +338,22 @@ SELECT * FROM bridges WHERE id = $1;
 -- name: ListBridges :many
 SELECT * FROM bridges ORDER BY created_at, id;
 
+-- name: MarkBridgeDeleted :execrows
+UPDATE bridges SET deleted_at = $2 WHERE id = $1 AND deleted_at = 0;
+
+-- name: DeleteBridgeMessagesOf :exec
+DELETE FROM bridge_messages
+WHERE link_id IN (SELECT id FROM bridge_links WHERE bridge_id = $1);
+
+-- name: DeleteBridgeLinksOf :exec
+DELETE FROM bridge_links WHERE bridge_id = $1;
+
+-- name: DeleteBridgeGhosts :exec
+DELETE FROM bridge_ghosts WHERE bridge_id = $1;
+
+-- name: DeleteBridge :execrows
+DELETE FROM bridges WHERE id = $1;
+
 -- name: SetBridgeError :exec
 UPDATE bridges SET last_error = $2 WHERE id = $1;
 

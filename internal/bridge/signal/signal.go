@@ -12,6 +12,11 @@
 //
 // Signal has no history API, so nothing older than the link is
 // backfilled.
+//
+// A linked device can't remove itself from the account: deleting the
+// bridge unregisters it, so Signal stops queueing messages for it, and
+// deletes its keys, but it stays under Linked devices on the phone until
+// the person removes it there.
 package signal
 
 import (
@@ -19,6 +24,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +53,7 @@ func init() {
 		},
 		Capabilities: []connector.Capability{connector.CapEdits},
 		Open:         open,
+		LogOut:       logOut,
 	})
 }
 
@@ -123,6 +130,57 @@ func (c *conn) dataDir() (string, error) {
 		}
 	}
 	return filepath.Join(base, "say", "signal", c.id), nil
+}
+
+// logOut unregisters say's device and deletes its keys and data. The
+// device itself stays listed on the phone: only the primary device can
+// remove it.
+func logOut(ctx context.Context, b bridge.Info) error {
+	bc, err := open(b, nil)
+	if err != nil {
+		return nil // never ran, so never linked
+	}
+	c := bc.(*conn)
+	dir, err := c.dataDir()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if c.st.Account != "" {
+		// Unregistering only stops messages being queued for the device;
+		// its keys are deleted either way, so a failure does not stop it.
+		if err := c.cli(ctx, dir, "unregister"); err != nil {
+			slog.Warn("signal: unregister failed", "bridge", b.ID, "err", err)
+		}
+	}
+	if c.cfg.DataDir == "" {
+		// say's own directory, for this bridge alone.
+		return os.RemoveAll(dir)
+	}
+	if c.st.Account == "" {
+		return nil
+	}
+	return c.cli(ctx, dir, "deleteLocalAccountData", "--ignore-registered")
+}
+
+// cli runs one signal-cli command for the account.
+func (c *conn) cli(ctx context.Context, dir string, args ...string) error {
+	cmd := exec.CommandContext(ctx, c.cfg.Path, append([]string{"--config", dir, "-a", c.st.Account}, args...)...)
+	cmd.WaitDelay = stopTimeout
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if i := strings.LastIndexByte(msg, '\n'); i >= 0 {
+			msg = msg[i+1:]
+		}
+		if msg != "" {
+			return fmt.Errorf("signal-cli %s: %w: %s", args[0], err, msg)
+		}
+		return fmt.Errorf("signal-cli %s: %w", args[0], err)
+	}
+	return nil
 }
 
 // Run starts signal-cli, links the account if it is not yet, and passes

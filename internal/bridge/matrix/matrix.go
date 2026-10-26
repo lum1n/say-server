@@ -34,6 +34,7 @@ func init() {
 		},
 		Capabilities: []connector.Capability{connector.CapEdits},
 		Open:         open,
+		LogOut:       logOut,
 	})
 }
 
@@ -111,6 +112,25 @@ func open(b bridge.Info, h bridge.Host) (bridge.Conn, error) {
 		c.st = state{Account: c.account()}
 	}
 	return c, nil
+}
+
+// logOut ends the session say logged in with the password, which removes
+// its device from the account. A session made from the config's access
+// token is the person's own and is left alone.
+func logOut(ctx context.Context, b bridge.Info) error {
+	bc, err := open(b, nil)
+	if err != nil {
+		return nil // never ran, so never logged in
+	}
+	c := bc.(*conn)
+	if c.st.AccessToken == "" || c.st.FromConfig {
+		return nil
+	}
+	err = c.do(ctx, http.MethodPost, path("logout"), nil, struct{}{}, nil)
+	if isCode(err, "M_UNKNOWN_TOKEN") {
+		return nil // logged out already, as from another client
+	}
+	return err
 }
 
 // account names the homeserver and user of the config.

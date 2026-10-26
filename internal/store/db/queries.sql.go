@@ -636,6 +636,27 @@ func (q *Queries) CreateWidget(ctx context.Context, arg CreateWidgetParams) erro
 	return err
 }
 
+const deleteBridge = `-- name: DeleteBridge :execrows
+DELETE FROM bridges WHERE id = $1
+`
+
+func (q *Queries) DeleteBridge(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteBridge, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const deleteBridgeGhosts = `-- name: DeleteBridgeGhosts :exec
+DELETE FROM bridge_ghosts WHERE bridge_id = $1
+`
+
+func (q *Queries) DeleteBridgeGhosts(ctx context.Context, bridgeID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBridgeGhosts, bridgeID)
+	return err
+}
+
 const deleteBridgeLink = `-- name: DeleteBridgeLink :execrows
 DELETE FROM bridge_links WHERE id = $1 AND bridge_id = $2
 `
@@ -659,6 +680,25 @@ DELETE FROM bridge_messages WHERE link_id = $1
 
 func (q *Queries) DeleteBridgeLinkMessages(ctx context.Context, linkID string) error {
 	_, err := q.db.ExecContext(ctx, deleteBridgeLinkMessages, linkID)
+	return err
+}
+
+const deleteBridgeLinksOf = `-- name: DeleteBridgeLinksOf :exec
+DELETE FROM bridge_links WHERE bridge_id = $1
+`
+
+func (q *Queries) DeleteBridgeLinksOf(ctx context.Context, bridgeID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBridgeLinksOf, bridgeID)
+	return err
+}
+
+const deleteBridgeMessagesOf = `-- name: DeleteBridgeMessagesOf :exec
+DELETE FROM bridge_messages
+WHERE link_id IN (SELECT id FROM bridge_links WHERE bridge_id = $1)
+`
+
+func (q *Queries) DeleteBridgeMessagesOf(ctx context.Context, bridgeID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBridgeMessagesOf, bridgeID)
 	return err
 }
 
@@ -1005,7 +1045,7 @@ func (q *Queries) FinishBridgeMessage(ctx context.Context, arg FinishBridgeMessa
 }
 
 const getBridge = `-- name: GetBridge :one
-SELECT id, owner_id, mode, network, name, config, state, prompt, enabled, last_error, seen_at, updated_at, created_at FROM bridges WHERE id = $1
+SELECT id, owner_id, mode, network, name, config, state, prompt, enabled, last_error, seen_at, updated_at, created_at, deleted_at FROM bridges WHERE id = $1
 `
 
 func (q *Queries) GetBridge(ctx context.Context, id string) (Bridge, error) {
@@ -1025,6 +1065,7 @@ func (q *Queries) GetBridge(ctx context.Context, id string) (Bridge, error) {
 		&i.SeenAt,
 		&i.UpdatedAt,
 		&i.CreatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -1274,7 +1315,7 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 }
 
 const listBridges = `-- name: ListBridges :many
-SELECT id, owner_id, mode, network, name, config, state, prompt, enabled, last_error, seen_at, updated_at, created_at FROM bridges ORDER BY created_at, id
+SELECT id, owner_id, mode, network, name, config, state, prompt, enabled, last_error, seen_at, updated_at, created_at, deleted_at FROM bridges ORDER BY created_at, id
 `
 
 func (q *Queries) ListBridges(ctx context.Context) ([]Bridge, error) {
@@ -1300,6 +1341,7 @@ func (q *Queries) ListBridges(ctx context.Context) ([]Bridge, error) {
 			&i.SeenAt,
 			&i.UpdatedAt,
 			&i.CreatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -1445,6 +1487,23 @@ func (q *Queries) LoginByUsername(ctx context.Context, username string) (Login, 
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const markBridgeDeleted = `-- name: MarkBridgeDeleted :execrows
+UPDATE bridges SET deleted_at = $2 WHERE id = $1 AND deleted_at = 0
+`
+
+type MarkBridgeDeletedParams struct {
+	ID        string
+	DeletedAt int64
+}
+
+func (q *Queries) MarkBridgeDeleted(ctx context.Context, arg MarkBridgeDeletedParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, markBridgeDeleted, arg.ID, arg.DeletedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const markBridgeSendsUnknown = `-- name: MarkBridgeSendsUnknown :exec

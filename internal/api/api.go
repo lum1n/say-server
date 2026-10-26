@@ -103,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/bridges", s.authed(s.createBridge))
 	mux.HandleFunc("GET /api/v1/bridges/{id}", s.authed(s.getBridge))
 	mux.HandleFunc("PATCH /api/v1/bridges/{id}", s.authed(s.updateBridge))
+	mux.HandleFunc("DELETE /api/v1/bridges/{id}", s.authed(s.deleteBridge))
 	mux.HandleFunc("POST /api/v1/bridges/{id}/answer", s.authed(s.answerBridge))
 	mux.HandleFunc("GET /api/v1/bridges/{id}/links", s.authed(s.listLinks))
 	mux.HandleFunc("POST /api/v1/bridges/{id}/links", s.authed(s.createLink))

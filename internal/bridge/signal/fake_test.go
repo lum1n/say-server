@@ -22,6 +22,11 @@ import (
 //	push-*.json     params of a "receive" notification to send, in order
 //	requests.jsonl  every request the fake got
 //	die             makes it complain on stderr and exit
+//	offline         makes unregister fail as without a network
+//
+// Run with "-a NUMBER unregister" or "deleteLocalAccountData" instead of
+// jsonRpc, it logs the command to requests.jsonl; the latter deletes the
+// account file.
 const fakeEnv = "SAY_FAKE_SIGNAL_CLI"
 
 const (
@@ -35,6 +40,9 @@ func fakeSignalCLI() {
 		if a == "--config" && i+1 < len(os.Args) {
 			dir = os.Args[i+1]
 		}
+	}
+	if dir != "" && fakeCommand(dir) {
+		return
 	}
 	if dir == "" || os.Args[len(os.Args)-1] != "jsonRpc" {
 		fmt.Fprintln(os.Stderr, "fake signal-cli: bad arguments", os.Args)
@@ -52,6 +60,31 @@ func fakeSignalCLI() {
 		go f.handle(req)
 	}
 	os.Exit(0)
+}
+
+// fakeCommand runs a one-off command, if the arguments are one.
+func fakeCommand(dir string) bool {
+	var account, command string
+	for i, a := range os.Args {
+		if a == "-a" && i+2 < len(os.Args) {
+			account, command = os.Args[i+1], os.Args[i+2]
+		}
+	}
+	if command != "unregister" && command != "deleteLocalAccountData" {
+		return false
+	}
+	f := &fake{dir: dir}
+	line, _ := json.Marshal(map[string]string{"command": command, "account": account})
+	f.log(line)
+	switch {
+	case command == "unregister" && f.exists("offline"):
+		fmt.Fprintln(os.Stderr, "ERROR network is unreachable")
+		os.Exit(3)
+	case command == "deleteLocalAccountData":
+		os.Remove(filepath.Join(dir, "account"))
+	}
+	os.Exit(0)
+	return true
 }
 
 type fake struct {

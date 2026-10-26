@@ -32,6 +32,7 @@ type Bridge struct {
 	SeenAt    int64
 	UpdatedAt int64
 	CreatedAt int64
+	DeletedAt int64
 }
 
 type BridgeGhost struct {

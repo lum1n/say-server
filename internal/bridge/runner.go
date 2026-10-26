@@ -55,11 +55,21 @@ var (
 	// retryFirst and retryMax bound the pause before Run is called again.
 	retryFirst = 2 * time.Second
 	retryMax   = time.Minute
+	// logoutTimeout bounds logging out a deleted bridge. It is under the
+	// lease's TTL, so the lease is not lost meanwhile.
+	logoutTimeout = 20 * time.Second
+	// logoutFor is how long logging out is tried, once per retryMax,
+	// before a deleted bridge is removed without it.
+	logoutFor = 10 * time.Minute
 )
 
 type Runner struct {
 	c       Config
 	running map[string]*running // by bridge id
+	// removing are the deleted bridges being logged out and removed, and
+	// tried when that last began.
+	removing map[string]chan struct{}
+	tried    map[string]time.Time
 }
 
 type running struct {
@@ -70,7 +80,7 @@ type running struct {
 }
 
 func New(c Config) *Runner {
-	return &Runner{c: c, running: map[string]*running{}}
+	return &Runner{c: c, running: map[string]*running{}, removing: map[string]chan struct{}{}, tried: map[string]time.Time{}}
 }
 
 func leaseName(bridgeID string) string { return "bridge:" + bridgeID }
@@ -98,6 +108,9 @@ func (r *Runner) Run(ctx context.Context) error {
 			for id := range r.running {
 				r.stop(id)
 			}
+			for _, done := range r.removing {
+				<-done
+			}
 			return nil
 		case <-wake:
 			for _, run := range r.running {
@@ -109,8 +122,8 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 // scan renews or takes the leases of enabled bridges, starts the ones it
-// holds, stops the ones it lost or whose settings changed, and marks the
-// connected ones as seen.
+// holds, stops the ones it lost, whose settings changed or that were
+// deleted, marks the connected ones as seen, and removes deleted ones.
 func (r *Runner) scan(ctx context.Context) {
 	all, err := r.c.Store.Bridges(ctx)
 	if err != nil {
@@ -120,7 +133,12 @@ func (r *Runner) scan(ctx context.Context) {
 		return
 	}
 	held := map[string]store.Bridge{}
+	var deleted []store.Bridge
 	for _, b := range all {
+		if !b.DeletedAt.IsZero() {
+			deleted = append(deleted, b)
+			continue
+		}
 		if !b.Enabled {
 			continue
 		}
@@ -150,6 +168,112 @@ func (r *Runner) scan(ctx context.Context) {
 		if run.inst.isConnected() {
 			if err := r.c.Store.SetBridgeSeen(ctx, id, now); err != nil && ctx.Err() == nil {
 				slog.Warn("bridges: heartbeat failed", "bridge", id, "err", err)
+			}
+		}
+	}
+	gone := map[string]bool{}
+	for id := range r.tried {
+		gone[id] = true
+	}
+	for _, b := range deleted {
+		delete(gone, b.ID)
+		r.remove(ctx, b)
+	}
+	for id := range gone {
+		if done, ok := r.removing[id]; ok {
+			select {
+			case <-done:
+			default:
+				continue
+			}
+		}
+		delete(r.removing, id)
+		delete(r.tried, id)
+	}
+}
+
+// remove takes the lease of a deleted bridge, unless this node is still
+// at it or tried it lately, and logs it out and removes it.
+func (r *Runner) remove(ctx context.Context, b store.Bridge) {
+	if done, ok := r.removing[b.ID]; ok {
+		select {
+		case <-done:
+			delete(r.removing, b.ID)
+		default:
+			return
+		}
+	}
+	if time.Since(r.tried[b.ID]) < retryMax {
+		return
+	}
+	_, ok, err := r.c.Store.AcquireLease(ctx, leaseName(b.ID), r.c.Holder, leaseTTL)
+	if err != nil && ctx.Err() == nil {
+		slog.Warn("bridges: lease failed", "bridge", b.ID, "err", err)
+	}
+	if !ok {
+		return
+	}
+	r.tried[b.ID] = time.Now()
+	done := make(chan struct{})
+	r.removing[b.ID] = done
+	go func() {
+		defer close(done)
+		r.logOutAndDelete(ctx, b)
+	}()
+}
+
+// logOutAndDelete ends the bridge's session on its network, then deletes
+// it. Its portal rooms stay, unlinked, with their logs. A logout that
+// fails is tried again until logoutFor has passed since the delete; then
+// the bridge goes anyway and the session is left for the owner to end.
+func (r *Runner) logOutAndDelete(ctx context.Context, b store.Bridge) {
+	defer func() {
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := r.c.Store.ReleaseLease(rctx, leaseName(b.ID), r.c.Holder); err != nil {
+			slog.Warn("bridges: release failed", "bridge", b.ID, "err", err)
+		}
+	}()
+	if n, ok := Lookup(b.Network); ok && n.LogOut != nil {
+		lctx, cancel := context.WithTimeout(ctx, logoutTimeout)
+		err := n.LogOut(lctx, Info{ID: b.ID, Mode: b.Mode, Config: b.Config, State: b.State})
+		cancel()
+		switch {
+		case err != nil && ctx.Err() != nil:
+			return
+		case err != nil && time.Since(b.DeletedAt) < logoutFor:
+			slog.Warn("bridge: logout failed", "bridge", b.ID, "network", b.Network, "err", err)
+			r.c.Store.SetBridgeError(ctx, b.ID, "logging out failed: "+err.Error())
+			r.c.Chat.RoomsChanged(ctx, b.OwnerID)
+			return
+		case err != nil:
+			slog.Warn("bridge: deleted without logging out", "bridge", b.ID, "network", b.Network, "err", err)
+		}
+	}
+	links, err := r.c.Store.BridgeLinks(ctx, b.ID)
+	if err != nil {
+		slog.Warn("bridges: list links failed", "bridge", b.ID, "err", err)
+		return
+	}
+	if err := r.c.Store.DeleteBridge(ctx, b.ID); err != nil {
+		if !errors.Is(err, store.ErrNotFound) && ctx.Err() == nil {
+			slog.Warn("bridges: delete failed", "bridge", b.ID, "err", err)
+		}
+		return
+	}
+	slog.Info("bridge deleted", "bridge", b.Name, "network", b.Network, "id", b.ID)
+	// The owner's bridge list, and the bridges of every unlinked room.
+	told := map[string]bool{b.OwnerID: true}
+	r.c.Chat.RoomsChanged(ctx, b.OwnerID)
+	for _, l := range links {
+		ms, err := r.c.Store.Members(ctx, l.RoomID)
+		if err != nil {
+			continue
+		}
+		for _, m := range ms {
+			if !told[m.PrincipalID] {
+				told[m.PrincipalID] = true
+				r.c.Chat.RoomsChanged(ctx, m.PrincipalID)
 			}
 		}
 	}

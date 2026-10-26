@@ -707,3 +707,29 @@ func TestFloodWaitRetries(t *testing.T) {
 		t.Error("a flood wait is not a refusal")
 	}
 }
+
+func TestEndSession(t *testing.T) {
+	for _, authorized := range []bool{false, true} {
+		calls := 0
+		err := endSession(context.Background(), &fakeAuth{authorized: authorized}, func(context.Context) error {
+			calls++
+			return nil
+		})
+		if err != nil || calls != map[bool]int{false: 0, true: 1}[authorized] {
+			t.Errorf("authorized %v: logged out %d times, %v", authorized, calls, err)
+		}
+	}
+}
+
+func TestLogOutWithoutSession(t *testing.T) {
+	cfg := json.RawMessage(`{"api_id": 1, "api_hash": "abc", "phone": "+4712345678"}`)
+	// Neither connects: there is no session to end.
+	for _, st := range []json.RawMessage{nil, json.RawMessage(`{"phone": "+4712345678"}`), json.RawMessage(`{"phone": "+4799999999", "session": "c2Vzc2lvbg=="}`)} {
+		if err := logOut(context.Background(), bridge.Info{Config: cfg, State: st}); err != nil {
+			t.Errorf("state %s: %v", st, err)
+		}
+	}
+	if err := logOut(context.Background(), bridge.Info{Config: json.RawMessage(`{}`)}); err != nil {
+		t.Errorf("bad config: %v", err)
+	}
+}

@@ -689,7 +689,21 @@ export interface paths {
         get: operations["getBridge"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a bridge, logging it out on its network
+         * @description The bridge stops and shows as `deleting` until the node that takes
+         *     it over logs the account out and removes it, with its links. A
+         *     Matrix session say logged in with the password is logged out (an
+         *     access token given in the settings is left alone); a Telegram
+         *     session is ended; a Signal device is unregistered and its keys
+         *     deleted, but stays under Linked devices on the phone, where only
+         *     the person can remove it. A logout that keeps failing is given up
+         *     after ten minutes and the bridge is removed anyway.
+         *
+         *     Portal rooms and linked rooms stay, with their logs and ghosts,
+         *     as ordinary rooms no longer bridged. Asking again changes nothing.
+         */
+        delete: operations["deleteBridge"];
         options?: never;
         head?: never;
         /**
@@ -1085,10 +1099,12 @@ export interface components {
         /**
          * @description `live` while the node running it is connected; `login` while it
          *     waits for its owner (`prompt`); `error` when its connection fails
-         *     (`error`); `offline` when no node runs it; `disabled`.
+         *     (`error`); `offline` when no node runs it; `disabled`; `deleting`
+         *     from a delete until a node has logged it out and removed it
+         *     (`error` says why a logout failed).
          * @enum {string}
          */
-        BridgeState: "live" | "login" | "error" | "offline" | "disabled";
+        BridgeState: "live" | "login" | "error" | "offline" | "disabled" | "deleting";
         NetworkField: {
             key: string;
             label: string;
@@ -2467,6 +2483,30 @@ export interface operations {
         responses: {
             /** @description The bridge */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Bridge"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    deleteBridge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bridge, now deleting */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -371,6 +371,16 @@ export async function updateBridge(id: string, body: BridgeSettings, client = de
   return data;
 }
 
+/**
+ * deleteBridge deletes a bridge: a node logs it out on its network, then
+ * removes it. Until then it shows as `deleting`. Its rooms stay.
+ */
+export async function deleteBridge(id: string, client = defaultClient): Promise<Bridge> {
+  const { data, error, response } = await client.DELETE("/bridges/{id}", { params: { path: { id } } });
+  if (!data) fail(response, error);
+  return data;
+}
+
 /** answerBridge answers a bridge's login prompt. */
 export async function answerBridge(id: string, value: string, client = defaultClient): Promise<void> {
   const { error, response } = await client.POST("/bridges/{id}/answer", { params: { path: { id } }, body: { value } });

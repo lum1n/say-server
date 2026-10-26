@@ -6,6 +6,7 @@ import {
   type BridgeMode,
   createBridge,
   createBridgeLink,
+  deleteBridge,
   getMe,
   listBridgeLinks,
   listBridges,
@@ -56,7 +57,24 @@ const stateText: Record<string, string> = {
   error: "can't connect",
   offline: "offline",
   disabled: "switched off",
+  deleting: "logging out…",
 };
+
+// deleteWarning says what deleting a bridge does on its network.
+function deleteWarning(b: Bridge, title: string) {
+  const out = {
+    matrix: "say's session is logged out, unless you gave it an access token of your own.",
+    telegram: "say's session is ended.",
+    signal: "say stops receiving and deletes its keys. Remove it under Linked devices on your phone too: Signal lets only the phone do that.",
+  }[b.network];
+  return [
+    `Delete ${b.name}?`,
+    out && `${title}: ${out}`,
+    b.mode === "bot" ? "The linked rooms stay, no longer mirrored." : "Its rooms stay here with their messages, no longer bridged.",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
 
 function BridgeRow({ bridge: b, network }: { bridge: Bridge; network?: Network }) {
   const queryClient = useQueryClient();
@@ -65,19 +83,38 @@ function BridgeRow({ bridge: b, network }: { bridge: Bridge; network?: Network }
     mutationFn: () => updateBridge(b.id, { enabled: !b.enabled }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.bridges }),
   });
+  const remove = useMutation({
+    mutationFn: () => deleteBridge(b.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.bridges }),
+  });
+  const title = network?.title ?? b.network;
+  const deleting = b.state === "deleting";
   return (
     <li>
       <div>
         <strong>{b.name}</strong>
-        {b.name !== (network?.title ?? b.network) && <span className="muted"> {network?.title ?? b.network}</span>}
+        {b.name !== title && <span className="muted"> {title}</span>}
         {b.mode === "bot" && <span className="badge">relay bot</span>}
-        <span className={`state ${b.state}`}>{stateText[b.state] ?? b.state}</span>{" "}
-        <button type="button" className="link" onClick={() => setEditing(!editing)}>
-          {editing ? "Close" : "Settings"}
-        </button>{" "}
-        <button type="button" className="link" onClick={() => toggle.mutate()} disabled={toggle.isPending}>
-          {b.enabled ? "Switch off" : "Switch on"}
-        </button>
+        <span className={`state ${b.state}`}>{stateText[b.state] ?? b.state}</span>
+        {!deleting && (
+          <>
+            {" "}
+            <button type="button" className="link" onClick={() => setEditing(!editing)}>
+              {editing ? "Close" : "Settings"}
+            </button>{" "}
+            <button type="button" className="link" onClick={() => toggle.mutate()} disabled={toggle.isPending}>
+              {b.enabled ? "Switch off" : "Switch on"}
+            </button>{" "}
+            <button
+              type="button"
+              className="link"
+              disabled={remove.isPending}
+              onClick={() => confirm(deleteWarning(b, title)) && remove.mutate()}
+            >
+              Delete
+            </button>
+          </>
+        )}
       </div>
       {b.error && b.state !== "live" && (
         <p role="alert" className="muted">
@@ -90,8 +127,8 @@ function BridgeRow({ bridge: b, network }: { bridge: Bridge; network?: Network }
         </p>
       )}
       {b.prompt && <PromptBox bridge={b} />}
-      <FormError error={toggle.error} />
-      {editing && network && <ConfigForm network={network} mode={b.mode} bridge={b} onSaved={() => setEditing(false)} />}
+      <FormError error={toggle.error ?? remove.error} />
+      {editing && !deleting && network && <ConfigForm network={network} mode={b.mode} bridge={b} onSaved={() => setEditing(false)} />}
       <Chats bridge={b} />
     </li>
   );
@@ -165,7 +202,7 @@ function Chats({ bridge: b }: { bridge: Bridge }) {
           </li>
         ))}
       </ul>
-      {open && b.mode === "bot" && <LinkRoom bridge={b} />}
+      {open && b.mode === "bot" && b.state !== "deleting" && <LinkRoom bridge={b} />}
     </details>
   );
 }

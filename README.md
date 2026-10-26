@@ -308,6 +308,15 @@ if within ten minutes; otherwise the message says it was not sent. A send
 that was cut off says it "may not have reached" the network, and is never
 repeated by itself ([ADR 0014](./docs/adr/0014-bridges.md)).
 
+**Delete** on the Accounts page logs say out of the account, then removes
+it: Matrix logs out the session say made with your password (an access
+token you gave is yours and stays logged in), Telegram ends say's
+session, and Signal stops say's device and deletes its keys. Signal lets
+only your phone remove a linked device, so remove say under Linked
+devices there too. The rooms stay, with their messages, no longer
+bridged. If the network can't be reached, say keeps trying for ten
+minutes, then removes the account anyway.
+
 Only official routes are used: no personal WhatsApp, no Discord user
 accounts, no Slack web-session tokens ([ADR
 0004](./docs/adr/0004-bridge-risk-policy.md)). The server holds your

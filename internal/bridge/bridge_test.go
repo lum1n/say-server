@@ -34,6 +34,9 @@ func TestMain(m *testing.M) {
 		Open: func(b bridge.Info, h bridge.Host) (bridge.Conn, error) {
 			return fakes.open(b, h), nil
 		},
+		LogOut: func(ctx context.Context, b bridge.Info) error {
+			return fakes.logOut(b)
+		},
 	})
 	os.Exit(m.Run())
 }
@@ -46,6 +49,28 @@ type fakeNet struct {
 	conns map[string]*fakeConn
 	// ask makes new connections ask for a code before they connect.
 	ask bool
+	// logouts counts the logouts of each bridge; logoutErr fails them.
+	logouts   map[string]int
+	logoutErr error
+}
+
+func (n *fakeNet) logOut(b bridge.Info) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if c := n.conns[b.ID]; c != nil && c.isRunning() {
+		return errors.New("logged out while the connection runs")
+	}
+	if n.logouts == nil {
+		n.logouts = map[string]int{}
+	}
+	n.logouts[b.ID]++
+	return n.logoutErr
+}
+
+func (n *fakeNet) loggedOut(id string) int {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.logouts[id]
 }
 
 func (n *fakeNet) open(b bridge.Info, h bridge.Host) *fakeConn {
@@ -613,5 +638,98 @@ func TestTakeoverAfterCrashSendsOnce(t *testing.T) {
 	}
 	if strings.Join(texts, ",") != "one,two,three" {
 		t.Fatalf("sends = %v", texts)
+	}
+}
+
+func TestDeleteBridge(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	b := e.addBridge(store.ModeAccount)
+	e.runner("n1")
+	c := fakes.conn(t, b.ID)
+	c.in <- bridge.Incoming{Chat: bridge.RemoteChat{ID: "g", Name: "Group"}, ID: "m1", Author: bridge.Author{ID: "bob", Name: "Bob"}, Text: "hi"}
+	l := e.portal(b.ID, "g")
+	eventually(t, "Bob's message is in", func() bool { return len(e.log(l.RoomID)) == 1 })
+
+	var got wireBridge
+	if code := e.call("DELETE", "/api/v1/bridges/"+b.ID, nil, &got); code != http.StatusAccepted || got.State != "deleting" {
+		t.Fatalf("delete: %d %+v", code, got)
+	}
+	eventually(t, "the bridge is gone", func() bool {
+		return e.call("GET", "/api/v1/bridges/"+b.ID, nil, nil) == http.StatusNotFound
+	})
+	if c.isRunning() {
+		t.Fatal("the connection still runs")
+	}
+	if n := fakes.loggedOut(b.ID); n != 1 {
+		t.Fatalf("logged out %d times", n)
+	}
+	// The portal stays, unlinked, with its log.
+	if _, err := e.store.GetRoom(ctx, l.RoomID); err != nil {
+		t.Fatalf("portal room: %v", err)
+	}
+	if links, _ := e.store.RoomBridgeLinks(ctx, l.RoomID); len(links) != 0 {
+		t.Fatalf("portal still linked: %+v", links)
+	}
+	if evs := e.log(l.RoomID); len(evs) != 1 || !strings.Contains(string(evs[0].Parts[0].Data), `"hi"`) {
+		t.Fatalf("portal log = %+v", evs)
+	}
+	if code := e.call("DELETE", "/api/v1/bridges/"+b.ID, nil, nil); code != http.StatusNotFound {
+		t.Fatalf("delete twice: %d", code)
+	}
+}
+
+func TestDeleteBridgeWhileOff(t *testing.T) {
+	e := newEnv(t)
+	b := e.addBridge(store.ModeBot)
+	e.call("PATCH", "/api/v1/bridges/"+b.ID, map[string]any{"enabled": false}, nil)
+	if code := e.call("DELETE", "/api/v1/bridges/"+b.ID, nil, nil); code != http.StatusAccepted {
+		t.Fatalf("delete: %d", code)
+	}
+	// Until a node removes it, it can't be changed or linked.
+	if code := e.call("PATCH", "/api/v1/bridges/"+b.ID, map[string]any{"enabled": true}, nil); code != http.StatusConflict {
+		t.Fatalf("patch while deleting: %d", code)
+	}
+	var created struct{ ID string }
+	e.call("POST", "/api/v1/rooms", map[string]string{"kind": "group", "name": "Team"}, &created)
+	if code := e.call("POST", "/api/v1/bridges/"+b.ID+"/links", map[string]string{"room_id": created.ID, "remote_id": "#team"}, nil); code != http.StatusConflict {
+		t.Fatalf("link while deleting: %d", code)
+	}
+	if code := e.call("DELETE", "/api/v1/bridges/"+b.ID, nil, nil); code != http.StatusAccepted {
+		t.Fatalf("delete again: %d", code)
+	}
+	e.runner("n1")
+	eventually(t, "the bridge is gone", func() bool {
+		return e.call("GET", "/api/v1/bridges/"+b.ID, nil, nil) == http.StatusNotFound
+	})
+	if n := fakes.loggedOut(b.ID); n != 1 {
+		t.Fatalf("logged out %d times", n)
+	}
+}
+
+func TestDeleteBridgeLogoutFails(t *testing.T) {
+	e := newEnv(t)
+	fakes.mu.Lock()
+	fakes.logoutErr = errors.New("network down")
+	fakes.mu.Unlock()
+	defer func() {
+		fakes.mu.Lock()
+		fakes.logoutErr = nil
+		fakes.mu.Unlock()
+	}()
+	b := e.addBridge(store.ModeAccount)
+	e.runner("n1")
+	fakes.conn(t, b.ID)
+	e.call("DELETE", "/api/v1/bridges/"+b.ID, nil, nil)
+	eventually(t, "the failure shows", func() bool {
+		got := e.bridge(b.ID)
+		return got.State == "deleting" && strings.Contains(got.Error, "network down")
+	})
+	// It is tried again, then given up on: the bridge goes anyway.
+	eventually(t, "the bridge is gone", func() bool {
+		return e.call("GET", "/api/v1/bridges/"+b.ID, nil, nil) == http.StatusNotFound
+	})
+	if n := fakes.loggedOut(b.ID); n < 2 {
+		t.Fatalf("logged out %d times, want retries", n)
 	}
 }

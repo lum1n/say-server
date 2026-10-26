@@ -243,6 +243,7 @@ function BridgeChip({ bridge: b }: { bridge: RoomBridge }) {
     error: `${net} can't connect; your messages are sent when it's back, if within 10 minutes`,
     offline: `${net} is offline; your messages are sent when it's back, if within 10 minutes`,
     disabled: `${net} is switched off; messages here stay in say`,
+    deleting: `${net} is being removed; this room stays, with its messages, in say only`,
   };
   return (
     <span className={`bridge-chip ${b.state}`} title={hint[b.state]}>

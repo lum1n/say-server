@@ -220,6 +220,12 @@ type Store interface {
 	GetBridge(ctx context.Context, id string) (Bridge, error)
 	// Bridges returns every bridge, oldest first.
 	Bridges(ctx context.Context) ([]Bridge, error)
+	// MarkBridgeDeleted asks for the bridge to be deleted, at at; asking
+	// again keeps the first time. DeleteBridge removes it with its links,
+	// their messages and its ghosts' mappings; portal rooms and ghost
+	// principals stay. Both are ErrNotFound for an unknown bridge.
+	MarkBridgeDeleted(ctx context.Context, id string, at time.Time) error
+	DeleteBridge(ctx context.Context, id string) error
 	// SetBridgeError records the bridge's latest failure; an empty msg
 	// clears it. SetBridgeSeen records that its node runs it, or with a
 	// zero at that none does.

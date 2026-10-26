@@ -9,4 +9,6 @@ func Fast() {
 	resync = 200 * time.Millisecond
 	retryFirst = 50 * time.Millisecond
 	retryMax = 200 * time.Millisecond
+	logoutTimeout = 200 * time.Millisecond
+	logoutFor = time.Second
 }

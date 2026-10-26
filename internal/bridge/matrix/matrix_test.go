@@ -331,3 +331,46 @@ func TestOpenChecksConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestLogOut(t *testing.T) {
+	f := newFakeServer(t)
+	seed(f)
+	cfg := map[string]any{"homeserver": f.URL, "user_id": "@ada:hs", "password": "secret"}
+	data, _ := json.Marshal(cfg)
+	if err := logOut(context.Background(), bridge.Info{ID: "b1", Config: data}); err != nil {
+		t.Fatalf("logging out a bridge that never logged in: %v", err)
+	}
+	h := newFakeHost()
+	_, done := start(t, cfg, nil, h)
+	connected(t, h, done)
+	info := bridge.Info{ID: "b1", Config: data, State: h.stateJSON()}
+	if err := logOut(context.Background(), info); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	_, left := f.tokens["tok1"]
+	f.mu.Unlock()
+	if left {
+		t.Fatal("say's session is still logged in")
+	}
+	if err := logOut(context.Background(), info); err != nil {
+		t.Fatalf("logging out twice: %v", err)
+	}
+
+	// A token the person gave is theirs: it stays logged in.
+	f.tokens["given"] = "@ada:hs"
+	tcfg := map[string]any{"homeserver": f.URL, "user_id": "@ada:hs", "access_token": "given"}
+	h2 := newFakeHost()
+	_, done2 := start(t, tcfg, nil, h2)
+	connected(t, h2, done2)
+	tdata, _ := json.Marshal(tcfg)
+	if err := logOut(context.Background(), bridge.Info{ID: "b2", Config: tdata, State: h2.stateJSON()}); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	_, kept := f.tokens["given"]
+	f.mu.Unlock()
+	if !kept {
+		t.Fatal("logged out the person's own token")
+	}
+}

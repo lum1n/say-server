@@ -74,6 +74,30 @@ event (ADR 0003) was never read by anything and only grew.
   needs the lease, the cursors and the delivery rows that live in the core.
   Out-of-process bridges can come with the connector registry (M5).
 
+- **Deleting logs out, and keeps the rooms.** `DELETE /bridges/{id}`
+  marks the bridge (`deleted_at`) and it shows as `deleting`. The node
+  that takes its lease stops it, calls the network's `LogOut` with the
+  stored config and state, and deletes the bridge, its links, their
+  delivery rows and its ghosts' mappings in one transaction. A logout
+  that fails shows its error and is tried again each minute; after ten
+  minutes the bridge is deleted anyway, leaving the session for the
+  person to end on the network. Portal rooms and linked rooms stay as
+  ordinary rooms with their logs, and ghosts stay as their senders: the
+  history is the person's, and they can leave or delete those rooms
+  themselves. Adding the account again makes new portals and ghosts.
+  - Matrix logs out the session say made with the password, which
+    removes its device. An access token given in the settings is the
+    person's own session and is left alone.
+  - Telegram ends say's MTProto session (`auth.logOut`).
+  - Signal can't remove a linked device from the device itself (only the
+    primary can), so say runs signal-cli's `unregister`, which stops
+    messages being queued for it, then deletes its keys and data. The
+    device stays under Linked devices on the phone until the person
+    removes it; the Accounts page says so.
+  - Slack, IRC, email and the relay bots hold no session say made: their
+    tokens and passwords are the person's or the admin's, and deleting
+    only forgets them.
+
 ### Networks (account mode)
 
 | Network | Route | Notes |

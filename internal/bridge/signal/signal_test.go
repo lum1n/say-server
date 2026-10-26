@@ -559,3 +559,54 @@ func TestPersonIDs(t *testing.T) {
 		t.Fatalf("uuid source: %+v", m)
 	}
 }
+
+func TestLogOut(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands := func(dir string) []string {
+		raw, _ := os.ReadFile(filepath.Join(dir, "requests.jsonl"))
+		var out []string
+		for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+			var c struct{ Command, Account string }
+			if json.Unmarshal([]byte(line), &c) == nil && c.Command != "" {
+				out = append(out, c.Command+" "+c.Account)
+			}
+		}
+		return out
+	}
+	st, _ := json.Marshal(state{Account: fakeNumber})
+
+	// A data directory set in the config: the account's data in it goes.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "account"), []byte(fakeNumber), 0o600)
+	cfg, _ := json.Marshal(config{Path: exe, DataDir: dir})
+	if err := logOut(context.Background(), bridge.Info{ID: "b1", Config: cfg, State: st}); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(commands(dir), ", "); got != "unregister "+fakeNumber+", deleteLocalAccountData "+fakeNumber {
+		t.Errorf("commands = %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "account")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the account's data is left: %v", err)
+	}
+
+	// say's own directory goes whole, also when unregistering fails.
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	cfg, _ = json.Marshal(config{Path: exe})
+	c, _ := open(bridge.Info{ID: "b2", Config: cfg}, nil)
+	own, _ := c.(*conn).dataDir()
+	os.MkdirAll(own, 0o700)
+	os.WriteFile(filepath.Join(own, "offline"), nil, 0o600)
+	if err := logOut(context.Background(), bridge.Info{ID: "b2", Config: cfg, State: st}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(own); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("say's directory is left: %v", err)
+	}
+	// Nothing to do the second time, or for a bridge that never ran.
+	if err := logOut(context.Background(), bridge.Info{ID: "b2", Config: cfg, State: st}); err != nil {
+		t.Fatal(err)
+	}
+}

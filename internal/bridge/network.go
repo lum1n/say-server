@@ -9,7 +9,8 @@
 //
 // Every node runs a Runner. Each enabled bridge is held by one node at a
 // time through a lease, and the holder runs the network connection and
-// delivers the room log to it from a cursor per link.
+// delivers the room log to it from a cursor per link. A deleted bridge is
+// taken the same way, by the node that logs it out and removes it.
 package bridge
 
 import (
@@ -41,6 +42,12 @@ type Network struct {
 	// node may call it, also one not running the bridge. An error
 	// wrapping ErrUnauthorized is answered 401, others 400.
 	Hook func(b Info, r *http.Request) ([]Incoming, error)
+	// LogOut, if set, ends the session say holds on the network when the
+	// bridge is deleted, so it no longer shows among the account's
+	// devices or sessions. It runs on the node holding the bridge's lease,
+	// with the connection stopped, and must succeed when there is no
+	// session (never logged in, or already logged out).
+	LogOut func(ctx context.Context, b Info) error
 }
 
 // Field is one config setting of a network.

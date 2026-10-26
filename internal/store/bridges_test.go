@@ -180,5 +180,45 @@ func TestBridges(t *testing.T) {
 		if err := s.DeleteBridgeLink(ctx, b.ID, l.ID); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("delete twice: %v", err)
 		}
+
+		// Deleting the bridge keeps its portal rooms, their logs and its
+		// ghosts, unlinked.
+		if err := s.MarkBridgeDeleted(ctx, b.ID, now); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.MarkBridgeDeleted(ctx, b.ID, now.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := s.GetBridge(ctx, b.ID); !got.DeletedAt.Equal(now) {
+			t.Fatalf("DeletedAt = %v, want the first ask", got.DeletedAt)
+		}
+		if err := s.MarkBridgeDeleted(ctx, "nope", now); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("mark unknown: %v", err)
+		}
+		pl, _ := s.BridgeLinkByRemote(ctx, b.ID, "@bob")
+		if _, err := s.StartBridgeMessage(ctx, BridgeMessage{LinkID: pl.ID, EventID: core.NewID(), Direction: BridgeOut, State: BridgeSent, CreatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DeleteBridge(ctx, b.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.GetBridge(ctx, b.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("deleted bridge: %v", err)
+		}
+		if links, _ := s.RoomBridgeLinks(ctx, pr.ID); len(links) != 0 {
+			t.Fatalf("portal still linked: %+v", links)
+		}
+		if _, err := s.GetRoom(ctx, pr.ID); err != nil {
+			t.Fatalf("portal room gone: %v", err)
+		}
+		if _, err := s.GetPrincipal(ctx, g.ID); err != nil {
+			t.Fatalf("ghost gone: %v", err)
+		}
+		if _, err := s.BridgeGhostByPrincipal(ctx, g.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("ghost still mapped: %v", err)
+		}
+		if err := s.DeleteBridge(ctx, b.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("delete bridge twice: %v", err)
+		}
 	})
 }

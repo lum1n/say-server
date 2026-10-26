@@ -58,6 +58,7 @@ func newFakeServer(t *testing.T) *fakeServer {
 	mux := http.NewServeMux()
 	const v3 = "/_matrix/client/v3"
 	mux.HandleFunc("POST "+v3+"/login", f.login)
+	mux.HandleFunc("POST "+v3+"/logout", f.auth(f.logout))
 	mux.HandleFunc("GET "+v3+"/account/whoami", f.auth(f.whoami))
 	mux.HandleFunc("GET "+v3+"/sync", f.auth(f.sync))
 	mux.HandleFunc("PUT "+v3+"/rooms/{room}/send/{type}/{txn}", f.auth(f.send))
@@ -98,6 +99,13 @@ func (f *fakeServer) auth(h func(w http.ResponseWriter, r *http.Request, user, t
 		}
 		h(w, r, user, token)
 	}
+}
+
+func (f *fakeServer) logout(w http.ResponseWriter, r *http.Request, user, token string) {
+	f.mu.Lock()
+	delete(f.tokens, token)
+	f.mu.Unlock()
+	reply(w, 200, map[string]any{})
 }
 
 func (f *fakeServer) login(w http.ResponseWriter, r *http.Request) {

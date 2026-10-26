@@ -34,6 +34,7 @@ func init() {
 		Fields:       fields,
 		Capabilities: []connector.Capability{connector.CapEdits},
 		Open:         open,
+		LogOut:       logOut,
 	})
 }
 
@@ -72,28 +73,77 @@ const (
 
 // open makes a connection; it only checks the config.
 func open(b bridge.Info, h bridge.Host) (bridge.Conn, error) {
-	var cfg config
-	if err := json.Unmarshal(b.Config, &cfg); err != nil {
-		return nil, fmt.Errorf("telegram: bad config: %w", err)
+	cfg, err := parseConfig(b.Config)
+	if err != nil {
+		return nil, err
 	}
-	if cfg.APIID <= 0 || cfg.APIHash == "" {
-		return nil, errors.New("telegram: the API ID and hash from my.telegram.org are required")
-	}
-	phone := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "").Replace(cfg.Phone)
-	if len(phone) < 8 || phone[0] != '+' || strings.Trim(phone[1:], "0123456789") != "" {
-		return nil, errors.New("telegram: the phone number is in international format, like +4712345678")
-	}
-	cfg.Phone = phone
 	return &conn{
 		h:             h,
 		cfg:           cfg,
-		st:            newSaved(b.State, phone, h.SaveState),
+		st:            newSaved(b.State, cfg.Phone, h.SaveState),
 		saveEvery:     10 * time.Second,
 		backfillAge:   30 * 24 * time.Hour,
 		backfillChats: 50,
 		backfillCount: 20,
 		pause:         500 * time.Millisecond,
 	}, nil
+}
+
+// parseConfig reads and checks a bridge's settings.
+func parseConfig(raw json.RawMessage) (config, error) {
+	var cfg config
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return config{}, fmt.Errorf("telegram: bad config: %w", err)
+	}
+	if cfg.APIID <= 0 || cfg.APIHash == "" {
+		return config{}, errors.New("telegram: the API ID and hash from my.telegram.org are required")
+	}
+	phone := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "").Replace(cfg.Phone)
+	if len(phone) < 8 || phone[0] != '+' || strings.Trim(phone[1:], "0123456789") != "" {
+		return config{}, errors.New("telegram: the phone number is in international format, like +4712345678")
+	}
+	cfg.Phone = phone
+	return cfg, nil
+}
+
+// device is how say's session shows among the account's devices.
+var device = telegram.DeviceConfig{DeviceModel: "say", SystemVersion: runtime.GOOS, AppVersion: "say bridge"}
+
+// logOut ends say's session, which removes it from the account's active
+// sessions.
+func logOut(ctx context.Context, b bridge.Info) error {
+	cfg, err := parseConfig(b.Config)
+	if err != nil {
+		return nil // never ran, so never logged in
+	}
+	st := newSaved(b.State, cfg.Phone, func(context.Context, json.RawMessage) error { return nil })
+	if len(st.s.Session) == 0 {
+		return nil
+	}
+	client := telegram.NewClient(cfg.APIID, cfg.APIHash, telegram.Options{SessionStorage: st, Device: device})
+	err = client.Run(ctx, func(ctx context.Context) error {
+		return endSession(ctx, client.Auth(), func(ctx context.Context) error {
+			_, err := client.API().AuthLogOut(ctx)
+			return err
+		})
+	})
+	if err != nil {
+		return fmt.Errorf("telegram: log out: %w", err)
+	}
+	return nil
+}
+
+// endSession logs the session out unless it is not signed in, as when the
+// login never finished or the account ended it from another app.
+func endSession(ctx context.Context, ac authClient, logOut func(context.Context) error) error {
+	status, err := ac.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("auth status: %w", err)
+	}
+	if !status.Authorized {
+		return nil
+	}
+	return logOut(ctx)
 }
 
 // conn is a running Telegram account.
@@ -135,7 +185,7 @@ func (c *conn) Run(ctx context.Context) error {
 		// The hook passes the updates in API results, such as a sent
 		// message, to the manager, to keep its positions right.
 		Middlewares: []telegram.Middleware{floodWait{max: maxFloodWait}, hook.UpdateHook(mgr.Handle)},
-		Device:      telegram.DeviceConfig{DeviceModel: "say", SystemVersion: runtime.GOOS, AppVersion: "say bridge"},
+		Device:      device,
 	})
 	err := client.Run(ctx, func(ctx context.Context) error {
 		if err := login(ctx, client.Auth(), c.cfg.Phone, c.h); err != nil {

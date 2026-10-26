@@ -288,11 +288,13 @@ Reachability: TypeAlias = Literal['live', 'offline', 'unlinked']
 BridgeMode: TypeAlias = Literal['account', 'bot']
 
 
-BridgeState: TypeAlias = Literal['live', 'login', 'error', 'offline', 'disabled']
+BridgeState: TypeAlias = Literal['live', 'login', 'error', 'offline', 'disabled', 'deleting']
 """
 `live` while the node running it is connected; `login` while it
 waits for its owner (`prompt`); `error` when its connection fails
-(`error`); `offline` when no node runs it; `disabled`.
+(`error`); `offline` when no node runs it; `disabled`; `deleting`
+from a delete until a node has logged it out and removed it
+(`error` says why a logout failed).
 
 """
 

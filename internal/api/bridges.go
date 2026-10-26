@@ -20,7 +20,10 @@ import (
 // person adds their own accounts; an instance admin adds relay bots and
 // links them to rooms.
 
-var errBridgeNotFound = errorf(http.StatusNotFound, "not_found", "no such bridge")
+var (
+	errBridgeNotFound = errorf(http.StatusNotFound, "not_found", "no such bridge")
+	errDeleting       = errorf(http.StatusConflict, "deleting", "the bridge is being deleted")
+)
 
 type wireNetwork struct {
 	Name         string         `json:"name"`
@@ -44,7 +47,7 @@ type wireBridge struct {
 	Config     map[string]any `json:"config"`
 	SecretsSet []string       `json:"secrets_set"`
 	Enabled    bool           `json:"enabled"`
-	// State is disabled, login, live, error or offline.
+	// State is deleting, disabled, login, live, error or offline.
 	State  string         `json:"state"`
 	Error  string         `json:"error,omitempty"`
 	Prompt *bridge.Prompt `json:"prompt,omitempty"`
@@ -56,6 +59,8 @@ type wireBridge struct {
 // bridgeState is how a bridge is doing, as shown to people.
 func bridgeState(b store.Bridge, now time.Time) string {
 	switch {
+	case !b.DeletedAt.IsZero():
+		return "deleting"
 	case !b.Enabled:
 		return "disabled"
 	case b.Prompt != nil:
@@ -225,6 +230,10 @@ func (s *Server) updateBridge(w http.ResponseWriter, r *http.Request, me core.Pr
 		writeError(w, err)
 		return
 	}
+	if !b.DeletedAt.IsZero() {
+		writeError(w, errDeleting)
+		return
+	}
 	if body.Network != "" && body.Network != b.Network || body.Mode != "" && body.Mode != b.Mode {
 		writeError(w, errorf(http.StatusUnprocessableEntity, "invalid", "a bridge's network and mode can't change"))
 		return
@@ -245,6 +254,31 @@ func (s *Server) updateBridge(w http.ResponseWriter, r *http.Request, me core.Pr
 	}
 	s.publish(r.Context(), bus.BridgesSubject)
 	writeJSON(w, http.StatusOK, toBridge(b))
+}
+
+// deleteBridge asks for a bridge to be deleted. The node that takes its
+// lease stops it, logs the account out on the network and removes it with
+// its links; portal rooms and linked rooms stay, unlinked, with their
+// logs. Until then it shows as deleting.
+func (s *Server) deleteBridge(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	b, err := s.bridgeFor(r.Context(), me, r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if b.DeletedAt.IsZero() {
+		b.DeletedAt = time.Now().Truncate(time.Millisecond)
+		err = s.store.MarkBridgeDeleted(r.Context(), b.ID, b.DeletedAt)
+		if errors.Is(err, store.ErrNotFound) {
+			err = errBridgeNotFound
+		}
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	s.publish(r.Context(), bus.BridgesSubject)
+	writeJSON(w, http.StatusAccepted, toBridge(b))
 }
 
 // answerBridge passes the owner's answer to a login prompt to the node
@@ -295,7 +329,7 @@ func (s *Server) hook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, ok := bridge.Lookup(b.Network)
-	if !ok || n.Hook == nil || !b.Enabled {
+	if !ok || n.Hook == nil || !b.Enabled || !b.DeletedAt.IsZero() {
 		writeError(w, notFound)
 		return
 	}
@@ -375,6 +409,10 @@ func (s *Server) createLink(w http.ResponseWriter, r *http.Request, me core.Prin
 	}
 	if b.Mode != store.ModeBot {
 		writeError(w, errorf(http.StatusConflict, "conflict", "an account's rooms come from its chats"))
+		return
+	}
+	if !b.DeletedAt.IsZero() {
+		writeError(w, errDeleting)
 		return
 	}
 	body.RemoteID = strings.TrimSpace(body.RemoteID)

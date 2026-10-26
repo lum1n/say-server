@@ -40,7 +40,10 @@ type Bridge struct {
 	Enabled   bool
 	LastError string
 	// SeenAt is when the node running the bridge last renewed it.
-	SeenAt    time.Time
+	SeenAt time.Time
+	// DeletedAt is when deleting the bridge was asked for; zero is not.
+	// The node that takes its lease logs out and removes it.
+	DeletedAt time.Time
 	UpdatedAt time.Time
 	CreatedAt time.Time
 }
@@ -146,6 +149,32 @@ func (s *sqlStore) Bridges(ctx context.Context) ([]Bridge, error) {
 	return out, nil
 }
 
+func (s *sqlStore) MarkBridgeDeleted(ctx context.Context, id string, at time.Time) error {
+	n, err := s.q().MarkBridgeDeleted(ctx, db.MarkBridgeDeletedParams{ID: id, DeletedAt: millis(at)})
+	if err != nil || n > 0 {
+		return err
+	}
+	// Already marked, or not there.
+	_, err = s.GetBridge(ctx, id)
+	return err
+}
+
+func (s *sqlStore) DeleteBridge(ctx context.Context, id string) error {
+	return s.tx(ctx, func(q *db.Queries) error {
+		steps := []func(context.Context, string) error{q.DeleteBridgeMessagesOf, q.DeleteBridgeLinksOf, q.DeleteBridgeGhosts}
+		for _, step := range steps {
+			if err := step(ctx, id); err != nil {
+				return err
+			}
+		}
+		n, err := q.DeleteBridge(ctx, id)
+		if err == nil && n == 0 {
+			return ErrNotFound
+		}
+		return err
+	})
+}
+
 func bridge(row db.Bridge) Bridge {
 	b := Bridge{
 		ID:        row.ID,
@@ -158,6 +187,7 @@ func bridge(row db.Bridge) Bridge {
 		Enabled:   row.Enabled != 0,
 		LastError: row.LastError,
 		SeenAt:    unmillis(row.SeenAt),
+		DeletedAt: unmillis(row.DeletedAt),
 		UpdatedAt: time.UnixMilli(row.UpdatedAt),
 		CreatedAt: time.UnixMilli(row.CreatedAt),
 	}
