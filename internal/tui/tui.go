@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,11 +50,18 @@ type Model struct {
 	rooms  []say.Room
 	logs   map[string][]say.Event // messages only, with edits applied
 	loaded map[string]bool        // followed on the socket
-	unread map[string]int
-	sel    int    // highlighted in the list
-	open   string // the open room's id
+	// first is the seq of the oldest event read from a room's log, or 0
+	// when nothing is before it.
+	first   map[string]int64
+	earlier map[string]bool // an earlier page on its way
+	members map[string][]say.Member
+	unread  map[string]int
+	sel     int    // highlighted in the list
+	open    string // the open room's id
 
 	focusList bool
+	info      bool   // the open room's members and agent settings, not its log
+	editing   string // the id of the message the input edits
 	input     textinput.Model
 	vp        viewport.Model
 	atBottom  bool
@@ -65,7 +73,7 @@ type Model struct {
 // New makes the TUI for client c, whose realtime connection is rt.
 func New(c *say.Client, rt *say.Realtime, where string) *Model {
 	in := textinput.New()
-	in.Placeholder = "Message, or /new NAME, /invite NAME, /quit"
+	in.Placeholder = placeholder
 	in.Prompt = "› "
 	in.Focus()
 	vp := viewport.New(0, 0)
@@ -78,7 +86,8 @@ func New(c *say.Client, rt *say.Realtime, where string) *Model {
 	return &Model{
 		c: c, rt: rt, where: where,
 		people: map[string]say.Principal{}, logs: map[string][]say.Event{},
-		loaded: map[string]bool{}, unread: map[string]int{},
+		loaded: map[string]bool{}, first: map[string]int64{}, earlier: map[string]bool{},
+		members: map[string][]say.Member{}, unread: map[string]int{},
 		input: in, vp: vp, atBottom: true,
 	}
 }
@@ -91,6 +100,20 @@ type (
 	pageMsg   struct {
 		room   string
 		events []say.Event
+		older  bool // the page before what was read, not the latest
+	}
+	membersMsg struct {
+		room    string
+		members []say.Member
+	}
+	roomMsg say.Room // a room's settings changed
+	openMsg struct { // the room list, and the room to open in it
+		rooms []say.Room
+		open  string
+	}
+	earlierErrMsg struct {
+		room string
+		err  error
 	}
 	pushMsg  say.Push
 	closeMsg struct{}
@@ -126,7 +149,35 @@ func (m *Model) loadPeople() tea.Cmd {
 func (m *Model) loadPage(room string) tea.Cmd {
 	return m.call(func(ctx context.Context) (tea.Msg, error) {
 		evs, err := m.c.Events(ctx, room, say.EventsQuery{Limit: pageSize})
-		return pageMsg{room, evs}, err
+		return pageMsg{room, evs, false}, err
+	})
+}
+
+// loadEarlier reads the page before the oldest event read, once at a time.
+func (m *Model) loadEarlier(room string) tea.Cmd {
+	before := m.first[room]
+	if before <= 1 || m.earlier[room] {
+		return nil
+	}
+	m.earlier[room] = true
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		evs, err := m.c.Events(ctx, room, say.EventsQuery{Before: before, Limit: pageSize})
+		if err != nil {
+			return earlierErrMsg{room, err}
+		}
+		return pageMsg{room, evs, true}
+	}
+}
+
+func (m *Model) loadMembers(room string) tea.Cmd {
+	if room == "" {
+		return nil
+	}
+	return m.call(func(ctx context.Context) (tea.Msg, error) {
+		ms, err := m.c.Members(ctx, room)
+		return membersMsg{room, ms}, err
 	})
 }
 
@@ -164,17 +215,36 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.render()
 	case roomsMsg:
-		m.rooms = msg
-		for _, r := range m.rooms {
-			if !m.loaded[r.ID] {
-				m.loaded[r.ID] = true
-				cmds = append(cmds, m.loadPage(r.ID))
-			}
-		}
+		cmds = append(cmds, m.setRooms(msg))
 		if m.open == "" && len(m.rooms) > 0 {
-			m.openRoom(0)
+			cmds = append(cmds, m.openRoom(0))
 		}
+	case openMsg:
+		cmds = append(cmds, m.setRooms(msg.rooms))
+		if i := slices.IndexFunc(m.rooms, func(r say.Room) bool { return r.ID == msg.open }); i >= 0 {
+			cmds = append(cmds, m.openRoom(i))
+		}
+	case roomMsg:
+		if i := slices.IndexFunc(m.rooms, func(r say.Room) bool { return r.ID == msg.ID }); i >= 0 {
+			m.rooms[i] = say.Room(msg)
+		}
+		m.render()
+	case membersMsg:
+		m.members[msg.room] = msg.members
+		m.render()
 	case pageMsg:
+		if msg.older {
+			m.earlier[msg.room] = false
+			m.logs[msg.room] = prepend(m.logs[msg.room], msg.events)
+			m.first[msg.room] = firstSeq(msg.events)
+			if msg.room == m.open && !m.info {
+				// The lines added above keep what was on screen in place.
+				lines, off := m.vp.TotalLineCount(), m.vp.YOffset
+				m.render()
+				m.vp.SetYOffset(off + m.vp.TotalLineCount() - lines)
+			}
+			break
+		}
 		log := m.logs[msg.room]
 		for _, e := range msg.events {
 			if e.Type == "message" {
@@ -186,10 +256,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if n := len(msg.events); n > 0 {
 			last = msg.events[n-1].Seq
 		}
+		m.first[msg.room] = firstSeq(msg.events)
 		m.rt.Subscribe(msg.room, last)
 		if msg.room == m.open {
 			m.render()
 		}
+	case earlierErrMsg:
+		m.earlier[msg.room] = false
+		m.status = msg.err.Error()
 	case pushMsg:
 		cmds = append(cmds, m.waitPush(), m.push(say.Push(msg)))
 	case closeMsg:
@@ -218,7 +292,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) push(p say.Push) tea.Cmd {
 	switch p.Type {
 	case "rooms":
-		return tea.Batch(m.loadRooms(), m.loadPeople())
+		// Members may have changed too.
+		return tea.Batch(m.loadRooms(), m.loadPeople(), m.loadMembers(m.open))
 	case "event", "stream":
 		e := *p.Event
 		m.logs[e.RoomID] = apply(m.logs[e.RoomID], e)
@@ -233,6 +308,44 @@ func (m *Model) push(p say.Push) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// setRooms keeps the room list, starts reading the rooms not read yet and
+// reads the members of direct messages, which are named after them.
+func (m *Model) setRooms(rooms []say.Room) tea.Cmd {
+	m.rooms = rooms
+	var cmds []tea.Cmd
+	for _, r := range m.rooms {
+		if !m.loaded[r.ID] {
+			m.loaded[r.ID] = true
+			cmds = append(cmds, m.loadPage(r.ID))
+		}
+		if r.Kind == "dm" && r.ID != m.open {
+			cmds = append(cmds, m.loadMembers(r.ID))
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
+// firstSeq is the seq of a page's first event, or 0 if the page is the
+// start of the log: a short page is.
+func firstSeq(page []say.Event) int64 {
+	if len(page) < pageSize {
+		return 0
+	}
+	return page[0].Seq
+}
+
+// prepend puts an earlier page's messages before log. Their parts already
+// have the page's edits applied.
+func prepend(log, page []say.Event) []say.Event {
+	var older []say.Event
+	for _, e := range page {
+		if e.Type == "message" && !slices.ContainsFunc(log, func(x say.Event) bool { return x.ID == e.ID }) {
+			older = append(older, e)
+		}
+	}
+	return append(older, log...)
 }
 
 // apply adds e to a room's messages: a message by id, an edit to the
@@ -278,11 +391,9 @@ func (m *Model) key(k tea.KeyMsg) (cmd tea.Cmd, done bool) {
 		}
 		return nil, true
 	case "ctrl+n", "ctrl+down":
-		m.openRoom(m.index() + 1)
-		return nil, true
+		return m.openRoom(m.index() + 1), true
 	case "ctrl+p", "ctrl+up":
-		m.openRoom(m.index() - 1)
-		return nil, true
+		return m.openRoom(m.index() - 1), true
 	}
 	if m.focusList {
 		switch k.String() {
@@ -291,40 +402,130 @@ func (m *Model) key(k tea.KeyMsg) (cmd tea.Cmd, done bool) {
 		case "down", "j":
 			m.sel = min(m.sel+1, len(m.rooms)-1)
 		case "enter":
-			m.openRoom(m.sel)
+			cmd = m.openRoom(m.sel)
 			m.focusList = false
 			m.input.Focus()
+			return cmd, true
 		case "q", "esc":
 			return tea.Quit, true
 		}
 		return nil, true
 	}
-	if k.String() == "enter" {
+	switch k.String() {
+	case "enter":
 		text := strings.TrimSpace(m.input.Value())
 		m.input.SetValue("")
+		if m.editing != "" {
+			return m.saveEdit(text), true
+		}
 		if text == "" {
 			return nil, true
 		}
 		return m.submit(text), true
+	case "esc":
+		switch {
+		case m.editing != "":
+			m.stopEditing()
+			m.input.SetValue("")
+		case m.info:
+			m.info = false
+			m.atBottom = true
+			m.render()
+		}
+		return nil, true
+	case "up":
+		if m.input.Value() == "" && m.editing == "" && !m.info {
+			m.startEdit()
+			return nil, true
+		}
+	case "pgup":
+		// Scrolling up past the oldest message read reads the page before it.
+		if !m.info && m.vp.AtTop() {
+			return m.loadEarlier(m.open), false
+		}
 	}
 	return nil, false
+}
+
+// startEdit puts the user's last message in the open room into the input.
+func (m *Model) startEdit() {
+	log := m.logs[m.open]
+	for i := len(log) - 1; i >= 0; i-- {
+		e := log[i]
+		if e.SenderID != m.me.ID || e.Stream == "streaming" {
+			continue
+		}
+		if slices.ContainsFunc(e.Parts, func(p say.Part) bool { return p.Kind != "text" }) {
+			m.status = "only text messages can be edited here"
+			return
+		}
+		m.editing = e.ID
+		m.input.SetValue(e.Text())
+		m.input.CursorEnd()
+		m.status = ""
+		return
+	}
+	m.status = "nothing of yours to edit here"
+}
+
+func (m *Model) stopEditing() {
+	m.editing = ""
+	m.status = ""
+}
+
+// saveEdit changes the message being edited to text. The edit arrives on
+// the socket like any other.
+func (m *Model) saveEdit(text string) tea.Cmd {
+	id, room := m.editing, m.open
+	m.stopEditing()
+	if text == "" {
+		m.status = "an edit needs text: esc cancels"
+		m.editing = id
+		return nil
+	}
+	if e := m.find(room, id); e != nil && e.Text() == text {
+		return nil
+	}
+	return m.call(func(ctx context.Context) (tea.Msg, error) {
+		_, err := m.c.Edit(ctx, room, id, []say.Part{say.TextPart(text)})
+		return nil, err
+	})
+}
+
+func (m *Model) find(room, id string) *say.Event {
+	log := m.logs[room]
+	if i := slices.IndexFunc(log, func(e say.Event) bool { return e.ID == id }); i >= 0 {
+		return &log[i]
+	}
+	return nil
 }
 
 func (m *Model) index() int {
 	return slices.IndexFunc(m.rooms, func(r say.Room) bool { return r.ID == m.open })
 }
 
-func (m *Model) openRoom(i int) {
+func (m *Model) openRoom(i int) tea.Cmd {
 	if len(m.rooms) == 0 {
-		return
+		return nil
 	}
 	i = (i + len(m.rooms)) % len(m.rooms)
+	if m.editing != "" {
+		m.stopEditing()
+		m.input.SetValue("")
+	}
 	m.sel = i
 	m.open = m.rooms[i].ID
 	delete(m.unread, m.open)
 	m.atBottom = true
 	m.render()
+	return m.loadMembers(m.open)
 }
+
+// commands is what the help and the unknown command message list.
+const (
+	commands    = "/new, /dm, /invite, /members, /agents, /responder, /quit"
+	placeholder = "Message, or /new NAME, /dm NAME, /invite NAME, /members, /quit"
+)
 
 // submit sends a message or runs a command.
 func (m *Model) submit(text string) tea.Cmd {
@@ -347,6 +548,12 @@ func (m *Model) submit(text string) tea.Cmd {
 			rs, err := m.c.Rooms(ctx)
 			return roomsMsg(rs), err
 		})
+	case cmd == "/dm":
+		if arg == "" {
+			m.status = "usage: /dm NAME"
+			return nil
+		}
+		return m.dm(arg)
 	case cmd == "/invite":
 		room := m.open
 		if room == "" || arg == "" {
@@ -359,25 +566,38 @@ func (m *Model) submit(text string) tea.Cmd {
 			if err != nil {
 				return nil, err
 			}
-			var who []say.Principal
-			for _, p := range ps {
-				if strings.EqualFold(p.DisplayName, arg) {
-					who = append(who, p)
-				}
-			}
-			switch {
-			case len(who) == 0:
-				return nil, fmt.Errorf("nobody is called %q", arg)
-			case len(who) > 1:
-				return nil, fmt.Errorf("%d people are called %q", len(who), arg)
-			}
-			if err := m.c.AddMember(ctx, room, who[0].ID); err != nil {
+			who, err := named(ps, arg)
+			if err != nil {
 				return nil, err
 			}
-			return peopleMsg(ps), nil
+			if err := m.c.AddMember(ctx, room, who.ID); err != nil {
+				return nil, err
+			}
+			ms, err := m.c.Members(ctx, room)
+			return tea.BatchMsg{
+				func() tea.Msg { return peopleMsg(ps) },
+				func() tea.Msg { return membersMsg{room, ms} },
+			}, err
 		})
+	case cmd == "/members":
+		if m.open == "" {
+			m.status = "no room yet: /new NAME makes one"
+			return nil
+		}
+		m.info = !m.info
+		m.atBottom = !m.info
+		m.render()
+		if m.info {
+			m.vp.GotoTop()
+			return m.loadMembers(m.open)
+		}
+		return nil
+	case cmd == "/agents":
+		return m.agents(arg)
+	case cmd == "/responder":
+		return m.responder(arg)
 	case strings.HasPrefix(cmd, "/") && !strings.HasPrefix(cmd, "//"):
-		m.status = "unknown command " + cmd + " (/new, /invite, /quit; // starts a message with /)"
+		m.status = "unknown command " + cmd + " (" + commands + "; // starts a message with /)"
 		return nil
 	}
 	if m.open == "" {
@@ -393,6 +613,139 @@ func (m *Model) submit(text string) tea.Cmd {
 	})
 }
 
+// named is the one principal in ps called name.
+func named(ps []say.Principal, name string) (say.Principal, error) {
+	var who []say.Principal
+	for _, p := range ps {
+		if strings.EqualFold(p.DisplayName, name) {
+			who = append(who, p)
+		}
+	}
+	switch {
+	case len(who) == 0:
+		return say.Principal{}, fmt.Errorf("nobody is called %q", name)
+	case len(who) > 1:
+		return say.Principal{}, fmt.Errorf("%d people are called %q", len(who), name)
+	}
+	return who[0], nil
+}
+
+// dm opens the direct messages with the person called name, starting
+// them if there are none yet.
+func (m *Model) dm(name string) tea.Cmd {
+	me := m.me.ID
+	return m.call(func(ctx context.Context) (tea.Msg, error) {
+		ps, err := m.c.Principals(ctx)
+		if err != nil {
+			return nil, err
+		}
+		who, err := named(ps, name)
+		if err != nil {
+			return nil, err
+		}
+		if who.ID == me {
+			return nil, fmt.Errorf("that is you")
+		}
+		rs, err := m.c.Rooms(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rs {
+			if r.Kind != "dm" {
+				continue
+			}
+			ms, err := m.c.Members(ctx, r.ID)
+			if err != nil {
+				return nil, err
+			}
+			if len(ms) == 2 && slices.ContainsFunc(ms, func(x say.Member) bool { return x.PrincipalID == who.ID }) {
+				return openMsg{rs, r.ID}, nil
+			}
+		}
+		r, err := m.c.CreateRoom(ctx, "dm", "")
+		if err != nil {
+			return nil, err
+		}
+		if err := m.c.AddMember(ctx, r.ID, who.ID); err != nil {
+			return nil, err
+		}
+		rs, err = m.c.Rooms(ctx)
+		return openMsg{rs, r.ID}, err
+	})
+}
+
+// agents changes the open room's agent settings: /agents pause, resume,
+// or a limit and its value.
+func (m *Model) agents(arg string) tea.Cmd {
+	room := m.open
+	usage := "usage: /agents pause, resume, hops N, turns N, window MINUTES or rate N (0 is the default)"
+	if room == "" {
+		m.status = "no room yet: /new NAME makes one"
+		return nil
+	}
+	var p say.AgentPatch
+	f := strings.Fields(arg)
+	switch {
+	case len(f) == 1 && (f[0] == "pause" || f[0] == "resume"):
+		paused := f[0] == "pause"
+		p.Paused = &paused
+	case len(f) == 2:
+		n, err := strconv.Atoi(f[1])
+		if err != nil || n < 0 {
+			m.status = usage
+			return nil
+		}
+		switch f[0] {
+		case "hops":
+			p.MaxHopCount = &n
+		case "turns":
+			p.TurnLimit = &n
+		case "window":
+			n *= 60
+			p.TurnWindowSeconds = &n
+		case "rate":
+			p.RateLimit = &n
+		default:
+			m.status = usage
+			return nil
+		}
+	default:
+		m.status = usage
+		return nil
+	}
+	return m.call(func(ctx context.Context) (tea.Msg, error) {
+		r, err := m.c.UpdateAgents(ctx, room, p)
+		return roomMsg(r), err
+	})
+}
+
+// responder makes an agent in the open room answer every message, or only
+// @mentions: /responder NAME on|off.
+func (m *Model) responder(arg string) tea.Cmd {
+	room := m.open
+	i := strings.LastIndex(arg, " ")
+	if room == "" || i < 0 || (arg[i+1:] != "on" && arg[i+1:] != "off") {
+		m.status = "usage: /responder NAME on|off, in a room"
+		return nil
+	}
+	name, on := strings.TrimSpace(arg[:i]), arg[i+1:] == "on"
+	return m.call(func(ctx context.Context) (tea.Msg, error) {
+		ms, err := m.c.Members(ctx, room)
+		if err != nil {
+			return nil, err
+		}
+		i := slices.IndexFunc(ms, func(x say.Member) bool { return x.Kind == "agent" && strings.EqualFold(x.DisplayName, name) })
+		if i < 0 {
+			return nil, fmt.Errorf("no agent called %q is in the room", name)
+		}
+		if _, err := m.c.SetResponder(ctx, room, ms[i].PrincipalID, on); err != nil {
+			return nil, err
+		}
+		ms, err = m.c.Members(ctx, room)
+		return membersMsg{room, ms}, err
+	})
+}
+
 func (m *Model) layout() {
 	w := max(m.width-listWidth-1, 10)
 	m.vp.Width = w
@@ -401,12 +754,23 @@ func (m *Model) layout() {
 	m.render()
 }
 
-// render fills the viewport with the open room's messages.
+// render fills the viewport with the open room's messages, or its
+// members and agent settings.
 func (m *Model) render() {
 	if m.vp.Width == 0 {
 		return
 	}
+	if m.info {
+		m.vp.SetContent(m.roomInfo())
+		return
+	}
 	var b strings.Builder
+	switch {
+	case m.earlier[m.open]:
+		b.WriteString(dim.Render("Reading earlier messages…") + "\n\n")
+	case m.first[m.open] > 1:
+		b.WriteString(dim.Render("pgup for earlier messages") + "\n\n")
+	}
 	var prev say.Event
 	for i, e := range m.logs[m.open] {
 		if i == 0 || e.SenderID != prev.SenderID || e.CreatedAt.Sub(prev.CreatedAt) > 5*time.Minute {
@@ -416,15 +780,101 @@ func (m *Model) render() {
 			b.WriteString(m.name(e.SenderID) + " " + dim.Render(e.CreatedAt.Local().Format("15:04")) + "\n")
 		}
 		prev = e
-		b.WriteString(lipgloss.NewStyle().Width(m.vp.Width).Render(body(e)) + "\n")
+		text := body(e)
+		if e.ID == m.editing {
+			text = selected.Render(text)
+		}
+		b.WriteString(lipgloss.NewStyle().Width(m.vp.Width).Render(text) + "\n")
 	}
-	if len(m.logs[m.open]) == 0 && m.open != "" {
+	if len(m.logs[m.open]) == 0 && m.open != "" && m.first[m.open] <= 1 {
 		b.WriteString(dim.Render("No messages yet. Say something."))
 	}
 	m.vp.SetContent(strings.TrimRight(b.String(), "\n"))
 	if m.atBottom {
 		m.vp.GotoBottom()
 	}
+}
+
+// roomInfo is the open room's members and agent settings, with the
+// commands that change them for those who may.
+func (m *Model) roomInfo() string {
+	i := m.index()
+	if i < 0 {
+		return ""
+	}
+	r := m.rooms[i]
+	ms := m.members[r.ID]
+	mine := slices.IndexFunc(ms, func(x say.Member) bool { return x.PrincipalID == m.me.ID })
+	manage := m.me.Kind == "human" && (m.me.Admin || mine >= 0 && (ms[mine].Role == "owner" || ms[mine].Role == "admin"))
+	var b strings.Builder
+	b.WriteString(bold.Render("Members") + "\n")
+	if ms == nil {
+		b.WriteString(dim.Render(" …") + "\n")
+	}
+	for _, x := range ms {
+		line := " " + m.name(x.PrincipalID)
+		if _, known := m.people[x.PrincipalID]; !known && x.PrincipalID != m.me.ID {
+			line = " " + human.Render(x.DisplayName) // guests are not in the directory
+		}
+		if x.Role != "member" {
+			line += dim.Render(" " + x.Role)
+		}
+		if slices.Contains(x.Scopes, "responder") {
+			line += dim.Render(" · answers everything")
+		}
+		b.WriteString(line + "\n")
+	}
+	a := r.Agents
+	paused := "no"
+	if a.Paused {
+		paused = "yes"
+	}
+	b.WriteString("\n" + bold.Render("Agents") + "\n")
+	rows := [][2]string{
+		{"Paused", paused},
+		{"Replies in a row", strconv.Itoa(a.MaxHopCount)},
+		{"Messages from all agents", fmt.Sprintf("%d per %d min", a.TurnLimit, a.TurnWindowSeconds/60)},
+		{"Messages per agent per minute", strconv.Itoa(a.RateLimit)},
+	}
+	for _, row := range rows {
+		b.WriteString(fmt.Sprintf(" %-30s %s\n", row[0], row[1]))
+	}
+	b.WriteString("\n")
+	if manage {
+		b.WriteString(dim.Render(strings.Join([]string{
+			"/agents pause or /agents resume",
+			"/agents hops N · turns N · window MINUTES · rate N (0 is the default)",
+			"/responder NAME on|off: an agent answers every message, not only @mentions",
+		}, "\n")) + "\n")
+	}
+	if r.Kind != "dm" {
+		b.WriteString(dim.Render("/invite NAME adds someone") + "\n")
+	}
+	b.WriteString(dim.Render("esc or /members goes back to the messages"))
+	return lipgloss.NewStyle().Width(m.vp.Width).Render(b.String())
+}
+
+// roomName is what the list and the header call r. Direct messages
+// without a name are called after the others in them.
+func (m *Model) roomName(r say.Room) string {
+	switch {
+	case r.Name != "" && r.Kind == "channel":
+		return "# " + r.Name
+	case r.Name != "":
+		return r.Name
+	case r.Kind == "dm":
+		var names []string
+		for _, x := range m.members[r.ID] {
+			if x.PrincipalID != m.me.ID {
+				names = append(names, x.DisplayName)
+			}
+		}
+		if len(names) > 0 {
+			return "@ " + strings.Join(names, ", ")
+		}
+		return "@ …"
+	}
+	return "Untitled room"
 }
 
 func (m *Model) name(id string) string {
@@ -480,13 +930,7 @@ func (m *Model) View() string {
 	}
 	list.WriteString("\n")
 	for i, r := range m.rooms {
-		name := r.Name
-		if name == "" {
-			name = "Untitled room"
-		}
-		if r.Kind == "channel" {
-			name = "# " + name
-		}
+		name := m.roomName(r)
 		if n := m.unread[r.ID]; n > 0 {
 			name += fmt.Sprintf(" (%d)", n)
 		}
@@ -506,9 +950,16 @@ func (m *Model) View() string {
 
 	title := "…"
 	if i := m.index(); i >= 0 {
-		title = m.rooms[i].Name
+		title = m.roomName(m.rooms[i])
+		if m.info {
+			title += " · members and agents"
+		}
 	}
-	status := dim.Render(truncate("tab rooms · ctrl+n/p next/prev · pgup/pgdn scroll · ctrl+c quit", m.vp.Width))
+	hint := "tab rooms · ctrl+n/p next/prev · pgup/pgdn scroll · ↑ edit · ctrl+c quit"
+	if m.editing != "" {
+		hint = "editing your message · enter saves · esc cancels"
+	}
+	status := dim.Render(truncate(hint, m.vp.Width))
 	if m.status != "" {
 		status = errStyle.Render(truncate(m.status, m.vp.Width))
 	}

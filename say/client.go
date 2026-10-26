@@ -43,10 +43,31 @@ type Principal struct {
 }
 
 type Room struct {
-	ID        string    `json:"id"`
-	Kind      string    `json:"kind"`
-	Name      string    `json:"name"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string      `json:"id"`
+	Kind      string      `json:"kind"`
+	Name      string      `json:"name"`
+	Agents    AgentPolicy `json:"agents"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
+// AgentPolicy is how far agents may go in a room, the server's defaults
+// included.
+type AgentPolicy struct {
+	Paused            bool `json:"paused"`
+	MaxHopCount       int  `json:"max_hop_count"`
+	TurnLimit         int  `json:"turn_limit"`
+	TurnWindowSeconds int  `json:"turn_window_seconds"`
+	RateLimit         int  `json:"rate_limit_per_minute"`
+}
+
+// AgentPatch changes a room's agent settings. Nil fields stay as they
+// are; a zero limit goes back to the server default.
+type AgentPatch struct {
+	Paused            *bool `json:"paused,omitempty"`
+	MaxHopCount       *int  `json:"max_hop_count,omitempty"`
+	TurnLimit         *int  `json:"turn_limit,omitempty"`
+	TurnWindowSeconds *int  `json:"turn_window_seconds,omitempty"`
+	RateLimit         *int  `json:"rate_limit_per_minute,omitempty"`
 }
 
 type Member struct {
@@ -191,6 +212,20 @@ func (c *Client) AddMember(ctx context.Context, roomID, principalID string) erro
 	return c.do(ctx, "POST", "/rooms/"+url.PathEscape(roomID)+"/members", map[string]string{"principal_id": principalID}, nil)
 }
 
+// UpdateAgents changes the room's agent settings and returns the room.
+func (c *Client) UpdateAgents(ctx context.Context, roomID string, p AgentPatch) (Room, error) {
+	var r Room
+	return r, c.do(ctx, "PATCH", "/rooms/"+url.PathEscape(roomID), map[string]any{"agents": p}, &r)
+}
+
+// SetResponder makes an agent in the room answer every message, not only
+// @mentions, or stops it.
+func (c *Client) SetResponder(ctx context.Context, roomID, principalID string, on bool) (Member, error) {
+	var m Member
+	return m, c.do(ctx, "PATCH", "/rooms/"+url.PathEscape(roomID)+"/members/"+url.PathEscape(principalID),
+		map[string]bool{"responder": on}, &m)
+}
+
 // EventsQuery picks a page of a room's log: forward from After, or else
 // the page that ends before Before, or the latest page.
 type EventsQuery struct {
@@ -224,4 +259,12 @@ func (c *Client) Send(ctx context.Context, roomID string, parts []Part, idempote
 	var e Event
 	return e, c.do(ctx, "POST", "/rooms/"+url.PathEscape(roomID)+"/messages",
 		map[string]any{"parts": parts}, &e, "Idempotency-Key", idempotencyKey)
+}
+
+// Edit replaces the parts of one of the client's messages and returns the
+// message as it now is.
+func (c *Client) Edit(ctx context.Context, roomID, eventID string, parts []Part) (Event, error) {
+	var e Event
+	return e, c.do(ctx, "PATCH", "/rooms/"+url.PathEscape(roomID)+"/messages/"+url.PathEscape(eventID),
+		map[string]any{"parts": parts}, &e)
 }

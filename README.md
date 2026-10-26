@@ -234,9 +234,13 @@ Other languages:
 **Terminal:** `say tui` chats in the terminal. It keeps its own node in
 `~/.local/share/say` and signs you in as your login user; `--listen
 127.0.0.1:7290` lets the web app and bots in too, and `--server URL --token
-say_…` uses a remote server instead. `/new NAME` makes a room, `/invite
-NAME` adds someone, Tab moves to the room list and Ctrl+N/Ctrl+P switch
-rooms.
+say_…` uses a remote server instead. `/new NAME` makes a room, `/dm NAME`
+opens direct messages with someone, `/invite NAME` adds someone, Tab moves
+to the room list and Ctrl+N/Ctrl+P switch rooms. PgUp at the top of a room
+reads earlier messages, and ↑ in an empty input edits your last message.
+`/members` shows the room's members and agent settings; owners change them
+with `/agents pause`, `/agents resume`, `/agents hops|turns|window|rate N`
+and `/responder NAME on|off`.
 
 ### Widgets
 
