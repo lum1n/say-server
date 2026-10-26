@@ -166,6 +166,15 @@
 : A node inside another program, reached over an in-memory connection
   rather than a port.
 
+**Home**
+: The say that holds a person's chat for all their devices, usually a
+  server. A device syncs with it through a `say` bridge as the person, and
+  home's rooms become portals there.
+
+**Device token**
+: A token home issues to one paired device, named `device:<name>`. It
+  does not expire; revoking it unpairs the device.
+
 **Local user**
 : The person at the device of an app that embeds a node. `LocalUser`
   creates them without the setup wizard and gives each client of theirs

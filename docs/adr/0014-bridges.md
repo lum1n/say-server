@@ -44,7 +44,9 @@ event (ADR 0003) was never read by anything and only grew.
 - **Offline is shown, not refused.** A message sent while a bridge is
   down is accepted, the room shows the bridge as offline, and it is
   delivered when the bridge is back if it is under ten minutes old;
-  older ones become `expired`. This replaces ADR 0003's rule of refusing
+  older ones become `expired`. A network whose sends are idempotent, such as
+  sync with a home say, retries and never expires
+  ([ADR 0015](./0015-sync.md)). This replaces ADR 0003's rule of refusing
   sends with 409, which would have blocked native chat in a room while one
   of its networks was down. Delivery states show on the message.
 - **Exactly once in.** An incoming message's row is written first, with

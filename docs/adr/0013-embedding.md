@@ -61,8 +61,8 @@ wizard, and from whatever language it is written in.
   hide the problem. `say.Realtime` writes outside its lock for this
   reason.
 - An embedded node is its own instance. Syncing it with a remote say
-  (offline first, or one person's devices) is not designed yet; a
-  connector that bridges two instances is the likely shape.
+  (offline first, or one person's devices) is a bridge to the person's
+  home say: [ADR 0015](./0015-sync.md).
 - Built-in agents run in the app too. On a phone, background limits stop
   them when the app sleeps.
 - The iOS build has not been checked: it needs a Mac. The Android `.aar`

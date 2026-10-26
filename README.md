@@ -370,6 +370,7 @@ placeholder page instead of the app.
 - [ADR 0012: The chat widget](./docs/adr/0012-widget.md)
 - [ADR 0013: Embedding say in apps](./docs/adr/0013-embedding.md)
 - [ADR 0014: Bridges — your own accounts first](./docs/adr/0014-bridges.md)
+- [ADR 0015: Sync with a home say](./docs/adr/0015-sync.md) (proposed)
 
 ## Privacy
 
