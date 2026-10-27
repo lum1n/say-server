@@ -107,7 +107,7 @@ event (ADR 0003) was never read by anything and only grew.
 | IRC | The user's own nick, SASL | Channels from settings; private messages become DMs |
 | Email | The user's mailbox over IMAP and SMTP | One room per correspondent set; threading headers |
 | Telegram | MTProto (gotd/td) with the instance's own `api_id`/`api_hash` | Login code and 2FA through prompts; flood-wait respected |
-| Signal | signal-cli as a linked device, out of process (GPL) | QR prompt; no history to backfill; its data stays on one node |
+| Signal | signal-cli as a linked device, out of process (GPL) | QR prompt; no history to backfill; its data moves with the lease |
 
 Discord has no sanctioned way to act as a user, so it is a relay bot
 only, as are the Telegram Bot API and webhooks.
@@ -135,8 +135,16 @@ id.
   on them, and only their owner's messages leave say.
 - A send cut off by a crash shows "may not have reached" and is never
   repeated; the person decides.
-- The Signal bridge keeps signal-cli's data on the node's disk, so in a
-  cluster it must stay on the node that has it.
+- signal-cli keeps the Signal account's keys on the node's disk. So that
+  another node taking the lease does not link a new device, the bridge
+  copies signal-cli's `data/` into its state (gzipped, at most 16 MB)
+  each time signal-cli stops, including right after linking, and a node
+  whose directory does not have the latest copy restores it first. A node
+  holds the lease until its connection has stopped, so a handover gets
+  the copy taken on the way out. A node that dies leaves the copy from
+  signal-cli's last stop; Signal repairs sessions that moved on since, as
+  after a restored backup. A data directory set in the bridge's settings
+  may hold other accounts and is not copied: it stays on its node.
 - gotd/td adds about 25 MB to the binary.
 - Bridged messages are never end-to-end encrypted, and the server holds
   every account's credentials and sessions. The Accounts page says so.

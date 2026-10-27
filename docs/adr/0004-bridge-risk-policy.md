@@ -20,7 +20,7 @@ First-party bridges use only official or sanctioned routes:
 | Slack | A Slack app per workspace | Non-Marketplace apps get rate-limited history: realtime works, backfill is limited |
 | Telegram bot | Bot API | None |
 | Telegram user | MTProto via gotd/td with the instance's own `api_id`/`api_hash` | Respect flood-wait; never bulk messaging; runs under a lease |
-| Signal | Linked secondary device via signal-cli as a managed subprocess (JSON-RPC) | No official API; low but non-zero risk; personal use only. GPL/AGPL, so out of process. The Docker image ships signal-cli's native build (amd64), pinned and kept current, since Signal's servers turn old versions away |
+| Signal | Linked secondary device via signal-cli as a managed subprocess (JSON-RPC) | No official API; low but non-zero risk; personal use only. GPL/AGPL, so out of process. The Docker image ships signal-cli, pinned and kept current, since Signal's servers turn old versions away: the native build on amd64, the JVM build with a JRE on arm64 |
 | WhatsApp | Business Cloud API only | Needs a business account; per-conversation pricing |
 
 **Excluded from first party:** personal WhatsApp bridging (whatsmeow) and any

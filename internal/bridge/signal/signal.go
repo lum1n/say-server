@@ -8,7 +8,10 @@
 // personal use only.
 //
 // signal-cli keeps the account's keys in its data directory on the node
-// that runs it, so a Signal bridge works only on that node.
+// that runs it. say's own directory is copied into the bridge's state
+// whenever signal-cli stops, so another node can take the bridge over as
+// the same device (data.go); a directory set in the config stays on its
+// node.
 //
 // Signal has no history API, so nothing older than the link is
 // backfilled.
@@ -47,7 +50,7 @@ func init() {
 			{Key: "signal_cli", Label: "signal-cli program", Kind: "text", Placeholder: "signal-cli",
 				Help: "Path to signal-cli on the server."},
 			{Key: "data_dir", Label: "Data directory", Kind: "text",
-				Help: "Where signal-cli keeps this account's keys. They stay on one server; empty is a directory of say's own."},
+				Help: "Where signal-cli keeps this account's keys. Empty is a directory of say's own, whose keys move with the bridge between servers; a directory set here stays on one server."},
 			{Key: "device_name", Label: "Device name", Kind: "text", Placeholder: "say",
 				Help: "How say shows in Signal's linked devices."},
 		},
@@ -67,6 +70,10 @@ type config struct {
 type state struct {
 	Account string `json:"account"`        // the phone number
 	UUID    string `json:"uuid,omitempty"` // the account's ACI
+	// Data is a copy of signal-cli's data, as a gzipped tar, and DataID
+	// names it (data.go).
+	Data   []byte `json:"data,omitempty"`
+	DataID string `json:"data_id,omitempty"`
 }
 
 const (
@@ -145,6 +152,10 @@ func logOut(ctx context.Context, b bridge.Info) error {
 	if err != nil {
 		return err
 	}
+	// The bridge may have last run on another node.
+	if err := c.restore(dir); err != nil {
+		return err
+	}
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -183,8 +194,13 @@ func (c *conn) cli(ctx context.Context, dir string, args ...string) error {
 	return nil
 }
 
+// errLinked ends a session that has just linked the account, so that its
+// keys are kept before it goes on.
+var errLinked = errors.New("linked")
+
 // Run starts signal-cli, links the account if it is not yet, and passes
-// on what arrives until ctx ends or signal-cli exits.
+// on what arrives until ctx ends or signal-cli exits. Whenever signal-cli
+// stops, its data is kept for the next node.
 func (c *conn) Run(ctx context.Context) error {
 	dir, err := c.dataDir()
 	if err != nil {
@@ -193,6 +209,20 @@ func (c *conn) Run(ctx context.Context) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("signal data directory: %w", err)
 	}
+	if err := c.restore(dir); err != nil {
+		return err
+	}
+	for {
+		err := c.runCLI(ctx, dir)
+		c.keepOrWarn(ctx, dir)
+		if !errors.Is(err, errLinked) || ctx.Err() != nil {
+			return err
+		}
+	}
+}
+
+// runCLI runs signal-cli once, until it exits.
+func (c *conn) runCLI(ctx context.Context, dir string) error {
 	pctx, stop := context.WithCancel(ctx)
 	defer stop()
 	cmd := exec.CommandContext(pctx, c.cfg.Path, "--config", dir, "-o", "json", "jsonRpc")
@@ -246,19 +276,22 @@ func (c *conn) Run(ctx context.Context) error {
 
 // session logs in on a running signal-cli and receives.
 func (c *conn) session(ctx context.Context, r *rpc) error {
-	account, err := c.account(ctx, r)
+	account, linked, err := c.account(ctx, r)
 	if err != nil {
 		return err
 	}
 	c.mu.Lock()
 	if c.st.Account != account {
-		c.st = state{Account: account}
+		c.st = state{Account: account, Data: c.st.Data, DataID: c.st.DataID}
 	}
 	c.mu.Unlock()
 	c.contacts, c.groups, c.uuids = map[string]string{}, map[string]string{}, map[string]string{}
 	c.refresh(ctx, r)
 	if err := c.save(ctx); err != nil {
 		return err
+	}
+	if linked {
+		return errLinked
 	}
 
 	c.mu.Lock()
@@ -296,22 +329,22 @@ func (c *conn) session(ctx context.Context, r *rpc) error {
 }
 
 // account returns the linked account's number, linking say as a new
-// device first if signal-cli has none.
-func (c *conn) account(ctx context.Context, r *rpc) (string, error) {
+// device first if signal-cli has none; linked says it did.
+func (c *conn) account(ctx context.Context, r *rpc) (number string, linked bool, err error) {
 	accounts, err := listAccounts(ctx, r)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	c.mu.Lock()
 	saved := c.st.Account
 	c.mu.Unlock()
 	for _, a := range accounts {
 		if a == saved {
-			return a, nil
+			return a, false, nil
 		}
 	}
 	if len(accounts) > 0 {
-		return accounts[0], nil
+		return accounts[0], false, nil
 	}
 
 	cctx, cancel := context.WithTimeout(ctx, callTimeout)
@@ -321,37 +354,37 @@ func (c *conn) account(ctx context.Context, r *rpc) (string, error) {
 	err = r.call(cctx, "startLink", map[string]any{}, &link)
 	cancel()
 	if err != nil {
-		return "", fmt.Errorf("start linking: %w", err)
+		return "", false, fmt.Errorf("start linking: %w", err)
 	}
 	// The QR code shows while signal-cli waits for the phone; it clears
 	// when the wait is over, linked or not.
 	askCtx, stopAsk := context.WithCancel(ctx)
 	defer stopAsk()
 	go c.h.Ask(askCtx, bridge.Prompt{Kind: "qr", Text: "Scan with Signal on your phone: Settings → Linked devices", Data: link.URI})
-	var linked struct {
+	var done struct {
 		Number string `json:"number"`
 	}
-	err = r.call(ctx, "finishLink", map[string]any{"deviceLinkUri": link.URI, "deviceName": c.cfg.DeviceName}, &linked)
+	err = r.call(ctx, "finishLink", map[string]any{"deviceLinkUri": link.URI, "deviceName": c.cfg.DeviceName}, &done)
 	stopAsk()
 	var re *rpcError
 	if errors.As(err, &re) && strings.Contains(re.Message, "MissingCapabilities") {
 		// Signal's servers turn away devices that lack features they now
 		// require; only a newer signal-cli has them.
-		return "", fmt.Errorf("link: signal-cli is too old for Signal's servers; update it and link again: %w", err)
+		return "", false, fmt.Errorf("link: signal-cli is too old for Signal's servers; update it and link again: %w", err)
 	}
 	if err != nil {
-		return "", fmt.Errorf("link: %w", err)
+		return "", false, fmt.Errorf("link: %w", err)
 	}
-	if linked.Number != "" {
-		return linked.Number, nil
+	if done.Number != "" {
+		return done.Number, true, nil
 	}
 	if accounts, err = listAccounts(ctx, r); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if len(accounts) == 0 {
-		return "", errors.New("signal-cli linked no account")
+		return "", false, errors.New("signal-cli linked no account")
 	}
-	return accounts[0], nil
+	return accounts[0], true, nil
 }
 
 func listAccounts(ctx context.Context, r *rpc) ([]string, error) {

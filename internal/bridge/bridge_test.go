@@ -49,6 +49,9 @@ type fakeNet struct {
 	conns map[string]*fakeConn
 	// ask makes new connections ask for a code before they connect.
 	ask bool
+	// saveOnStop makes new connections save their state, slowly, as they
+	// stop.
+	saveOnStop bool
 	// logouts counts the logouts of each bridge; logoutErr fails them.
 	logouts   map[string]int
 	logoutErr error
@@ -76,7 +79,7 @@ func (n *fakeNet) loggedOut(id string) int {
 func (n *fakeNet) open(b bridge.Info, h bridge.Host) *fakeConn {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	c := &fakeConn{info: b, h: h, in: make(chan bridge.Incoming, 16), ask: n.ask}
+	c := &fakeConn{info: b, h: h, in: make(chan bridge.Incoming, 16), ask: n.ask, saveOnStop: n.saveOnStop}
 	n.conns[b.ID] = c
 	return c
 }
@@ -98,6 +101,8 @@ type fakeConn struct {
 	h    bridge.Host
 	in   chan bridge.Incoming
 	ask  bool
+
+	saveOnStop bool
 
 	mu      sync.Mutex
 	running bool
@@ -132,6 +137,10 @@ func (c *fakeConn) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			if c.saveOnStop {
+				time.Sleep(200 * time.Millisecond)
+				c.h.SaveState(context.WithoutCancel(ctx), json.RawMessage(`{"stopped":true}`))
+			}
 			return ctx.Err()
 		case m := <-c.in:
 			if err := c.h.Receive(ctx, m); err != nil {
@@ -638,6 +647,35 @@ func TestTakeoverAfterCrashSendsOnce(t *testing.T) {
 	}
 	if strings.Join(texts, ",") != "one,two,three" {
 		t.Fatalf("sends = %v", texts)
+	}
+}
+
+// The lease is held until the connection has stopped, so the next node
+// gets what it saved on the way out.
+func TestHandoverWaitsForStop(t *testing.T) {
+	e := newEnv(t)
+	fakes.mu.Lock()
+	fakes.saveOnStop = true
+	fakes.mu.Unlock()
+	defer func() {
+		fakes.mu.Lock()
+		fakes.saveOnStop = false
+		fakes.mu.Unlock()
+	}()
+	b := e.addBridge(store.ModeAccount)
+	stop1 := e.runner("n1")
+	c1 := fakes.conn(t, b.ID)
+	e.runner("n2")
+	stop1()
+	var c2 *fakeConn
+	eventually(t, "n2 takes over", func() bool {
+		fakes.mu.Lock()
+		defer fakes.mu.Unlock()
+		c2 = fakes.conns[b.ID]
+		return c2 != c1 && c2.isRunning()
+	})
+	if string(c2.info.State) != `{"stopped":true}` {
+		t.Fatalf("n2 started with state %s", c2.info.State)
 	}
 }
 

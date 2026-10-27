@@ -360,7 +360,15 @@ func (i *instance) run(ctx context.Context) {
 		i.warn(ctx, "mark unfinished sends", err)
 	}
 	i.mark(func(i *instance) { i.refresh = true })
-	go i.connect(ctx)
+	// The run, and so the lease, ends only once the connection has
+	// stopped, so what it saves on the way out (Signal's keys) is there
+	// for the next node.
+	connected := make(chan struct{})
+	defer func() { <-connected }()
+	go func() {
+		defer close(connected)
+		i.connect(ctx)
+	}()
 	tick := time.NewTicker(resync)
 	defer tick.Stop()
 	for {

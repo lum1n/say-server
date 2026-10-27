@@ -299,7 +299,7 @@ you send from your phone or other apps show up as yours.
 | IRC | Server, nick, channels; SASL or server password if needed |
 | Email | IMAP and SMTP servers, address and password |
 | Telegram | `api_id` and `api_hash` from my.telegram.org, and your phone number; the code Telegram sends is asked on the page |
-| Signal | A current `signal-cli` (the amd64 Docker image has one; otherwise install it on the server, as Signal turns old versions away); scan the QR code on the page with Signal on your phone (Settings → Linked devices) |
+| Signal | A current `signal-cli` (the Docker image has one, for amd64 and arm64; otherwise install it on the server, as Signal turns old versions away); scan the QR code on the page with Signal on your phone (Settings → Linked devices). In a cluster its keys move with the bridge, so every node needs `signal-cli` |
 
 Chats active in the last 30 days are brought in with their latest
 messages. A room shows its network in the header, and whether it is
