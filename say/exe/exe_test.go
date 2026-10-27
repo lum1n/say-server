@@ -3,8 +3,8 @@ package exe_test
 import (
 	"context"
 	"encoding/base64"
-	"encoding/pem"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"net/http"
 	"os"
