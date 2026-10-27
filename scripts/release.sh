@@ -1,7 +1,8 @@
 #!/bin/sh
 # release.sh [-n] VERSION does from this machine what release.yml does on
-# a tag (ADR 0017), for when Actions isn't available. It needs:
-# - the tag vVERSION at HEAD, pushed to origin, and a clean tree;
+# a tag (ADR 0017), for when Actions isn't available. It tags HEAD
+# vVERSION and pushes the tag, unless the tag is there already. It needs:
+# - a clean tree; an existing tag vVERSION must be at HEAD;
 # - docker logged in to ghcr.io with write:packages;
 # - gh logged in, and jq and minisign;
 # - the minisign secret key in $MINISIGN_KEY_FILE (~/.minisign/minisign.key).
@@ -13,16 +14,28 @@ if [ "${1:-}" = -n ]; then dry=1; shift; fi
 version=${1:?usage: release.sh [-n] VERSION, such as 0.4.1}
 version=${version#v}
 tag=v$version
+echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "release: $version is not a version such as 0.4.1" >&2; exit 1; }
 image=ghcr.io/lum1n/say-node
 key=${MINISIGN_KEY_FILE:-$HOME/.minisign/minisign.key}
 cd "$(dirname "$0")/.."
 
 fail() { echo "release: $*" >&2; [ -n "$dry" ] || exit 1; }
 [ -z "$(git status --porcelain --untracked-files=no)" ] || fail "the tree has uncommitted changes"
-[ "$(git rev-parse -q --verify "$tag^{commit}" || true)" = "$(git rev-parse HEAD)" ] \
-  || fail "$tag is not at HEAD (git tag $tag)"
-git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null || fail "$tag is not on origin (git push origin $tag)"
 [ -r "$key" ] || { echo "release: no minisign key at $key" >&2; exit 1; }
+at=$(git rev-parse -q --verify "$tag^{commit}" || true)
+if [ -z "$at" ]; then
+  if [ -n "$dry" ]; then
+    echo "release: would tag HEAD $tag and push it"
+  else
+    git tag -a "$tag" -m "say $tag"
+    echo "release: tagged HEAD $tag"
+  fi
+elif [ "$at" != "$(git rev-parse HEAD)" ]; then
+  fail "$tag is at $(git rev-parse --short "$at"), not HEAD"
+fi
+if [ -z "$dry" ] && ! git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+  git push origin "refs/tags/$tag"
+fi
 
 echo "release: image"
 docker build --target node --platform linux/amd64 --build-arg VERSION="$version" \

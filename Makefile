@@ -65,8 +65,9 @@ node-image:
 node-test: node-image
 	image/node/test.sh say-node:$(VERSION)
 
-# release publishes vVERSION from this machine, as release.yml does on a
-# tag: make release VERSION=0.4.1 (DRY=1 to build without pushing).
+# release tags HEAD vVERSION, pushes the tag and publishes the release from
+# this machine, as release.yml does on a tag: make release VERSION=0.4.1
+# (DRY=1 to build without pushing anything).
 release:
 	scripts/release.sh $(if $(DRY),-n) $(VERSION)
 
