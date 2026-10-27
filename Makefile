@@ -39,10 +39,13 @@ test:
 	SAY_BIN=$(CURDIR)/bin/say python3 -m unittest discover -s sdk/py -t sdk/py
 
 # Embedding say in other programs (docs/adr/0013-embedding.md).
+# Network bridges stay on home (docs/adr/0015-sync.md), so embedded builds
+# leave out Telegram accounts, about 10 MB; EMBED_TAGS= keeps them.
+EMBED_TAGS ?= notelegram
 SOEXT := $(if $(filter Darwin,$(shell uname -s)),.dylib,.so)
 libsay:
 	mkdir -p build
-	go build -trimpath -ldflags "-s -w" -buildmode=c-shared -o build/libsay$(SOEXT) ./cmd/libsay
+	go build -trimpath -tags "$(EMBED_TAGS)" -ldflags "-s -w" -buildmode=c-shared -o build/libsay$(SOEXT) ./cmd/libsay
 
 # gomobile needs gobind on PATH; both come from the versions in go.mod.
 # android needs the Android SDK and NDK (ANDROID_HOME, ANDROID_NDK_HOME);
@@ -50,9 +53,9 @@ libsay:
 ANDROID_TARGETS ?= android/arm64,android/amd64
 MOBILE := GOBIN=$(CURDIR)/build/bin go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind && PATH=$(CURDIR)/build/bin:$$PATH build/bin/gomobile bind
 android:
-	$(MOBILE) -target=$(ANDROID_TARGETS) -androidapi 24 -javapkg dev.say -ldflags "-s -w" -o build/say.aar ./mobile
+	$(MOBILE) -target=$(ANDROID_TARGETS) -androidapi 24 -javapkg dev.say -tags "$(EMBED_TAGS)" -ldflags "-s -w" -o build/say.aar ./mobile
 ios:
-	$(MOBILE) -target=ios,iossimulator -ldflags "-s -w" -o build/Say.xcframework ./mobile
+	$(MOBILE) -target=ios,iossimulator -tags "$(EMBED_TAGS)" -ldflags "-s -w" -o build/Say.xcframework ./mobile
 
 image:
 	docker build --build-arg VERSION=$(VERSION) -t say:$(VERSION) -t say:latest .

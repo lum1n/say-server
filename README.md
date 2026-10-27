@@ -231,6 +231,11 @@ Other languages:
   `.dylib`) and `libsay.h`. See `examples/c/notes.c` and
   `examples/python/notes.py` (ctypes).
 
+These builds leave out Telegram accounts, which add about 10 MB: an
+account belongs on your home say ([ADR 0015](./docs/adr/0015-sync.md)).
+`make android EMBED_TAGS=` keeps them; a Go program leaves them out with
+`go build -tags notelegram`.
+
 **Terminal:** `say tui` chats in the terminal. It keeps its own node in
 `~/.local/share/say` and signs you in as your login user; `--listen
 127.0.0.1:7290` lets the web app and bots in too, and `--server URL --token
