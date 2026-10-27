@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/lum1n/say-v2/internal/bridge"
+	"github.com/lum1n/say-server/internal/bridge"
 )
 
 // update is one entry of getUpdates, of the kinds asked for.

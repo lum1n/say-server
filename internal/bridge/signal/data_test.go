@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/bridge"
+	"github.com/lum1n/say-server/internal/bridge"
 )
 
 func (h *host) raw() json.RawMessage {

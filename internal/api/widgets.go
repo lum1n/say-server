@@ -17,8 +17,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/store"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 // Widgets put a chat on other sites (docs/adr/0012-widget.md). An admin

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/store/db"
+	"github.com/lum1n/say-server/internal/store/db"
 )
 
 // ConnectorSession is a bot's open /ws session (docs/adr/0011-bot-api.md).

@@ -39,7 +39,7 @@ fi
 
 echo "release: image"
 docker build --target node --platform linux/amd64 --build-arg VERSION="$version" \
-  --label org.opencontainers.image.source=https://github.com/lum1n/say-v2 \
+  --label org.opencontainers.image.source=https://github.com/lum1n/say-server \
   -t "$image:$version" .
 if [ -n "$dry" ]; then
   digest=$(docker image inspect --format '{{.Id}}' "$image:$version")

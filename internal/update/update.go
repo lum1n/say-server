@@ -37,7 +37,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/lum1n/say-v2/say/release"
+	"github.com/lum1n/say-server/say/release"
 )
 
 // The files in say's update directory (Config.UpdateDir in internal/api):

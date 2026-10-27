@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/api"
-	"github.com/lum1n/say-v2/internal/bridge"
-	say "github.com/lum1n/say-v2/internal/bridge/say"
-	"github.com/lum1n/say-v2/internal/bus"
-	"github.com/lum1n/say-v2/internal/client"
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/password"
-	"github.com/lum1n/say-v2/internal/store"
+	"github.com/lum1n/say-server/internal/api"
+	"github.com/lum1n/say-server/internal/bridge"
+	say "github.com/lum1n/say-server/internal/bridge/say"
+	"github.com/lum1n/say-server/internal/bus"
+	"github.com/lum1n/say-server/internal/client"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/password"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 // node is a say instance: home, or a device.

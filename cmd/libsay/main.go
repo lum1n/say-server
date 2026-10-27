@@ -26,7 +26,7 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/lum1n/say-v2/say"
+	"github.com/lum1n/say-server/say"
 )
 
 func main() {}

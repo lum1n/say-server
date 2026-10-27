@@ -18,7 +18,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/emersion/go-message/mail"
 
-	"github.com/lum1n/say-v2/internal/bridge"
+	"github.com/lum1n/say-server/internal/bridge"
 )
 
 // Send mails the chat's people as the owner, answering the last message

@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/store/db"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/store/db"
 )
 
 // BuiltinAgent is how the server runs an agent principal itself, by

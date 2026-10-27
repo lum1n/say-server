@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/bus"
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/store"
+	"github.com/lum1n/say-server/internal/bus"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 // Chat is how bridges write to rooms: the same send path as every client.

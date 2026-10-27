@@ -17,8 +17,8 @@ import (
 	"github.com/ergochat/irc-go/ircevent"
 	"github.com/ergochat/irc-go/ircmsg"
 
-	"github.com/lum1n/say-v2/internal/bridge"
-	"github.com/lum1n/say-v2/internal/store"
+	"github.com/lum1n/say-server/internal/bridge"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 func init() {

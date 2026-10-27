@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/store"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 // deliver sends a link's room log past its cursor to the network. After

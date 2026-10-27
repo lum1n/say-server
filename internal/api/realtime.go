@@ -13,8 +13,8 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/lum1n/say-v2/internal/bus"
-	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-server/internal/bus"
+	"github.com/lum1n/say-server/internal/core"
 )
 
 // Realtime delivery reads the store, not the bus. The bus only says "room R

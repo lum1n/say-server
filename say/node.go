@@ -28,14 +28,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/agents"
-	"github.com/lum1n/say-v2/internal/api"
-	"github.com/lum1n/say-v2/internal/bridge"
-	_ "github.com/lum1n/say-v2/internal/bridge/networks" // registers every network
-	"github.com/lum1n/say-v2/internal/bus"
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/password"
-	"github.com/lum1n/say-v2/internal/store"
+	"github.com/lum1n/say-server/internal/agents"
+	"github.com/lum1n/say-server/internal/api"
+	"github.com/lum1n/say-server/internal/bridge"
+	_ "github.com/lum1n/say-server/internal/bridge/networks" // registers every network
+	"github.com/lum1n/say-server/internal/bus"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/password"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 // Config is how to run a node. The zero value runs a single node on

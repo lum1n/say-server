@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lum1n/say-v2/say/release"
-	"github.com/lum1n/say-v2/say/release/releasetest"
+	"github.com/lum1n/say-server/say/release"
+	"github.com/lum1n/say-server/say/release/releasetest"
 )
 
 // fakeSay is say.service: Start runs whatever say binary is installed,

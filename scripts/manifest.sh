@@ -6,7 +6,7 @@
 set -eu
 version=$1 digest=$2 dir=$3
 root=$(cd "$(dirname "$0")/.." && pwd)
-repo=${GITHUB_REPOSITORY:-lum1n/say-v2}
+repo=${GITHUB_REPOSITORY:-lum1n/say-server}
 base="https://github.com/$repo/releases/download/v$version"
 # signal-cli comes from its own releases, pinned in the Dockerfile.
 sig_version=$(sed -n 's/^ARG SIGNAL_CLI_VERSION=//p' "$root/Dockerfile")

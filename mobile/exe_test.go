@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	embedded "github.com/lum1n/say-v2/say"
-	"github.com/lum1n/say-v2/say/deploy"
-	"github.com/lum1n/say-v2/say/exe"
-	"github.com/lum1n/say-v2/say/exe/exetest"
+	embedded "github.com/lum1n/say-server/say"
+	"github.com/lum1n/say-server/say/deploy"
+	"github.com/lum1n/say-server/say/exe"
+	"github.com/lum1n/say-server/say/exe/exetest"
 )
 
 type screen struct {

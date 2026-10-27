@@ -7,8 +7,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/lum1n/say-v2/internal/update"
-	"github.com/lum1n/say-v2/say/release"
+	"github.com/lum1n/say-server/internal/update"
+	"github.com/lum1n/say-server/say/release"
 )
 
 // updateCmd is `say update`: say-update.service runs it as root on the

@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/lum1n/say-v2/internal/bridge"
+	"github.com/lum1n/say-server/internal/bridge"
 )
 
 func TestOutgoingFormats(t *testing.T) {

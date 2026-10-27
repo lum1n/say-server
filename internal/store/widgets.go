@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/store/db"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/store/db"
 )
 
 // ErrVisitorExists is CreateVisitor's error when the widget already has a

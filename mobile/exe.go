@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lum1n/say-v2/say/deploy"
-	"github.com/lum1n/say-v2/say/exe"
+	"github.com/lum1n/say-server/say/deploy"
+	"github.com/lum1n/say-server/say/exe"
 )
 
 // Deploying the person's own node to exe.dev, from the app

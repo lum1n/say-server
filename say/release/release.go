@@ -20,7 +20,7 @@ import (
 )
 
 // LatestURL is the newest release's manifest.
-const LatestURL = "https://github.com/lum1n/say-v2/releases/latest/download/manifest.json"
+const LatestURL = "https://github.com/lum1n/say-server/releases/latest/download/manifest.json"
 
 //go:embed minisign.pub
 var pinned []byte

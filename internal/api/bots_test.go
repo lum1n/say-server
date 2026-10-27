@@ -8,7 +8,7 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-server/internal/core"
 )
 
 // botConn reads a bot socket, keeping the pushes it skips while waiting

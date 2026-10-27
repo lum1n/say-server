@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lum1n/say-v2/say/release"
-	"github.com/lum1n/say-v2/say/release/releasetest"
+	"github.com/lum1n/say-server/say/release"
+	"github.com/lum1n/say-server/say/release/releasetest"
 )
 
 func read(t *testing.T, name string) []byte {

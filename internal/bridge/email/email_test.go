@@ -18,7 +18,7 @@ import (
 	"github.com/emersion/go-imap/v2/imapserver"
 	"github.com/emersion/go-imap/v2/imapserver/imapmemserver"
 
-	"github.com/lum1n/say-v2/internal/bridge"
+	"github.com/lum1n/say-server/internal/bridge"
 )
 
 func TestMain(m *testing.M) {

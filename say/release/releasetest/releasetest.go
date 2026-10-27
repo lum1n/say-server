@@ -13,7 +13,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lum1n/say-v2/say/release"
+	"github.com/lum1n/say-server/say/release"
 	"golang.org/x/crypto/blake2b"
 )
 

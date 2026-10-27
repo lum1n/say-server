@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/bridge"
+	"github.com/lum1n/say-server/internal/bridge"
 )
 
 // message is a Discord message, in an event or in history.

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lum1n/say-v2/say/release"
+	"github.com/lum1n/say-server/say/release"
 )
 
 // Host makes and removes machines that run the say-node image.

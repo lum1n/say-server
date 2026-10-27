@@ -22,7 +22,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/lum1n/say-v2/say/exe"
+	"github.com/lum1n/say-server/say/exe"
 )
 
 // VM is a VM the stand-in made.
