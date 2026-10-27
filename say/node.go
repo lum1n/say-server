@@ -48,6 +48,10 @@ type Config struct {
 	// SetupCode guards the setup wizard while no admin exists; it is
 	// random when empty. Nodes that call LocalUser never need the wizard.
 	SetupCode string
+	// SetupWindow, when set, closes the wizard that long after Open if
+	// nobody has used it (a node deployed for someone who never claims
+	// it).
+	SetupWindow time.Duration
 
 	// Peers are host:port cluster addresses of other nodes. Setting them
 	// runs the NATS cluster bus, which needs a postgres:// DB.
@@ -125,7 +129,11 @@ func Open(ctx context.Context, c Config) (*Node, error) {
 		bridges: make(chan struct{}),
 		setup:   code,
 	}
-	n.api = api.New(api.Config{Version: c.Version, Store: st, Bus: b, SetupCode: code})
+	var setupUntil time.Time
+	if code != "" && c.SetupWindow > 0 {
+		setupUntil = time.Now().Add(c.SetupWindow)
+	}
+	n.api = api.New(api.Config{Version: c.Version, Store: st, Bus: b, SetupCode: code, SetupUntil: setupUntil})
 	n.handler = n.api.Handler()
 	n.client = &http.Client{Transport: &http.Transport{
 		DialContext:         func(ctx context.Context, _, _ string) (net.Conn, error) { return n.mem.dial(ctx) },

@@ -47,8 +47,9 @@ INFO open the setup wizard to create the admin url="http://localhost:7290/setup?
 Open it to create the admin. The code means that whoever reaches a fresh
 public instance first cannot claim it. Set `--setup-code` (or
 `SAY_SETUP_CODE`) to choose the code yourself, for example to give every
-cluster node the same one. Once an admin exists the wizard is closed and
-people sign in at `/login`. Admins add people and agents on the web app's
+cluster node the same one. `--setup-minutes` (`SAY_SETUP_MINUTES`) closes
+the wizard that long after start if nobody has used it. Once an admin
+exists the wizard is closed and people sign in at `/login`. Admins add people and agents on the web app's
 People page, or with `POST /api/v1/principals`.
 
 Cluster mode is the same binary:
@@ -242,6 +243,25 @@ reads earlier messages, and ↑ in an empty input edits your last message.
 with `/agents pause`, `/agents resume`, `/agents hops|turns|window|rate N`
 and `/responder NAME on|off`.
 
+### Your own node on exe.dev
+
+The apps will set up an always-on say node in the person's own exe.dev
+account in one step, so their messages never sit on a server we run
+([ADR 0017](./docs/adr/0017-own-node.md)). The Go side is done (packages
+`say/exe` and `say/deploy`, bound for the apps in `mobile/`), and `say
+exe` runs the same flow from a terminal:
+
+```sh
+say exe login    # exe.dev's sign-in: type your email, open the link it sends
+say exe deploy   # make a node, wait for it, claim it; prints its address and admin password
+say exe ls
+say exe rm say-k3x9q2
+```
+
+`say exe login --token exe0…` uses a token you made on a computer that
+can already `ssh exe.dev` instead. The say-node image this deploys isn't
+published yet, so a deployed node doesn't start until it is.
+
 ### Widgets
 
 A widget puts a chat on your own site. Admins add one on the **Widgets**
@@ -384,6 +404,7 @@ placeholder page instead of the app.
 - [ADR 0013: Embedding say in apps](./docs/adr/0013-embedding.md)
 - [ADR 0014: Bridges — your own accounts first](./docs/adr/0014-bridges.md)
 - [ADR 0015: Sync with a home say](./docs/adr/0015-sync.md) (proposed)
+- [ADR 0017: Your own node, deployed to exe.dev from the app](./docs/adr/0017-own-node.md)
 
 ## Privacy
 

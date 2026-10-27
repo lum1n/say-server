@@ -22,6 +22,7 @@ var (
 
 	errBadCredentials = errorf(http.StatusUnauthorized, "invalid_credentials", "wrong username or password")
 	errSetupDone      = errorf(http.StatusConflict, "setup_done", "this instance is already set up")
+	errSetupClosed    = errorf(http.StatusForbidden, "setup_closed", "setup closed before anyone claimed this instance; restart it with a new setup code")
 )
 
 // account is the body of POST /setup and the login part of POST
@@ -66,7 +67,13 @@ func (s *Server) setupStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"needed": !done})
+	writeJSON(w, http.StatusOK, map[string]bool{"needed": !done, "open": !done && s.setupOpen()})
+}
+
+// setupOpen reports whether POST /setup can still succeed: there is a
+// code and its window, if any, hasn't closed.
+func (s *Server) setupOpen() bool {
+	return s.setupCode != "" && (s.setupUntil.IsZero() || time.Now().Before(s.setupUntil))
 }
 
 // setup creates the first admin and signs them in. It needs the setup code
@@ -83,6 +90,10 @@ func (s *Server) setup(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.setupCode == "" {
 		writeError(w, errSetupDone)
+		return
+	}
+	if !s.setupOpen() {
+		writeError(w, errSetupClosed)
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(body.Code), []byte(s.setupCode)) != 1 {

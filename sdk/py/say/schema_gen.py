@@ -18,7 +18,8 @@ class Error1(TypedDict):
     not_found, conflict, bad_request, unsupported_media_type,
     invalid, hop_limit, agents_paused, agent_budget,
     rate_limited, too_many, invalid_credentials,
-    bad_setup_code, setup_done, username_taken or internal.
+    bad_setup_code, setup_done, setup_closed, username_taken
+    or internal.
 
     """
     message: str
@@ -46,6 +47,15 @@ class Connector(TypedDict):
 
 class SetupStatus(TypedDict):
     needed: bool
+    """
+    No admin exists yet.
+    """
+    open: bool
+    """
+    POST /setup can succeed now: no admin yet, and the setup
+    window (if any) hasn't closed.
+
+    """
 
 
 Username: TypeAlias = str

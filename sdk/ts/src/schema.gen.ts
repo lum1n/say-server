@@ -34,8 +34,10 @@ export interface paths {
         /**
          * Create the first admin and sign them in
          * @description Works once per instance. `code` is the setup code the server logs
-         *     at startup (or `--setup-code`). On success the response sets the
-         *     `say_token` session cookie.
+         *     at startup (or `--setup-code`). With `--setup-minutes`, setup
+         *     closes that long after startup if nobody used it (403
+         *     setup_closed). On success the response sets the `say_token`
+         *     session cookie.
          */
         post: operations["setup"];
         delete?: never;
@@ -794,7 +796,8 @@ export interface components {
                  *     not_found, conflict, bad_request, unsupported_media_type,
                  *     invalid, hop_limit, agents_paused, agent_budget,
                  *     rate_limited, too_many, invalid_credentials,
-                 *     bad_setup_code, setup_done, username_taken or internal.
+                 *     bad_setup_code, setup_done, setup_closed, username_taken
+                 *     or internal.
                  */
                 code: string;
                 message: string;
@@ -824,7 +827,13 @@ export interface components {
             connected_at: string;
         };
         SetupStatus: {
+            /** @description No admin exists yet. */
             needed: boolean;
+            /**
+             * @description POST /setup can succeed now: no admin yet, and the setup
+             *     window (if any) hasn't closed.
+             */
+            open: boolean;
         };
         /** @description 1–32 of a-z, 0-9, '.', '_' or '-'; case-insensitive. */
         Username: string;

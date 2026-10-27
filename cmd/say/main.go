@@ -4,6 +4,7 @@
 //	say serve [flags]           run the server
 //	say principal add [flags]   create a principal and print an access token
 //	say tui [flags]             chat in the terminal, on a local node or a server
+//	say exe login|deploy|ls|rm  make your own say node on exe.dev
 //	say version                 print the version
 package main
 
@@ -17,6 +18,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -42,6 +44,8 @@ func main() {
 		err = principal(args)
 	case "tui":
 		err = runTUI(args)
+	case "exe":
+		err = exeCmd(args)
 	case "version":
 		fmt.Println(version)
 	default:
@@ -61,6 +65,7 @@ func serve(args []string) error {
 	clusterAddr := fs.String("cluster-addr", envOr("SAY_CLUSTER_ADDR", ":6222"), "listen address for other nodes in cluster mode")
 	clusterSecret := fs.String("cluster-secret", os.Getenv("SAY_CLUSTER_SECRET"), "shared secret every node must present to join the cluster")
 	setupCodeFlag := fs.String("setup-code", os.Getenv("SAY_SETUP_CODE"), "code the setup wizard asks for; random when empty. Give every node the same one in cluster mode")
+	setupMinutes := fs.Int("setup-minutes", envInt("SAY_SETUP_MINUTES", 0), "close the setup wizard this many minutes after startup if nobody used it; 0 keeps it open")
 	fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -76,6 +81,7 @@ func serve(args []string) error {
 		DB:            *dsn,
 		Version:       version,
 		SetupCode:     *setupCodeFlag,
+		SetupWindow:   time.Duration(*setupMinutes) * time.Minute,
 		Peers:         peerList,
 		ClusterAddr:   *clusterAddr,
 		ClusterSecret: *clusterSecret,
@@ -147,6 +153,13 @@ func principal(args []string) error {
 	}
 	fmt.Printf("principal %s\ntoken     %s\n", p.ID, secret)
 	return nil
+}
+
+func envInt(key string, fallback int) int {
+	if n, err := strconv.Atoi(os.Getenv(key)); err == nil {
+		return n
+	}
+	return fallback
 }
 
 func envOr(key, fallback string) string {

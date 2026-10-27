@@ -31,6 +31,10 @@ type Config struct {
 	// SetupCode must accompany POST /api/v1/setup, which creates the first
 	// admin. Empty when the instance is already set up.
 	SetupCode string
+	// SetupUntil, when set, closes setup at that time even without an
+	// admin, so a node nobody claimed can't be claimed later
+	// (docs/adr/0017-own-node.md).
+	SetupUntil time.Time
 	// Agents is the agent policy of rooms that set no limits of their own
 	// (docs/adr/0005-agent-safety.md). Its zero limits take the Default
 	// constants; Paused is ignored.
@@ -38,12 +42,13 @@ type Config struct {
 }
 
 type Server struct {
-	version   string
-	assets    fs.FS
-	store     store.Store
-	bus       bus.Bus
-	defaults  core.AgentPolicy
-	setupCode string
+	version    string
+	assets     fs.FS
+	store      store.Store
+	bus        bus.Bus
+	defaults   core.AgentPolicy
+	setupCode  string
+	setupUntil time.Time
 	// resync is how often a realtime follower rereads the store without a
 	// bus notification; heartbeat is how often idle streams are pinged.
 	resync    time.Duration
@@ -55,14 +60,15 @@ func New(c Config) *Server {
 	c.Agents.Paused = false
 	c.Agents = withDefaults(c.Agents, builtinAgentPolicy)
 	return &Server{
-		version:   c.Version,
-		assets:    assets,
-		store:     c.Store,
-		bus:       c.Bus,
-		defaults:  c.Agents,
-		setupCode: c.SetupCode,
-		resync:    30 * time.Second,
-		heartbeat: 25 * time.Second,
+		version:    c.Version,
+		assets:     assets,
+		store:      c.Store,
+		bus:        c.Bus,
+		defaults:   c.Agents,
+		setupCode:  c.SetupCode,
+		setupUntil: c.SetupUntil,
+		resync:     30 * time.Second,
+		heartbeat:  25 * time.Second,
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/lum1n/say-v2/internal/core"
 )
@@ -53,8 +54,8 @@ func TestSetupWizard(t *testing.T) {
 	e := newEnv(t)
 	e.srv.setupCode = "the-code"
 
-	var status struct{ Needed bool }
-	if code := e.do("GET", "/setup", "", nil, &status); code != 200 || !status.Needed {
+	var status struct{ Needed, Open bool }
+	if code := e.do("GET", "/setup", "", nil, &status); code != 200 || !status.Needed || !status.Open {
 		t.Fatalf("setup status = %d %+v", code, status)
 	}
 	admin := map[string]string{"code": "the-code", "username": " Ada ", "display_name": "Ada L", "password": "correct horse"}
@@ -94,8 +95,27 @@ func TestSetupWizard(t *testing.T) {
 	if res, data := e.raw("POST", "/setup", admin, nil); res.StatusCode != 409 || errCode(data) != "setup_done" {
 		t.Fatalf("second setup = %d %s", res.StatusCode, data)
 	}
-	if code := e.do("GET", "/setup", "", nil, &status); code != 200 || status.Needed {
+	if code := e.do("GET", "/setup", "", nil, &status); code != 200 || status.Needed || status.Open {
 		t.Fatalf("setup status after = %d %+v", code, status)
+	}
+}
+
+func TestSetupWindow(t *testing.T) {
+	// A node nobody claimed in time refuses setup, even with the code.
+	e := newEnv(t)
+	e.srv.setupCode = "the-code"
+	e.srv.setupUntil = time.Now().Add(-time.Second)
+	var status struct{ Needed, Open bool }
+	if code := e.do("GET", "/setup", "", nil, &status); code != 200 || !status.Needed || status.Open {
+		t.Fatalf("setup status = %d %+v", code, status)
+	}
+	body := map[string]string{"code": "the-code", "username": "ada", "password": "correct horse"}
+	if res, data := e.raw("POST", "/setup", body, nil); res.StatusCode != 403 || errCode(data) != "setup_closed" {
+		t.Fatalf("setup after the window = %d %s", res.StatusCode, data)
+	}
+	e.srv.setupUntil = time.Now().Add(time.Minute)
+	if res, data := e.raw("POST", "/setup", body, nil); res.StatusCode != 201 {
+		t.Fatalf("setup in the window = %d %s", res.StatusCode, data)
 	}
 }
 
