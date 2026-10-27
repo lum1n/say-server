@@ -5,6 +5,7 @@
 //	say principal add [flags]   create a principal and print an access token
 //	say tui [flags]             chat in the terminal, on a local node or a server
 //	say exe login|deploy|ls|rm  make your own say node on exe.dev
+//	say update [--check]        update a say node (the say-node image) to the newest release
 //	say version                 print the version
 package main
 
@@ -46,6 +47,8 @@ func main() {
 		err = runTUI(args)
 	case "exe":
 		err = exeCmd(args)
+	case "update":
+		err = updateCmd(args)
 	case "version":
 		fmt.Println(version)
 	default:
@@ -67,6 +70,7 @@ func serve(args []string) error {
 	setupCodeFlag := fs.String("setup-code", os.Getenv("SAY_SETUP_CODE"), "code the setup wizard asks for; random when empty. Give every node the same one in cluster mode")
 	setupMinutes := fs.Int("setup-minutes", envInt("SAY_SETUP_MINUTES", 0), "close the setup wizard this many minutes after startup if nobody used it; 0 keeps it open")
 	trustProxy := fs.Bool("trust-proxy", envBool("SAY_TRUST_PROXY"), "take the host from X-Forwarded-Host; only behind a proxy that every request comes through")
+	updateDir := fs.String("update-dir", os.Getenv("SAY_UPDATE_DIR"), "directory where say update reports, on a node that updates itself (the say-node image)")
 	fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -84,6 +88,7 @@ func serve(args []string) error {
 		SetupCode:     *setupCodeFlag,
 		SetupWindow:   time.Duration(*setupMinutes) * time.Minute,
 		TrustProxy:    *trustProxy,
+		UpdateDir:     *updateDir,
 		Peers:         peerList,
 		ClusterAddr:   *clusterAddr,
 		ClusterSecret: *clusterSecret,

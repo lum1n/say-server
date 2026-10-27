@@ -127,15 +127,38 @@ ADR 0011) and `../sessh-swift`.
   sigstore bundles. `make release VERSION=…` (`scripts/release.sh`)
   does the same from a laptop, for when Actions isn't available; both
   build the manifest with `scripts/manifest.sh`.
+- **Nodes update themselves.** A VM's filesystem comes from the image
+  once, so a new image never reaches a node that exists. `say update`
+  (`internal/update`) runs as root from `say-update.timer`, daily, and:
+  - fetches the newest manifest and checks it against the minisign key
+    pinned in `say/release`; it takes only a release newer than the
+    node, so an old signed manifest can't downgrade it;
+  - downloads say, and signal-cli when the release pins a new version,
+    and checks their SHA-256s, and that the new say runs and reports
+    the release's version, all before touching anything;
+  - stops say, copies `/var/lib/say` to `/var/lib/say-update/backup`
+    (kept until the next update), swaps the binaries, starts say;
+  - puts the old binaries and the data back if say doesn't report the
+    new version on `/api/v1/health` within 2 minutes.
+
+  say itself runs unprivileged. It shows the updater's status file on
+  `GET /api/v1/node` (admins), and `POST /api/v1/node/update` makes a
+  request file, which starts the updater through `say-update.path`.
+  `make node-test` updates a running image to a release it signs
+  itself.
 
 ## Consequences
 
 - Sign-in depends on exe.dev's SSH sign-up screen. A change there could
   need an app update, though the generic terminal makes that less likely.
-- A node's self-update, device tokens and pairing, the push gateway, and
-  encrypted backups are later phases of this design and aren't built
-  yet. Until
-  device tokens exist, `ClaimNode` returns a 30-day session token.
+- Device tokens and pairing, the push gateway, and encrypted backups
+  are later phases of this design and aren't built yet. Until device
+  tokens exist, `ClaimNode` returns a 30-day session token.
+- An update restarts say, so clients reconnect, at a random time each
+  day. The backup doubles the node's disk use for say's data.
+- Losing the minisign key means nodes can't be updated by a new key:
+  they pin it. A new key needs one last release signed with the old one
+  that ships it.
 - Releasing needs a `MINISIGN_KEY` secret (an unencrypted minisign
   secret key), and the `say-node` package on ghcr must be public:
   exe.dev pulls the image itself, before the VM exists.

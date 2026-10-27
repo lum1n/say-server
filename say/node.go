@@ -58,6 +58,10 @@ type Config struct {
 	// address people use. Never set it when clients can reach the node
 	// directly: they could claim any host.
 	TrustProxy bool
+	// UpdateDir, on a node that updates itself (the say-node image), is
+	// where `say update` reports and say asks it to run, for
+	// GET /api/v1/node.
+	UpdateDir string
 
 	// Peers are host:port cluster addresses of other nodes. Setting them
 	// runs the NATS cluster bus, which needs a postgres:// DB.
@@ -139,7 +143,7 @@ func Open(ctx context.Context, c Config) (*Node, error) {
 	if code != "" && c.SetupWindow > 0 {
 		setupUntil = time.Now().Add(c.SetupWindow)
 	}
-	n.api = api.New(api.Config{Version: c.Version, Store: st, Bus: b, SetupCode: code, SetupUntil: setupUntil})
+	n.api = api.New(api.Config{Version: c.Version, Store: st, Bus: b, SetupCode: code, SetupUntil: setupUntil, UpdateDir: c.UpdateDir})
 	n.handler = n.api.Handler()
 	if c.TrustProxy {
 		n.handler = forwardedHost(n.handler)

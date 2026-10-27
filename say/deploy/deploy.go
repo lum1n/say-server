@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lum1n/say-v2/say/release"
 )
 
 // Host makes and removes machines that run the say-node image.
@@ -48,7 +50,7 @@ const (
 	// StableImage is used when the newest release can't be looked up.
 	StableImage = Image + ":stable"
 	// Manifest names the newest release.
-	Manifest = "https://github.com/lum1n/say-v2/releases/latest/download/manifest.json"
+	Manifest = release.LatestURL
 	// SetupMinutes is how long a new node waits to be claimed before it
 	// refuses setup.
 	SetupMinutes = 30

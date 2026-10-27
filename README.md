@@ -282,6 +282,11 @@ it anywhere that boots containers as machines, or under Docker:
 docker run --privileged -p 8080:80 -e SAY_SETUP_CODE=… say-node
 ```
 
+A node updates itself: `say update`, run daily by systemd, installs a
+newer signed release and rolls back if it isn't healthy. Admins see the
+version and can update now with `GET /api/v1/node` and
+`POST /api/v1/node/update`.
+
 ### Widgets
 
 A widget puts a chat on your own site. Admins add one on the **Widgets**

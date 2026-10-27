@@ -39,6 +39,10 @@ type Config struct {
 	// (docs/adr/0005-agent-safety.md). Its zero limits take the Default
 	// constants; Paused is ignored.
 	Agents core.AgentPolicy
+	// UpdateDir, on a node that updates itself, holds the updater's status
+	// file and say's requests to update (internal/update). Empty
+	// elsewhere.
+	UpdateDir string
 }
 
 type Server struct {
@@ -49,6 +53,7 @@ type Server struct {
 	defaults   core.AgentPolicy
 	setupCode  string
 	setupUntil time.Time
+	updateDir  string
 	// resync is how often a realtime follower rereads the store without a
 	// bus notification; heartbeat is how often idle streams are pinged.
 	resync    time.Duration
@@ -67,6 +72,7 @@ func New(c Config) *Server {
 		defaults:   c.Agents,
 		setupCode:  c.SetupCode,
 		setupUntil: c.SetupUntil,
+		updateDir:  c.UpdateDir,
 		resync:     30 * time.Second,
 		heartbeat:  25 * time.Second,
 	}
@@ -76,6 +82,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
 	mux.HandleFunc("GET /api/v1/setup", s.setupStatus)
+	mux.HandleFunc("GET /api/v1/node", s.authed(s.getNode))
+	mux.HandleFunc("POST /api/v1/node/update", s.authed(s.updateNode))
 	mux.HandleFunc("POST /api/v1/setup", s.setup)
 	mux.HandleFunc("POST /api/v1/login", s.login)
 	mux.HandleFunc("POST /api/v1/logout", s.authed(s.logout))

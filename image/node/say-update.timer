@@ -1,0 +1,11 @@
+[Unit]
+Description=Update say daily
+
+[Timer]
+OnBootSec=10min
+OnCalendar=daily
+RandomizedDelaySec=4h
+Persistent=yes
+
+[Install]
+WantedBy=timers.target

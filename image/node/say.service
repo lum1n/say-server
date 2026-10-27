@@ -12,6 +12,8 @@ ExecStart=/usr/local/bin/say serve
 Environment=SAY_ADDR=:80
 Environment=SAY_DB=/var/lib/say/say.db
 Environment=SAY_TRUST_PROXY=true
+# say-update.service reports here (GET /api/v1/node).
+Environment=SAY_UPDATE_DIR=/var/lib/say
 # Bridges keep their files, such as signal-cli's keys, under here.
 Environment=XDG_DATA_HOME=/var/lib/say
 EnvironmentFile=-/run/say.env

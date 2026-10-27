@@ -11,6 +11,39 @@ class Health(TypedDict):
     version: str
 
 
+class NodeUpdate(TypedDict):
+    """
+    The updater's last run.
+    """
+
+    state: NotRequired[Literal['checking', 'updating', 'ok', 'failed', 'rolled_back']]
+    """
+    Absent before the first run. `failed` changed nothing; `rolled_back` means the new version failed and the old one is back.
+    """
+    error: NotRequired[str]
+    latest: NotRequired[str]
+    """
+    The newest release, as of checked_at
+    """
+    available: bool
+    """
+    latest is newer than this node
+    """
+    requested: bool
+    """
+    An update was asked for and hasn't started
+    """
+    checked_at: NotRequired[str]
+    updated_at: NotRequired[str]
+    """
+    When the last update that worked finished
+    """
+    updated_from: NotRequired[str]
+    """
+    The version before that update
+    """
+
+
 class Error1(TypedDict):
     code: str
     """
@@ -689,6 +722,11 @@ class WsError(TypedDict):
     """
     For agent_budget and rate_limited, seconds until a send would pass.
     """
+
+
+class NodeInfo(TypedDict):
+    version: str
+    update: NodeUpdate | None
 
 
 class Principal(TypedDict):

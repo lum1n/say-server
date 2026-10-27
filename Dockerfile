@@ -38,19 +38,21 @@ FROM debian:bookworm-slim AS signal
 ARG TARGETARCH
 ARG SIGNAL_CLI_VERSION=0.14.9
 ARG SIGNAL_CLI_SHA256=a8fab78b5e8053abf3db5725272957ad11d1745b9a16848ddb2ace4743dfa5d5
-RUN mkdir -p /out/bin /out/lib \
+RUN mkdir -p /out/bin /out/lib /out/version \
  && if [ -n "$SIGNAL_CLI_VERSION" ] && [ "${TARGETARCH:-amd64}" = amd64 ]; then \
       apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
       && curl -fsSL -o /tmp/signal-cli.tgz "https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VERSION}/signal-cli-${SIGNAL_CLI_VERSION}-Linux-native.tar.gz" \
       && echo "${SIGNAL_CLI_SHA256}  /tmp/signal-cli.tgz" | sha256sum -c - \
       && tar -xzf /tmp/signal-cli.tgz -C /out/bin signal-cli \
-      && cp -L /usr/lib/x86_64-linux-gnu/libz.so.1 /out/lib/; \
+      && cp -L /usr/lib/x86_64-linux-gnu/libz.so.1 /out/lib/ \
+      && echo "$SIGNAL_CLI_VERSION" >/out/version/signal-cli.version; \
     fi
 
 # The say-node image (docker build --target node), for your own node on a
 # host such as exe.dev (ADR 0017). The host boots it as a VM, so systemd is
 # PID 1 and runs say on port 80 behind the host's HTTPS proxy, with its data
-# in /var/lib/say. Test it locally with
+# in /var/lib/say. say-update.timer keeps say and signal-cli current, since
+# a new image doesn't reach a VM that already exists. Test it locally with
 #   docker run --privileged -p 8080:80 -e SAY_SETUP_CODE=… say-node
 FROM debian:bookworm-slim AS node
 RUN apt-get update \
@@ -72,9 +74,12 @@ COPY --from=go /say /usr/local/bin/say
 COPY --from=signal /out/bin/ /usr/local/bin/
 COPY image/node/init /usr/local/bin/init
 COPY image/node/say-env /usr/local/lib/say/say-env
-COPY image/node/say.service /etc/systemd/system/say.service
+# say-update reads this to tell whether a release brings a new signal-cli.
+COPY --from=signal /out/version/ /usr/local/lib/say/
+COPY image/node/say.service image/node/say-update.service image/node/say-update.timer \
+     image/node/say-update.path /etc/systemd/system/
 COPY image/node/growfs.conf /etc/systemd/system/systemd-growfs@-.service.d/say.conf
-RUN systemctl enable say.service \
+RUN systemctl enable say.service say-update.timer say-update.path \
  # Each VM makes its own machine ID on first boot. Empty, not removed: an
  # absent one counts as a first boot and presets every unit again.
  && : >/etc/machine-id

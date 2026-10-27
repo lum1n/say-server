@@ -46,6 +46,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/node": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * This node's version and self-update status (admins)
+         * @description `update` is null on a node that doesn't update itself. On the
+         *     say-node image, `say update` checks for a release daily and
+         *     installs it, rolling back if the new version isn't healthy.
+         */
+        get: operations["getNode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/node/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check for a release now and install it (admins)
+         * @description Returns at once; say restarts during the update, so poll
+         *     GET /node until `update.state` is no longer `checking` or
+         *     `updating`. 409 `no_updates` on a node that doesn't update itself.
+         */
+        post: operations["updateNode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/login": {
         parameters: {
             query?: never;
@@ -789,6 +833,34 @@ export interface components {
             status: "ok";
             version: string;
         };
+        NodeInfo: {
+            version: string;
+            update: components["schemas"]["NodeUpdate"] | null;
+        };
+        /** @description The updater's last run. */
+        NodeUpdate: {
+            /**
+             * @description Absent before the first run. `failed` changed nothing; `rolled_back` means the new version failed and the old one is back.
+             * @enum {string}
+             */
+            state?: "checking" | "updating" | "ok" | "failed" | "rolled_back";
+            error?: string;
+            /** @description The newest release, as of checked_at */
+            latest?: string;
+            /** @description latest is newer than this node */
+            available: boolean;
+            /** @description An update was asked for and hasn't started */
+            requested: boolean;
+            /** Format: date-time */
+            checked_at?: string;
+            /**
+             * Format: date-time
+             * @description When the last update that worked finished
+             */
+            updated_at?: string;
+            /** @description The version before that update */
+            updated_from?: string;
+        };
         Error: {
             error: {
                 /**
@@ -1506,6 +1578,51 @@ export interface operations {
             403: components["responses"]["Error"];
             409: components["responses"]["Error"];
             422: components["responses"]["Error"];
+        };
+    };
+    getNode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The node */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodeInfo"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    updateNode: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The update is requested */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NodeInfo"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     login: {
