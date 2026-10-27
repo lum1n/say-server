@@ -1,0 +1,13 @@
+#!/bin/sh
+# PID 1 of a say node: systemd, after the two things it needs in a
+# container. exe.dev boots the image as a VM, where both are no-ops.
+set -e
+if [ "$$" != 1 ]; then
+	echo "init: must run as PID 1" >&2
+	exit 1
+fi
+mkdir -p /run/systemd
+if [ ! -f /sys/fs/cgroup/cgroup.controllers ]; then
+	mount -t cgroup2 none /sys/fs/cgroup
+fi
+exec /sbin/init --show-status=true

@@ -91,14 +91,52 @@ ADR 0011) and `../sessh-swift`.
   The SSHSIG is also checked with OpenSSH's `ssh-keygen -Y
   check-novalidate`.
 
+- **The say-node image** is the Dockerfile's `node` target, because
+  exe.dev boots an image as a VM and doesn't document how it treats a
+  CMD that isn't an init:
+  - Debian with systemd as PID 1, as in exe.dev's own exeuntu. A small
+    `init` mounts cgroup2 where a container lacks it, then runs systemd.
+  - `say.service` runs `say serve` as user `say`, on port 80 (`EXPOSE 80`,
+    which exe.dev's proxy prefers), with its data and the bridges' files
+    in `/var/lib/say`.
+  - systemd gives services none of the host's settings. exe.dev writes
+    `new --env` to `/etc/profile.d/exe-env.sh` and Docker puts `-e` in PID
+    1's environment, so before say starts, `say-env` copies the `SAY_*`
+    variables from both into `/run/say.env` (root only), which the unit
+    reads.
+  - The root filesystem grows to the VM's disk on first boot, and every
+    VM makes its own machine ID.
+  - It is about 170 MB compressed; signal-cli's native build is most of
+    it.
+  - `make node-test` boots it under Docker and claims it, in CI too.
+- **say trusts the proxy's host.** `say serve --trust-proxy`
+  (`SAY_TRUST_PROXY`, on in the image) takes the host from
+  `X-Forwarded-Host`, so the WebSocket's Origin check sees the address
+  people use. A browser on another site can't set that header, so a
+  node reached directly is no worse off. say already took
+  `X-Forwarded-Proto` for secure cookies.
+- **Releases.** A `v*` tag builds and pushes
+  `ghcr.io/lum1n/say-node:<version>` (amd64, like signal-cli's native
+  build and exe.dev) with a keyless cosign signature. It builds `say`
+  for Linux, then publishes `manifest.json` last, so the manifest never
+  names a missing image, and moves `:stable` to the same digest. The
+  manifest gives the version, image and digest, each binary's URL and
+  SHA-256, and signal-cli's pinned version and checksum, for
+  `say-update`. It is signed with minisign (`manifest.json.minisig`).
+  An Ed25519 key that say pins is simple to check from Go, unlike
+  sigstore bundles.
+
 ## Consequences
 
 - Sign-in depends on exe.dev's SSH sign-up screen. A change there could
   need an app update, though the generic terminal makes that less likely.
-- The node image (systemd as PID 1, say on port 80, signal-cli), its
-  self-update, device tokens and pairing, the push gateway, and encrypted
-  backups are later phases of this design and aren't built yet. Until
+- A node's self-update, device tokens and pairing, the push gateway, and
+  encrypted backups are later phases of this design and aren't built
+  yet. Until
   device tokens exist, `ClaimNode` returns a 30-day session token.
+- Releasing needs a `MINISIGN_KEY` secret (an unencrypted minisign
+  secret key), and the `say-node` package on ghcr must be public:
+  exe.dev pulls the image itself, before the VM exists.
 - Other hosts (Hetzner, Fly, a home box with Docker) need only a
   `deploy.Host` and a way to sign in. The image and the claim flow stay
   the same.

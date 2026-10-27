@@ -9,7 +9,7 @@ PYGEN := uvx --from datamodel-code-generator==0.86.0 datamodel-codegen \
 	--use-standard-collections --use-union-operator --no-use-closed-typed-dict
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build web go generate generate-py test image cluster-test clean libsay android ios
+.PHONY: build web go generate generate-py test image node-image node-test cluster-test clean libsay android ios
 
 build: web go
 
@@ -56,6 +56,14 @@ ios:
 
 image:
 	docker build --build-arg VERSION=$(VERSION) -t say:$(VERSION) -t say:latest .
+
+# The say-node image for your own node (ADR 0017): systemd, say on port 80.
+node-image:
+	docker build --target node --build-arg VERSION=$(VERSION) -t say-node:$(VERSION) -t say-node:latest .
+
+# node-test boots the say-node image under Docker and claims it.
+node-test: node-image
+	image/node/test.sh say-node:$(VERSION)
 
 # cluster-test runs three nodes and Postgres in docker compose and tests
 # delivery and replay across them. The cluster is removed afterwards.

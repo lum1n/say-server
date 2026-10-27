@@ -52,6 +52,10 @@ the wizard that long after start if nobody has used it. Once an admin
 exists the wizard is closed and people sign in at `/login`. Admins add people and agents on the web app's
 People page, or with `POST /api/v1/principals`.
 
+Behind a reverse proxy that every request comes through, `--trust-proxy`
+(`SAY_TRUST_PROXY=true`) takes the host from `X-Forwarded-Host`, so
+browsers' WebSockets pass say's origin check.
+
 Cluster mode is the same binary:
 
 ```sh
@@ -87,6 +91,8 @@ With Docker:
 
 ```sh
 make image          # builds the say image (distroless, data in /data)
+make node-test      # builds the say-node image (systemd, say on port 80) and
+                    # boots it the way exe.dev does
 make cluster-test   # three nodes and Postgres in docker compose: a client on
                     # one node sees messages posted to another, and replays
                     # what it missed after reconnecting elsewhere
@@ -259,8 +265,17 @@ say exe rm say-k3x9q2
 ```
 
 `say exe login --token exe0…` uses a token you made on a computer that
-can already `ssh exe.dev` instead. The say-node image this deploys isn't
-published yet, so a deployed node doesn't start until it is.
+can already `ssh exe.dev` instead.
+
+A node runs the say-node image (`docker build --target node`): systemd
+as PID 1, say on port 80 with its data in `/var/lib/say`, and signal-cli.
+A `v*` tag publishes it to `ghcr.io/lum1n/say-node` with a signed
+`manifest.json` that tells the apps which version to deploy. You can run
+it anywhere that boots containers as machines, or under Docker:
+
+```sh
+docker run --privileged -p 8080:80 -e SAY_SETUP_CODE=… say-node
+```
 
 ### Widgets
 

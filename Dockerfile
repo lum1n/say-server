@@ -47,6 +47,41 @@ RUN mkdir -p /out/bin /out/lib \
       && cp -L /usr/lib/x86_64-linux-gnu/libz.so.1 /out/lib/; \
     fi
 
+# The say-node image (docker build --target node), for your own node on a
+# host such as exe.dev (ADR 0017). The host boots it as a VM, so systemd is
+# PID 1 and runs say on port 80 behind the host's HTTPS proxy, with its data
+# in /var/lib/say. Test it locally with
+#   docker run --privileged -p 8080:80 -e SAY_SETUP_CODE=… say-node
+FROM debian:bookworm-slim AS node
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends systemd systemd-sysv ca-certificates tzdata \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --home-dir /var/lib/say --shell /usr/sbin/nologin say \
+ # A VM has nothing to log in on, no hardware to probe, and its host sets
+ # up the network and mounts.
+ && systemctl mask -- getty.target console-getty.service systemd-firstboot.service \
+      systemd-udevd.service systemd-udev-trigger.service systemd-modules-load.service \
+      systemd-remount-fs.service -.mount systemd-random-seed.service \
+      apt-daily.timer apt-daily-upgrade.timer dpkg-db-backup.timer e2scrub_all.timer \
+ && mkdir -p /etc/systemd/journald.conf.d \
+ && printf '[Journal]\nStorage=persistent\nSystemMaxUse=200M\n' >/etc/systemd/journald.conf.d/say.conf \
+ && systemctl set-default multi-user.target \
+ # Grows the root filesystem to the VM's disk on first boot, as exeuntu does.
+ && echo '/dev/vda / ext4 defaults,x-systemd.growfs 0 1' >/etc/fstab
+COPY --from=go /say /usr/local/bin/say
+COPY --from=signal /out/bin/ /usr/local/bin/
+COPY image/node/init /usr/local/bin/init
+COPY image/node/say-env /usr/local/lib/say/say-env
+COPY image/node/say.service /etc/systemd/system/say.service
+COPY image/node/growfs.conf /etc/systemd/system/systemd-growfs@-.service.d/say.conf
+RUN systemctl enable say.service \
+ # Each VM makes its own machine ID on first boot. Empty, not removed: an
+ # absent one counts as a first boot and presets every unit again.
+ && : >/etc/machine-id
+EXPOSE 80
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/local/bin/init"]
+
 # cc rather than static: signal-cli links against glibc (and zlib, copied in).
 FROM gcr.io/distroless/cc-debian12:nonroot
 COPY --from=go /say /say

@@ -1,0 +1,149 @@
+name: release
+
+# A tag such as v0.4.1 publishes a release (ADR 0017):
+# - the say-node image, ghcr.io/lum1n/say-node:0.4.1 and :stable;
+# - say for Linux, and SHA256SUMS;
+# - manifest.json, which the apps read to pick the image for a new node and
+#   say-update reads to update one, and manifest.json.minisig.
+# The manifest goes up last, so it never names an image that isn't there.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # cosign's keyless signature
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        run: echo "version=${GITHUB_REF_NAME#v}" >>"$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: node
+          # signal-cli's native build, and exe.dev, are amd64.
+          platforms: linux/amd64
+          build-args: VERSION=${{ steps.v.outputs.version }}
+          push: true
+          tags: ghcr.io/lum1n/say-node:${{ steps.v.outputs.version }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+      - uses: sigstore/cosign-installer@v3
+      - run: cosign sign --yes "ghcr.io/lum1n/say-node@${{ steps.push.outputs.digest }}"
+
+  binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make web
+      - name: Build say
+        run: |
+          mkdir dist
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
+              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME#v}" \
+              -o dist/say-linux-$arch ./cmd/say
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: dist/
+
+  release:
+    needs: [image, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: binaries
+          path: dist
+      - name: Manifest
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          cd dist
+          sha256sum say-linux-* >SHA256SUMS
+          # signal-cli comes from its own releases, pinned in the Dockerfile.
+          sig_version=$(sed -n 's/^ARG SIGNAL_CLI_VERSION=//p' ../Dockerfile)
+          sig_sha=$(sed -n 's/^ARG SIGNAL_CLI_SHA256=//p' ../Dockerfile)
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          jq -n \
+            --arg version "$version" \
+            --arg image "ghcr.io/lum1n/say-node:$version" \
+            --arg digest "${{ needs.image.outputs.digest }}" \
+            --arg base "$base" \
+            --arg amd64 "$(sha256sum say-linux-amd64 | cut -d' ' -f1)" \
+            --arg arm64 "$(sha256sum say-linux-arm64 | cut -d' ' -f1)" \
+            --arg sig_version "$sig_version" \
+            --arg sig_sha "$sig_sha" \
+            '{
+              version: $version,
+              image: $image,
+              image_digest: $digest,
+              say: {
+                "linux-amd64": {url: "\($base)/say-linux-amd64", sha256: $amd64},
+                "linux-arm64": {url: "\($base)/say-linux-arm64", sha256: $arm64}
+              },
+              signal_cli: {
+                version: $sig_version,
+                "linux-amd64": {
+                  url: "https://github.com/AsamK/signal-cli/releases/download/v\($sig_version)/signal-cli-\($sig_version)-Linux-native.tar.gz",
+                  sha256: $sig_sha
+                }
+              }
+            }' >manifest.json
+          cat manifest.json
+      - name: Sign the manifest
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends minisign
+          printf '%s\n' "$MINISIGN_KEY" >"$RUNNER_TEMP/minisign.key"
+          minisign -S -s "$RUNNER_TEMP/minisign.key" -m dist/manifest.json \
+            -t "say ${GITHUB_REF_NAME} manifest"
+          rm "$RUNNER_TEMP/minisign.key"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Tag the image stable
+        run: |
+          docker buildx imagetools create \
+            -t ghcr.io/lum1n/say-node:stable \
+            "ghcr.io/lum1n/say-node@${{ needs.image.outputs.digest }}"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+            dist/say-linux-amd64 dist/say-linux-arm64 dist/SHA256SUMS \
+            dist/manifest.json dist/manifest.json.minisig

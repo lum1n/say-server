@@ -66,6 +66,7 @@ func serve(args []string) error {
 	clusterSecret := fs.String("cluster-secret", os.Getenv("SAY_CLUSTER_SECRET"), "shared secret every node must present to join the cluster")
 	setupCodeFlag := fs.String("setup-code", os.Getenv("SAY_SETUP_CODE"), "code the setup wizard asks for; random when empty. Give every node the same one in cluster mode")
 	setupMinutes := fs.Int("setup-minutes", envInt("SAY_SETUP_MINUTES", 0), "close the setup wizard this many minutes after startup if nobody used it; 0 keeps it open")
+	trustProxy := fs.Bool("trust-proxy", envBool("SAY_TRUST_PROXY"), "take the host from X-Forwarded-Host; only behind a proxy that every request comes through")
 	fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -82,6 +83,7 @@ func serve(args []string) error {
 		Version:       version,
 		SetupCode:     *setupCodeFlag,
 		SetupWindow:   time.Duration(*setupMinutes) * time.Minute,
+		TrustProxy:    *trustProxy,
 		Peers:         peerList,
 		ClusterAddr:   *clusterAddr,
 		ClusterSecret: *clusterSecret,
@@ -160,6 +162,11 @@ func envInt(key string, fallback int) int {
 		return n
 	}
 	return fallback
+}
+
+func envBool(key string) bool {
+	b, _ := strconv.ParseBool(os.Getenv(key))
+	return b
 }
 
 func envOr(key, fallback string) string {

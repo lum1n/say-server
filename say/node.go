@@ -52,6 +52,12 @@ type Config struct {
 	// nobody has used it (a node deployed for someone who never claims
 	// it).
 	SetupWindow time.Duration
+	// TrustProxy takes the host from X-Forwarded-Host, for a node behind
+	// a reverse proxy (such as exe.dev's) that every request comes
+	// through. Origin checks, such as the WebSocket's, then see the
+	// address people use. Never set it when clients can reach the node
+	// directly: they could claim any host.
+	TrustProxy bool
 
 	// Peers are host:port cluster addresses of other nodes. Setting them
 	// runs the NATS cluster bus, which needs a postgres:// DB.
@@ -135,6 +141,9 @@ func Open(ctx context.Context, c Config) (*Node, error) {
 	}
 	n.api = api.New(api.Config{Version: c.Version, Store: st, Bus: b, SetupCode: code, SetupUntil: setupUntil})
 	n.handler = n.api.Handler()
+	if c.TrustProxy {
+		n.handler = forwardedHost(n.handler)
+	}
 	n.client = &http.Client{Transport: &http.Transport{
 		DialContext:         func(ctx context.Context, _, _ string) (net.Conn, error) { return n.mem.dial(ctx) },
 		MaxIdleConnsPerHost: 16,
@@ -203,6 +212,18 @@ func (n *Node) serve(l net.Listener) {
 	n.servers = append(n.servers, srv)
 	n.mu.Unlock()
 	go srv.Serve(l)
+}
+
+// forwardedHost serves requests with the host the proxy was asked for.
+func forwardedHost(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+			// A proxy chain may list several; the first is the client's.
+			fh, _, _ = strings.Cut(fh, ",")
+			r.Host = strings.TrimSpace(fh)
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // Handler serves the API, the web app and /mcp, to mount in a program's
