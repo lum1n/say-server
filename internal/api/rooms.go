@@ -333,6 +333,10 @@ func (s *Server) sendAt(ctx context.Context, me core.Principal, roomID string, m
 		return core.Event{}, false, roomErr(err)
 	}
 	s.notify(ctx, roomID)
+	if room.Kind == core.RoomWidgetThread && e.ID == id {
+		// The team does not follow threads they have not opened.
+		s.notifyInbox(ctx, roomID)
+	}
 	return e, e.ID == id, nil
 }
 

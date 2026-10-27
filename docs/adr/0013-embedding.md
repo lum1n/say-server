@@ -55,7 +55,9 @@ wizard, and from whatever language it is written in.
 
 - Sizes: the C library is about 50 MB and the Android `.aar` about 30 MB
   for two ABIs, mostly the SQLite translation and the model SDKs. Raw HTTP
-  for providers (an open todo) would cut both.
+  for providers (an open todo) would cut both. Telegram accounts (gotd/td)
+  would add about 10 MB more, so these builds use the `notelegram` tag:
+  network bridges stay on home (ADR 0015).
 - `net.Pipe` has no buffer. A client that holds a lock while it writes,
   which the read loop needs to take the reply, deadlocks where TCP would
   hide the problem. `say.Realtime` writes outside its lock for this

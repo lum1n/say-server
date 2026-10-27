@@ -1,5 +1,5 @@
 import { type QueryClient, useQuery } from "@tanstack/react-query";
-import { type Delivery, type Event, listPrincipals, listWidgetThreads, type Principal, Realtime } from "@say/sdk";
+import { type Delivery, type Event, listPrincipals, listWidgetThreads, type Principal, Realtime, type WidgetThread } from "@say/sdk";
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 
 // Query keys shared by the chat routes.
@@ -82,6 +82,8 @@ export function RealtimeProvider({ queryClient, children }: { queryClient: Query
       onStream: (m) => queryClient.setQueryData<Event[]>(keys.events(m.room_id), (log) => applyStream(log, m)),
       onDelivery: (p) =>
         queryClient.setQueryData<Deliveries>(keys.deliveries(p.room_id), (map) => mergeDeliveries(map, p.deliveries, [p.event_id])),
+      // A widget thread has a new message.
+      onInboxChanged: () => queryClient.invalidateQueries({ queryKey: keys.widgetThreads }),
       onRoomsChanged: () => {
         queryClient.invalidateQueries({ queryKey: keys.rooms });
         // A widget thread was created or handed over.
@@ -119,8 +121,9 @@ export function useDirectory() {
 }
 
 /**
- * useWidgetThreads reads the inbox. Messages in threads that are not open
- * are not pushed, so it is refetched every 15 s.
+ * useWidgetThreads reads the inbox. The socket says when a thread has a
+ * new message (RealtimeProvider); a thread going idle is not pushed, so
+ * the inbox is reread when the next one does.
  */
 export function useWidgetThreads(enabled = true) {
   return useQuery({
@@ -128,8 +131,18 @@ export function useWidgetThreads(enabled = true) {
     queryFn: () => listWidgetThreads(),
     enabled,
     staleTime: 15_000,
-    refetchInterval: 15_000,
+    refetchInterval: (q) => untilIdle(q.state.data, Date.now()),
   });
+}
+
+/** untilIdle is how long until the next of threads goes idle, if any will. */
+export function untilIdle(threads: WidgetThread[] | undefined, now: number): number | false {
+  let next = Infinity;
+  for (const t of threads ?? []) {
+    if (t.state !== "idle" && t.idle_at) next = Math.min(next, Date.parse(t.idle_at));
+  }
+  // A second late, so the server agrees the thread is idle.
+  return next === Infinity ? false : Math.max(next - now, 0) + 1_000;
 }
 
 /** Online marks an agent whose bot is connected. */

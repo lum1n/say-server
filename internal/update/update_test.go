@@ -337,6 +337,23 @@ func TestRollback(t *testing.T) {
 	}
 }
 
+// A signal-cli without a version file, such as the JVM build, isn't the
+// updater's to replace.
+func TestSignalCLIWithoutVersion(t *testing.T) {
+	e := newEnv(t)
+	os.Remove(e.u.SignalCLIVersion)
+	e.publish("0.4.1", script("0.4.1", "new"), "0.14.9")
+	if err := e.u.Run(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.read(t, "bin/signal-cli"); got != "old signal-cli" {
+		t.Errorf("signal-cli = %q", got)
+	}
+	if got := e.read(t, "bin/say"); got != string(script("0.4.1", "new")) {
+		t.Errorf("say = %q", got)
+	}
+}
+
 func TestReadStatusMissing(t *testing.T) {
 	st, err := ReadStatus(filepath.Join(t.TempDir(), "none.json"))
 	if err != nil || st != (Status{}) {

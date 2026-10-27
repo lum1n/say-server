@@ -1,8 +1,11 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"math"
+	"slices"
 	"time"
 
 	"github.com/lum1n/say-v2/internal/core"
@@ -27,6 +30,11 @@ func (i *instance) Receive(ctx context.Context, in Incoming) error {
 	defer i.lock(l.ID)()
 	if in.Edit {
 		return i.receiveEdit(ctx, l, in)
+	}
+	if in.Author.Self && i.net.Idempotent {
+		if err := i.checkPending(ctx, l, in.ID); err != nil {
+			return err
+		}
 	}
 	eventID := core.NewID()
 	ok, err = i.c.Store.StartBridgeMessage(ctx, store.BridgeMessage{
@@ -58,11 +66,44 @@ func (i *instance) Receive(ctx context.Context, in Incoming) error {
 	if at.IsZero() || at.After(time.Now()) {
 		at = time.Now()
 	}
-	_, err = i.c.Chat.SendAs(ctx, as, l.RoomID, eventID, []core.Part{core.TextPart(in.Text)}, "bridge:"+l.ID+":"+in.ID, at)
+	_, err = i.c.Chat.SendAs(ctx, as, l.RoomID, eventID, in.content(), "bridge:"+l.ID+":"+in.ID, at)
 	return err
 }
 
-// receiveEdit changes a bridged message to its new text.
+// checkPending returns ErrPending if the own message remoteID is new to
+// the link while a send to it is unfinished. A send whose answer was lost
+// is not matched to its remote id until it is tried again, and its echo
+// would be taken in as another message. Unfinished sends hold the link's
+// cursor, so they are the ones after it.
+func (i *instance) checkPending(ctx context.Context, l store.BridgeLink, remoteID string) error {
+	_, err := i.c.Store.BridgeMessageByRemote(ctx, l.ID, remoteID)
+	if !errors.Is(err, store.ErrNotFound) {
+		return err
+	}
+	cur, err := i.c.Store.GetBridgeLink(ctx, l.ID)
+	if err != nil {
+		return err
+	}
+	out, err := i.c.Store.OutgoingBridgeMessages(ctx, l.RoomID, cur.Cursor+1, math.MaxInt64)
+	if err != nil {
+		return err
+	}
+	for _, m := range out {
+		if m.LinkID == l.ID && unfinished(m) {
+			return ErrPending
+		}
+	}
+	return nil
+}
+
+// samePart reports whether a message already has parts.
+func samePart(a, b []core.Part) bool {
+	return slices.EqualFunc(a, b, func(x, y core.Part) bool {
+		return x.Kind == y.Kind && bytes.Equal(x.Data, y.Data)
+	})
+}
+
+// receiveEdit changes a bridged message to its new content.
 func (i *instance) receiveEdit(ctx context.Context, l store.BridgeLink, in Incoming) error {
 	row, err := i.c.Store.BridgeMessageByRemote(ctx, l.ID, in.ID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -78,14 +119,15 @@ func (i *instance) receiveEdit(ctx context.Context, l store.BridgeLink, in Incom
 	if err != nil {
 		return err
 	}
-	if msg.Prose() == in.Text {
+	parts := in.content()
+	if len(in.Parts) == 0 && msg.Prose() == in.Text || samePart(msg.Parts, parts) {
 		return nil
 	}
 	as, err := i.c.Store.GetPrincipal(ctx, msg.SenderID)
 	if err != nil {
 		return err
 	}
-	edit, err := i.c.Chat.EditAs(ctx, as, l.RoomID, msg.ID, []core.Part{core.TextPart(in.Text)})
+	edit, err := i.c.Chat.EditAs(ctx, as, l.RoomID, msg.ID, parts)
 	if errors.Is(err, store.ErrNotEditable) {
 		return nil
 	}

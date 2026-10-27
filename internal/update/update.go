@@ -98,7 +98,8 @@ type Updater struct {
 
 	Say string // the say binary
 	// SignalCLI is the signal-cli binary, and SignalCLIVersion a file
-	// holding its version. signal-cli is left alone when it isn't there.
+	// holding its version. signal-cli is left alone when either is
+	// missing.
 	SignalCLI        string
 	SignalCLIVersion string
 
@@ -302,9 +303,12 @@ func (u *Updater) rollback(ctx context.Context, swaps []swap, backup, sigVersion
 	return &rolledBack{cause}
 }
 
+// signalCLI reports whether the updater manages signal-cli: the image's
+// native build, which comes with a version file. A JVM build has none and
+// is left alone.
 func (u *Updater) signalCLI() bool {
 	_, err := os.Stat(u.SignalCLI)
-	return u.SignalCLI != "" && err == nil
+	return u.SignalCLI != "" && err == nil && u.signalCLIVersion() != ""
 }
 
 func (u *Updater) signalCLIVersion() string {

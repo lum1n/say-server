@@ -5,6 +5,7 @@ const titles: Record<string, string> = {
   email: "Email",
   irc: "IRC",
   matrix: "Matrix",
+  say: "say (home)",
   signal: "Signal",
   slack: "Slack",
   telegram: "Telegram",

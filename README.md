@@ -243,6 +243,11 @@ Other languages:
   `.dylib`) and `libsay.h`. See `examples/c/notes.c` and
   `examples/python/notes.py` (ctypes).
 
+These builds leave out Telegram accounts, which add about 10 MB: an
+account belongs on your home say ([ADR 0015](./docs/adr/0015-sync.md)).
+`make android EMBED_TAGS=` keeps them; a Go program leaves them out with
+`go build -tags notelegram`.
+
 **Terminal:** `say tui` chats in the terminal. It keeps its own node in
 `~/.local/share/say` and signs you in as your login user; `--listen
 127.0.0.1:7290` lets the web app and bots in too, and `--server URL --token
@@ -344,7 +349,7 @@ you send from your phone or other apps show up as yours.
 | IRC | Server, nick, channels; SASL or server password if needed |
 | Email | IMAP and SMTP servers, address and password |
 | Telegram | `api_id` and `api_hash` from my.telegram.org, and your phone number; the code Telegram sends is asked on the page |
-| Signal | A current `signal-cli` (the amd64 Docker image has one; otherwise install it on the server, as Signal turns old versions away); scan the QR code on the page with Signal on your phone (Settings → Linked devices) |
+| Signal | A current `signal-cli` (the Docker image has one, for amd64 and arm64; otherwise install it on the server, as Signal turns old versions away); scan the QR code on the page with Signal on your phone (Settings → Linked devices). In a cluster its keys move with the bridge, so every node needs `signal-cli` |
 
 Chats active in the last 30 days are brought in with their latest
 messages. A room shows its network in the header, and whether it is
@@ -367,6 +372,25 @@ accounts, no Slack web-session tokens ([ADR
 0004](./docs/adr/0004-bridge-risk-policy.md)). The server holds your
 credentials and reads these messages; bridged messages are never
 end-to-end encrypted, and Matrix's encrypted rooms aren't readable yet.
+
+### Syncing with your home say
+
+A say on your laptop or phone can sync with the say you run on a server,
+your home. On the device's **Accounts** page, add **say (home)** with
+home's address and your username there, and type your password when it
+asks; the device keeps a token of its own instead (`POST
+/api/v1/devices`), named after the device. Home's rooms show up as rooms
+on the device with the last 30 days in them, at most 500 messages each;
+people and agents there show up by name; what you write on the device
+goes to home as you, and what you write on the web or another device
+shows up as yours. Edits go both ways.
+
+Offline, the device keeps working: what you write is sent, in order,
+whenever home is back, however long that takes, and never twice. Rooms
+that are not from home stay on the device, and so do the messages of the
+device's own agents. **Delete** revokes the device's token on home.
+Attachments, reactions and read state don't sync yet ([ADR
+0015](./docs/adr/0015-sync.md)).
 
 ### Relay bots
 
@@ -428,7 +452,7 @@ placeholder page instead of the app.
 - [ADR 0012: The chat widget](./docs/adr/0012-widget.md)
 - [ADR 0013: Embedding say in apps](./docs/adr/0013-embedding.md)
 - [ADR 0014: Bridges — your own accounts first](./docs/adr/0014-bridges.md)
-- [ADR 0015: Sync with a home say](./docs/adr/0015-sync.md) (proposed)
+- [ADR 0015: Sync with a home say](./docs/adr/0015-sync.md)
 - [ADR 0017: Your own node, deployed to exe.dev from the app](./docs/adr/0017-own-node.md)
 
 ## Privacy

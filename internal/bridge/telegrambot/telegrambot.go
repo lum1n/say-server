@@ -1,6 +1,7 @@
 package telegrambot
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,7 +35,10 @@ var fields = []bridge.Field{
 		Help: "Make a bot by talking to @BotFather on Telegram (/newbot) and paste the token it gives you. " +
 			"Turn privacy mode off (/setprivacy, pick the bot, Disable) so the bot sees all messages in groups, " +
 			"then add it to the groups (or as an admin to the channels) to bridge. " +
-			"Link a room by the chat's id, such as -1001234567890: send /chatid in the chat and the bot answers with it.",
+			"Link a room by the chat's id, such as -1001234567890: send /chatid in the chat and the bot answers with it. " +
+			"In a group with topics, /chatid in a topic also tells the topic's id, such as -1001234567890/42: a room " +
+			"linked to it gets that topic and writes to it, while one linked to the group gets every topic and writes " +
+			"to General.",
 	},
 }
 
@@ -91,7 +95,7 @@ type conn struct {
 	offset   int64
 	botID    int64
 	username string
-	unlinked map[int64]bool // chats logged as not linked
+	unlinked map[string]bool // chats and topics logged as not linked
 }
 
 // allowed are the update kinds asked for.
@@ -107,7 +111,7 @@ func (c *conn) Run(ctx context.Context) error {
 		return err
 	}
 	c.botID, c.username = me.ID, me.Username
-	c.unlinked = map[int64]bool{}
+	c.unlinked = map[string]bool{}
 	c.h.Connected(ctx)
 
 	failures := 0
@@ -208,11 +212,15 @@ func (c *conn) handle(ctx context.Context, u update, linked map[string]bool) err
 		c.answerChatID(ctx, m)
 		return nil
 	}
+	// A topic linked on its own goes to its room, else the group's.
 	id := strconv.FormatInt(m.Chat.ID, 10)
+	if t := topicID(m); linked[t] {
+		id = t
+	}
 	if !linked[id] {
-		if !c.unlinked[m.Chat.ID] {
-			c.unlinked[m.Chat.ID] = true
-			slog.Info("telegram bot: message from a chat no room is linked to", "bridge", c.id, "chat_id", id, "title", chatName(m.Chat))
+		if t := cmp.Or(topicID(m), id); !c.unlinked[t] {
+			c.unlinked[t] = true
+			slog.Info("telegram bot: message from a chat no room is linked to", "bridge", c.id, "chat_id", t, "title", chatName(m.Chat))
 		}
 		return nil
 	}
@@ -220,6 +228,7 @@ func (c *conn) handle(ctx context.Context, u update, linked map[string]bool) err
 	if !ok {
 		return nil
 	}
+	in.Chat.ID = id
 	return c.h.Receive(ctx, in)
 }
 
@@ -230,10 +239,15 @@ func (c *conn) isChatIDCommand(text string) bool {
 	return cmd == "/chatid" && (!at || c.username != "" && strings.EqualFold(to, c.username))
 }
 
-// answerChatID tells a chat its id, to link a room to it.
+// answerChatID tells a chat its id, and a topic its own, to link a room
+// to it.
 func (c *conn) answerChatID(ctx context.Context, m *message) {
 	text := fmt.Sprintf("This chat's id is <code>%d</code>. Link a room to it with that id.", m.Chat.ID)
-	if _, err := c.sendMessage(ctx, strconv.FormatInt(m.Chat.ID, 10), text, m.MessageID); err != nil {
+	if t := topicID(m); t != "" {
+		text = fmt.Sprintf("This topic's id is <code>%s</code> and the group's is <code>%d</code>. "+
+			"Link a room to the topic with its id, or to the group to get every topic and write to General.", t, m.Chat.ID)
+	}
+	if _, err := c.sendMessage(ctx, cmp.Or(topicID(m), strconv.FormatInt(m.Chat.ID, 10)), text, m.MessageID); err != nil {
 		slog.Warn("telegram bot: answer /chatid failed", "bridge", c.id, "chat_id", m.Chat.ID, "err", err)
 	}
 }
@@ -268,8 +282,9 @@ func (c *conn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string) err
 	if err != nil {
 		return bridge.Rejected(fmt.Errorf("telegram bot: bad message id %q", remoteID))
 	}
+	chat, _ := splitChat(m.Chat)
 	err = c.call(ctx, "editMessageText", map[string]any{
-		"chat_id":              m.Chat,
+		"chat_id":              chat,
 		"message_id":           id,
 		"text":                 single(m.Sender, m.Text),
 		"parse_mode":           "HTML",
@@ -281,14 +296,18 @@ func (c *conn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string) err
 	return classify(err)
 }
 
-// sendMessage posts HTML text, answering reply if it is not 0, and
-// returns the message's id.
+// sendMessage posts HTML text to a chat or topic, answering reply if it
+// is not 0, and returns the message's id.
 func (c *conn) sendMessage(ctx context.Context, chat, text string, reply int64) (int64, error) {
+	chat, topic := splitChat(chat)
 	p := map[string]any{
 		"chat_id":              chat,
 		"text":                 text,
 		"parse_mode":           "HTML",
 		"link_preview_options": map[string]any{"is_disabled": true},
+	}
+	if topic != 0 {
+		p["message_thread_id"] = topic
 	}
 	if reply != 0 {
 		p["reply_parameters"] = map[string]any{"message_id": reply, "allow_sending_without_reply": true}

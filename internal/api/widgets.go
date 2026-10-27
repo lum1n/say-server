@@ -313,8 +313,9 @@ func (s *Server) embedConfig(w http.ResponseWriter, r *http.Request) {
 
 // embedSession signs a visitor in to the widget and returns its thread.
 // A token from an earlier session of the same visitor is returned as is;
-// a valid identity token finds the verified visitor with that subject,
-// else makes the anonymous visitor of the request's token that visitor (so
+// a valid identity token finds the verified visitor with that subject
+// (and an anonymous visitor of the request's token is linked to it, so the
+// team can follow them), else makes the anonymous visitor that visitor (so
 // it keeps its thread), else creates one; otherwise a new anonymous
 // visitor is created. The embed page calls it only when it has a token or
 // an identity, or on the first message, so page views alone create
@@ -371,6 +372,9 @@ func (s *Server) embedSession(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	if anon.ID != "" && v.PrincipalID != anon.ID {
+		s.linkVisitor(ctx, anon, v)
 	}
 	p, err := s.store.GetPrincipal(ctx, v.PrincipalID)
 	if err != nil {
@@ -467,6 +471,30 @@ func (s *Server) verifyVisitor(ctx context.Context, wg store.Widget, anon core.P
 		}
 	}
 	return v, nil
+}
+
+// linkVisitor records that anonymous visitor anon signed in as v, who
+// already had a thread. The two logs are not merged: that would replay
+// the anonymous messages to v's agent and reorder both histories. The
+// anonymous thread stays with its team, who see in the inbox where the
+// visitor went. Failing to link does not fail the sign-in.
+func (s *Server) linkVisitor(ctx context.Context, anon core.Principal, v store.Visitor) {
+	old, err := s.store.VisitorByPrincipal(ctx, anon.ID)
+	if err == nil {
+		err = s.store.LinkVisitor(ctx, anon.ID, v.PrincipalID)
+	}
+	if err != nil {
+		slog.Warn("widget visitor link failed", "visitor", anon.ID, "signed_in_as", v.PrincipalID, "err", err)
+		return
+	}
+	// The team's inboxes show the link.
+	if ms, err := s.store.Members(ctx, old.RoomID); err == nil {
+		for _, m := range ms {
+			if m.PrincipalID != anon.ID {
+				s.notifyRooms(ctx, m.PrincipalID)
+			}
+		}
+	}
 }
 
 // deleteEmbedSession is a visitor deleting its own chat: the thread,
@@ -633,27 +661,46 @@ type wireWidgetThread struct {
 	VisitorID   string `json:"visitor_id"`
 	VisitorName string `json:"visitor_name"`
 	// Verified is whether the host site said who the visitor is.
-	Verified bool   `json:"verified"`
-	State    string `json:"state"`
+	Verified bool `json:"verified"`
+	// SignedInAs is, for an anonymous visitor who then signed in as a
+	// verified visitor with a thread already, that visitor and thread.
+	SignedInAs *wireSignedInAs `json:"signed_in_as,omitempty"`
+	State      string          `json:"state"`
 	// Waiting is whether the visitor wrote last, so nobody has answered.
+	// A visitor who signed in elsewhere waits there, not here.
 	Waiting       bool       `json:"waiting"`
 	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	// IdleAt is when the thread goes, or went, idle without a new
+	// message; nil while a visitor waits for a person.
+	IdleAt    *time.Time `json:"idle_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+type wireSignedInAs struct {
+	VisitorID string `json:"visitor_id"`
+	RoomID    string `json:"room_id"`
 }
 
 func toWidgetThread(th store.WidgetThread, now time.Time) wireWidgetThread {
 	out := wireWidgetThread{
 		RoomID: th.RoomID, WidgetID: th.WidgetID, WidgetName: th.WidgetName,
 		VisitorID: th.PrincipalID, VisitorName: th.VisitorName, Verified: th.Subject != "",
-		Waiting: th.LastSenderID == th.PrincipalID, CreatedAt: th.CreatedAt.UTC(),
+		Waiting: th.LastSenderID == th.PrincipalID && th.SignedInAs == "", CreatedAt: th.CreatedAt.UTC(),
+	}
+	if th.SignedInAs != "" && th.SignedInRoomID != "" {
+		out.SignedInAs = &wireSignedInAs{VisitorID: th.SignedInAs, RoomID: th.SignedInRoomID}
 	}
 	active := th.CreatedAt
 	if !th.LastMessageAt.IsZero() {
 		at := th.LastMessageAt.UTC()
 		out.LastMessageAt, active = &at, at
 	}
+	if !(out.Waiting && !th.AgentAnswers) {
+		at := active.UTC().Add(threadIdleAfter)
+		out.IdleAt = &at
+	}
 	switch {
-	case now.Sub(active) >= threadIdleAfter && !(out.Waiting && !th.AgentAnswers):
+	case out.IdleAt != nil && !now.Before(*out.IdleAt):
 		out.State = threadIdle
 	case th.AgentAnswers:
 		out.State = threadOpen

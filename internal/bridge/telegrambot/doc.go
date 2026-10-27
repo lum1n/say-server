@@ -8,7 +8,9 @@
 // update offset in the bridge's state so another node goes on where the
 // last one stopped. The API is called over plain HTTP without an SDK.
 //
-// Chat ids are Telegram's (-1001234567890 for a supergroup); message ids
-// are Telegram's, which are unique within a chat. The account driver for
+// Chat ids are Telegram's (-1001234567890 for a supergroup), or a chat's
+// and a forum topic's joined by a slash (-1001234567890/42) for a room
+// linked to one topic; message ids are Telegram's, which are unique
+// within a chat. The account driver for
 // a person's own Telegram account is package telegram.
 package telegrambot

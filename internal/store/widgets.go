@@ -39,11 +39,14 @@ type Widget struct {
 
 // Visitor is the guest principal behind a widget thread. Subject is the
 // host site's user id of a verified visitor, empty for an anonymous one.
+// SignedInAs is the verified visitor an anonymous one signed in as when
+// that one already had a thread, so the two threads stay apart.
 type Visitor struct {
 	PrincipalID string
 	WidgetID    string
 	Subject     string
 	RoomID      string
+	SignedInAs  string
 	CreatedAt   time.Time
 }
 
@@ -59,6 +62,8 @@ type WidgetThread struct {
 	// AgentAnswers is whether a member is still the thread's responder,
 	// that is, the thread has not been handed over.
 	AgentAnswers bool
+	// SignedInRoomID is the thread of the visitor SignedInAs.
+	SignedInRoomID string
 }
 
 func (s *sqlStore) CreateWidget(ctx context.Context, w Widget) error {
@@ -276,6 +281,17 @@ func (s *sqlStore) VerifyVisitor(ctx context.Context, principalID, subject, disp
 	return v, err
 }
 
+func (s *sqlStore) LinkVisitor(ctx context.Context, principalID, verifiedID string) error {
+	n, err := s.q().LinkVisitor(ctx, db.LinkVisitorParams{PrincipalID: principalID, SignedInAs: verifiedID})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *sqlStore) DeleteVisitor(ctx context.Context, principalID string) error {
 	return s.tx(ctx, func(q *db.Queries) error {
 		row, err := q.VisitorByPrincipal(ctx, principalID)
@@ -297,6 +313,10 @@ func (s *sqlStore) DeleteVisitor(ctx context.Context, principalID string) error 
 			if err := step(ctx, room); err != nil {
 				return err
 			}
+		}
+		// Anonymous threads it signed in from stay, as nobody's.
+		if err := q.UnlinkVisitors(ctx, principalID); err != nil {
+			return err
 		}
 		if err := q.DeleteVisitorRow(ctx, principalID); err != nil {
 			return err
@@ -324,6 +344,7 @@ func visitor(row db.WidgetVisitor) Visitor {
 		WidgetID:    row.WidgetID,
 		Subject:     row.Subject,
 		RoomID:      row.RoomID,
+		SignedInAs:  row.SignedInAs,
 		CreatedAt:   unmillis(row.CreatedAt),
 	}
 }
@@ -341,12 +362,14 @@ func (s *sqlStore) WidgetThreads(ctx context.Context, principalID string, limit 
 				WidgetID:    row.WidgetID,
 				Subject:     row.Subject,
 				RoomID:      row.RoomID,
+				SignedInAs:  row.SignedInAs,
 				CreatedAt:   row.CreatedAt,
 			}),
-			WidgetName:   row.WidgetName,
-			VisitorName:  row.VisitorName,
-			LastSenderID: row.LastSenderID.String,
-			AgentAnswers: row.AgentAnswers,
+			WidgetName:     row.WidgetName,
+			VisitorName:    row.VisitorName,
+			LastSenderID:   row.LastSenderID.String,
+			AgentAnswers:   row.AgentAnswers,
+			SignedInRoomID: row.SignedInRoomID,
 		}
 		if row.LastMessageAt.Valid {
 			out[i].LastMessageAt = unmillis(row.LastMessageAt.Int64)

@@ -10,13 +10,14 @@ info:
     envelope defined in envelope.schema.json. This file is the source of
     truth for sdk/ts and sdk/py.
 
-    Every route except /health, /setup, /login and /embed/{key} needs an
+    Every route except /health, /setup, /login, /devices and /embed/{key} needs an
     access token, sent as `Authorization: Bearer <token>` or, for
     browsers, in the `say_token` cookie. A browser that cannot use the
     cookie (the widget's iframe) offers the token on /ws as the
     subprotocol `say.token.<token>` next to `say.v1`. People get the
     cookie from POST /setup or POST /login; agents get a token from
-    POST /principals or `say principal add`. Request bodies must be `application/json`.
+    POST /principals or `say principal add`; a person's devices get one
+    from POST /devices. Request bodies must be `application/json`.
 
     Realtime: every event has a per-room `seq`. A client keeps the last
     `seq` it has seen per room (its cursor) and resumes from it after a
@@ -146,6 +147,42 @@ paths:
         "400":
           $ref: "#/components/responses/Error"
         "401":
+          $ref: "#/components/responses/Error"
+  /devices:
+    post:
+      operationId: pairDevice
+      summary: Get a token for one of the person's devices
+      description: |
+        For a node that syncs with this one, its home
+        (docs/adr/0015-sync.md). Takes the person's username and password
+        and returns a token named `device:<name>` that does not expire. It
+        replaces the token an earlier pairing with the same name got.
+        POST /logout with the token unpairs the device.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairDevice"
+      responses:
+        "201":
+          description: The person and the device's token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [principal, token]
+                properties:
+                  principal:
+                    $ref: "#/components/schemas/Principal"
+                  token:
+                    type: string
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "422":
           $ref: "#/components/responses/Error"
   /logout:
     post:
@@ -667,7 +704,10 @@ paths:
         `say.v1`. Like event notifications it
         is a hint, so also reread the list after reconnecting. It also
         comes when a bridge of the caller or of one of its rooms changes
-        state. A push `{id, type: "delivery", payload: DeliveryPush}` on a
+        state. A push `{id, type: "inbox"}` without a payload, to people
+        and agents only, says a widget thread they are in has a new
+        message; reread `GET /widget-threads`, and again after
+        reconnecting. A push `{id, type: "delivery", payload: DeliveryPush}` on a
         subscribed room says how a message went out to its bridges. A client that falls too far behind is
         closed with code 1008 and should reconnect and resubscribe from its
         cursors.
@@ -880,6 +920,7 @@ paths:
       description: |
         Widget threads whose team or agent I am in, with whether an agent
         still answers each, latest activity first. People and agents only.
+        The WebSocket pushes `inbox` when one of them has a new message.
       parameters:
         - name: limit
           in: query
@@ -1029,6 +1070,10 @@ paths:
         or `?token=<secret>`. Any node takes it. In a relay bot the chat
         must be linked to a room, or nothing is taken (404 `not_linked`).
         A repeated `id` in the same chat is ignored.
+
+        Each bridge's hook takes 60 messages at once, then 60 a minute, on
+        each node; only posts with the right secret count. A leaked secret
+        is replaced with `POST /bridges/{id}/hook-secret`.
       security:
         - {}
       requestBody:
@@ -1046,6 +1091,17 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+        "429":
+          description: The bridge's hook is over its limit (code rate_limited)
+          headers:
+            Retry-After:
+              description: Seconds until a post would pass.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /networks:
     get:
       operationId: listNetworks
@@ -1214,6 +1270,41 @@ paths:
           $ref: "#/components/responses/Error"
         "409":
           description: The bridge is not waiting for an answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bridges/{id}/hook-secret:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+    post:
+      operationId: rotateHookSecret
+      summary: Replace the secret programs post to the bridge's hook with
+      description: |
+        For networks with a `hook_secret`, such as webhooks. A new random
+        secret is set and returned once; it is never read back. Posts with
+        the old one are refused from then on, and the bridge restarts.
+      responses:
+        "200":
+          description: The new secret, and the bridge
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, bridge]
+                properties:
+                  secret:
+                    type: string
+                  bridge:
+                    $ref: "#/components/schemas/Bridge"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: |
+            The bridge is being deleted (code deleting) or its network has
+            no hook secret (code no_hook_secret)
           content:
             application/json:
               schema:
@@ -1477,6 +1568,20 @@ components:
           type: string
         password:
           type: string
+    PairDevice:
+      type: object
+      required: [username, password, name]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: The device's name, like `phone`.
     CreatePrincipal:
       type: object
       required: [kind]
@@ -1866,6 +1971,18 @@ components:
         verified:
           type: boolean
           description: Whether the host site signed the visitor in (an identity token).
+        signed_in_as:
+          type: object
+          required: [visitor_id, room_id]
+          description: |
+            Set on an anonymous visitor's thread when the visitor then
+            signed in as a verified visitor who already had a thread. The
+            two threads are not merged: the visitor carries on in `room_id`.
+          properties:
+            visitor_id:
+              type: string
+            room_id:
+              type: string
         state:
           type: string
           enum: [open, handed_over, idle]
@@ -1876,11 +1993,22 @@ components:
             handed-over thread is still waiting for a person.
         waiting:
           type: boolean
-          description: The visitor wrote the latest message, so nobody has answered it yet.
+          description: |
+            The visitor wrote the latest message, so nobody has answered it
+            yet. Never set on a thread with `signed_in_as`: its visitor
+            waits in the other thread.
         last_message_at:
           type: string
           format: date-time
           description: Absent when the thread has no messages.
+        idle_at:
+          type: string
+          format: date-time
+          description: |
+            When the thread goes idle, or went idle, if nobody writes.
+            Absent while the visitor of a handed-over thread waits for a
+            person. No push comes when a thread goes idle, so a client
+            that shows states rereads the inbox then.
         created_at:
           type: string
           format: date-time
@@ -1978,6 +2106,11 @@ components:
         hook:
           description: The network takes messages posted to `/hooks/{bridge id}`.
           type: boolean
+        hook_secret:
+          description: |
+            The setting holding the hook's secret, which
+            `POST /bridges/{id}/hook-secret` replaces.
+          type: string
     HookMessage:
       description: A message posted to a webhook bridge's hook.
       type: object

@@ -107,7 +107,7 @@ event (ADR 0003) was never read by anything and only grew.
 | IRC | The user's own nick, SASL | Channels from settings; private messages become DMs |
 | Email | The user's mailbox over IMAP and SMTP | One room per correspondent set; threading headers |
 | Telegram | MTProto (gotd/td) with the instance's own `api_id`/`api_hash` | Login code and 2FA through prompts; flood-wait respected |
-| Signal | signal-cli as a linked device, out of process (GPL) | QR prompt; no history to backfill; its data stays on one node |
+| Signal | signal-cli as a linked device, out of process (GPL) | QR prompt; no history to backfill; its data moves with the lease |
 
 Discord has no sanctioned way to act as a user, so it is a relay bot
 only, as are the Telegram Bot API and webhooks.
@@ -116,14 +116,20 @@ only, as are the Telegram Bot API and webhooks.
 
 | Network | Route | Notes |
 |---|---|---|
-| Discord | A bot the admin creates, over the Gateway and REST | People in say show under their own names through a channel webhook named "say" (Manage Webhooks), else as "**Name**: text"; missed messages are fetched on reconnect |
-| Telegram bot | Bot API with long polling | Privacy mode off to see all group messages; `/chatid` tells the chat id to link |
+| Discord | A bot the admin creates, over the Gateway and REST | People in say show under their own names through a channel webhook named "say" (Manage Webhooks), else as "**Name**: text"; a thread or forum post is linked by its id and written to through its channel's webhook; all missed messages are fetched on reconnect; as many Gateway shards as Discord asks for |
+| Telegram bot | Bot API with long polling | Privacy mode off to see all group messages; `/chatid` tells the chat id to link, and in a forum topic the topic's (`chat/topic`), which mirrors that topic alone |
 | Webhooks | `POST /api/v1/hooks/{bridge id}` in; a POST to the admin's URL out | Out in say's JSON, or the Slack or Discord webhook format; optional HMAC signature |
 
 A network may also take messages over HTTP (`Network.Hook`). Any node
 answers the hook: receiving needs only the store, so the request does not
 have to reach the node holding the bridge's lease. In a relay bot every
-message must be for a linked chat, or none is taken.
+message must be for a linked chat, or none is taken. Each bridge's hook
+takes 60 messages at once, then 60 a minute (`api.Config.HookLimit`),
+counted after the secret is checked so that strangers can't use up a
+bridge's allowance; each node counts on its own, so the limit scales with
+the number of nodes. A network that names its secret field
+(`Network.HookSecret`) lets the secret be replaced with a new random one,
+`POST /bridges/{id}/hook-secret`, when it leaks.
 
 A network that hands back a remote id the link already has (a webhook
 that always answers the same id) gets its send kept as sent, without the
@@ -135,8 +141,16 @@ id.
   on them, and only their owner's messages leave say.
 - A send cut off by a crash shows "may not have reached" and is never
   repeated; the person decides.
-- The Signal bridge keeps signal-cli's data on the node's disk, so in a
-  cluster it must stay on the node that has it.
+- signal-cli keeps the Signal account's keys on the node's disk. So that
+  another node taking the lease does not link a new device, the bridge
+  copies signal-cli's `data/` into its state (gzipped, at most 16 MB)
+  each time signal-cli stops, including right after linking, and a node
+  whose directory does not have the latest copy restores it first. A node
+  holds the lease until its connection has stopped, so a handover gets
+  the copy taken on the way out. A node that dies leaves the copy from
+  signal-cli's last stop; Signal repairs sessions that moved on since, as
+  after a restored backup. A data directory set in the bridge's settings
+  may hold other accounts and is not copied: it stays on its node.
 - gotd/td adds about 25 MB to the binary.
 - Bridged messages are never end-to-end encrypted, and the server holds
   every account's credentials and sessions. The Accounts page says so.

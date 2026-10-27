@@ -45,6 +45,8 @@ type fakeDiscord struct {
 	hooks     map[string][]map[string]any // channel: webhooks
 	noHooks   map[string]bool             // channels where webhooks are forbidden
 	history   map[string][]message        // channel: messages, any order
+	threads   map[string]string           // thread: the channel it is in
+	shards    int                         // asked for by /gateway/bot
 	limitExec int                         // 429s to give webhook execution first
 	execErr   int                         // status for webhook execution
 	next      int
@@ -58,6 +60,7 @@ func newFake(t *testing.T) *fakeDiscord {
 		hooks:    map[string][]map[string]any{},
 		noHooks:  map[string]bool{},
 		history:  map[string][]message{},
+		threads:  map[string]string{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", f.rest)
@@ -94,7 +97,14 @@ func (f *fakeDiscord) rest(w http.ResponseWriter, r *http.Request) {
 	f.calls = append(f.calls, call{Method: r.Method, Path: path, Query: r.URL.RawQuery, Body: body, Raw: string(raw)})
 	switch {
 	case r.Method == "GET" && path == "/gateway/bot":
-		reply(w, 200, map[string]any{"url": "ws" + strings.TrimPrefix(f.srv.URL, "http") + "/gateway"})
+		reply(w, 200, map[string]any{"url": "ws" + strings.TrimPrefix(f.srv.URL, "http") + "/gateway", "shards": max(f.shards, 1),
+			"session_start_limit": map[string]any{"total": 1000, "remaining": 999, "reset_after": 1000, "max_concurrency": 1}})
+	case r.Method == "GET" && len(parts) == 2 && parts[0] == "channels":
+		if p, ok := f.threads[parts[1]]; ok {
+			reply(w, 200, map[string]any{"id": parts[1], "type": 11, "name": "a thread", "parent_id": p})
+			return
+		}
+		reply(w, 200, map[string]any{"id": parts[1], "type": 0, "name": "a channel", "parent_id": "CATEGORY"})
 	case r.Method == "GET" && len(parts) == 3 && parts[0] == "channels" && parts[2] == "messages":
 		after := r.URL.Query().Get("after")
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -235,11 +245,15 @@ type fakeHost struct {
 	got       []bridge.Incoming
 	states    []string
 	connected int
+	failAt    string // a message id Receive fails at
 }
 
 func (h *fakeHost) Receive(ctx context.Context, m bridge.Incoming) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if m.ID == h.failAt {
+		return errors.New("receive failed")
+	}
 	h.got = append(h.got, m)
 	return nil
 }
@@ -634,6 +648,120 @@ func TestCatchUpPages(t *testing.T) {
 	}
 	if n := len(f.called("GET", "/channels/C1/messages")); n != 2 {
 		t.Errorf("pages = %d", n)
+	}
+}
+
+func TestCatchUpLong(t *testing.T) {
+	f := newFake(t)
+	for i := 1; i <= 750; i++ {
+		f.history["C1"] = append(f.history["C1"], message{ID: id(i), Content: ptr(strconv.Itoa(i)), Author: &user{ID: "U2"}})
+	}
+	// Cut short after two pages: the place saved is past them.
+	h := &fakeHost{chats: []string{"C1"}, failAt: id(250)}
+	c := newConn(t, f, h, `{"last":{"C1":"`+id(0)+`"}}`)
+	_, done, err := run(t, c)
+	select {
+	case <-done:
+		if *err == nil || !strings.Contains((*err).Error(), "receive failed") {
+			t.Fatalf("err = %v", *err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not fail")
+	}
+	st := h.lastState()
+	if !strings.Contains(st, `"C1":"`+id(200)+`"`) {
+		t.Fatalf("state = %s", st)
+	}
+
+	// The rest, all of it.
+	h2 := &fakeHost{chats: []string{"C1"}}
+	c2 := newConn(t, f, h2, st)
+	run(t, c2)
+	eventually(t, "caught up", func() bool { return len(h2.received()) == 550 })
+	if got := h2.received(); got[0].Text != "201" || got[549].Text != "750" {
+		t.Errorf("first %q, last %q", got[0].Text, got[549].Text)
+	}
+	eventually(t, "state saved", func() bool { return strings.Contains(h2.lastState(), `"C1":"`+id(750)+`"`) })
+}
+
+func TestSendThread(t *testing.T) {
+	f := newFake(t)
+	f.threads["T1"] = "F1" // a post in a forum
+	c := newConn(t, f, &fakeHost{}, "")
+	ctx := context.Background()
+	rid, err := c.Send(ctx, bridge.Outgoing{Chat: "T1", Text: "in the thread", Sender: "Ada"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.called("POST", "/channels/F1/webhooks")); n != 1 {
+		t.Fatalf("webhook creates on the forum = %d", n)
+	}
+	exec := f.called("POST", "/webhooks/H1/tok1")
+	if len(exec) != 1 || exec[0].Query != "wait=true&thread_id=T1" {
+		t.Fatalf("executions = %+v", exec)
+	}
+	if err := c.Edit(ctx, bridge.Outgoing{Chat: "T1", Text: "edited", Sender: "Ada"}, rid); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.called("PATCH", "/webhooks/H1/tok1/messages/"+rid); len(p) != 1 || p[0].Query != "thread_id=T1" {
+		t.Fatalf("edits = %+v", p)
+	}
+
+	// A plain channel is asked about once, and posts without thread_id.
+	c.Send(ctx, bridge.Outgoing{Chat: "C1", Text: "a", Sender: "Ada"})
+	c.Send(ctx, bridge.Outgoing{Chat: "C1", Text: "b", Sender: "Ada"})
+	if n := len(f.called("GET", "/channels/C1")) - len(f.called("GET", "/channels/C1/")); n != 1 {
+		t.Errorf("channel lookups = %d", n)
+	}
+	if exec := f.called("POST", "/webhooks/"); len(exec) != 3 || exec[1].Query != "wait=true" || exec[2].Query != "wait=true" {
+		t.Errorf("channel executions = %+v", exec)
+	}
+}
+
+func TestThreadFromGateway(t *testing.T) {
+	f := newFake(t)
+	h := &fakeHost{chats: []string{"T2"}}
+	c := newConn(t, f, h, "")
+	run(t, c)
+	eventually(t, "connected", func() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.connected == 1 })
+	f.frames <- dispatch("THREAD_CREATE", map[string]any{"id": "T2", "type": 11, "name": "plans", "parent_id": "C1"})
+	f.frames <- dispatch("MESSAGE_CREATE", msg("T2", id(1), "U2", "in a thread"))
+	eventually(t, "the message", func() bool { return len(h.received()) == 1 })
+	if got := h.received()[0]; got.Chat != (bridge.RemoteChat{ID: "T2", Name: "plans"}) {
+		t.Errorf("chat = %+v", got.Chat)
+	}
+	if _, err := c.Send(context.Background(), bridge.Outgoing{Chat: "T2", Text: "hi", Sender: "Ada"}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(f.called("GET", "/channels/T2")); n != 0 {
+		t.Errorf("thread looked up though the gateway told")
+	}
+	if exec := f.called("POST", "/webhooks/"); len(exec) != 1 || exec[0].Query != "wait=true&thread_id=T2" {
+		t.Errorf("executions = %+v", exec)
+	}
+}
+
+func TestShards(t *testing.T) {
+	f := newFake(t)
+	f.shards = 3
+	h := &fakeHost{}
+	c := newConn(t, f, h, "")
+	c.identifyWait = 10 * time.Millisecond
+	run(t, c)
+	eventually(t, "connected", func() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.connected == 1 })
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.identify) != 3 {
+		t.Fatalf("identifies = %d", len(f.identify))
+	}
+	seen := map[string]bool{}
+	for _, id := range f.identify {
+		seen[fmt.Sprint(id["d"].(map[string]any)["shard"])] = true
+	}
+	for _, want := range []string{"[0 3]", "[1 3]", "[2 3]"} {
+		if !seen[want] {
+			t.Errorf("no identify for shard %s: %v", want, seen)
+		}
 	}
 }
 

@@ -9,9 +9,13 @@ import (
 	"github.com/lum1n/say-v2/internal/store"
 )
 
-// deliver sends a link's room log past its cursor to the network.
+// deliver sends a link's room log past its cursor to the network. After
+// a failure the link waits, longer each time, before it is tried again.
 func (i *instance) deliver(ctx context.Context, linkID string) {
 	defer i.lock(linkID)()
+	if i.waiting(linkID) {
+		return
+	}
 	l, err := i.c.Store.GetBridgeLink(ctx, linkID)
 	if errors.Is(err, store.ErrNotFound) {
 		return
@@ -27,18 +31,27 @@ func (i *instance) deliver(ctx context.Context, linkID string) {
 			i.warn(ctx, "read events", err)
 			return
 		}
+		var failed error
 		for _, e := range events {
-			if err := i.deliverEvent(ctx, l, e); err != nil {
-				i.warn(ctx, "deliver", err)
+			if failed = i.deliverEvent(ctx, l, e); failed != nil {
 				break
 			}
 			cursor = e.Seq
 		}
 		if err := i.c.Store.SetBridgeLinkCursor(ctx, l.ID, cursor); err != nil {
 			i.warn(ctx, "save cursor", err)
+			i.backOff(linkID)
+			return
+		}
+		if failed != nil {
+			i.warn(ctx, "deliver", failed)
+			i.backOff(linkID)
 			return
 		}
 		if len(events) < 100 {
+			i.mu.Lock()
+			delete(i.retries, linkID)
+			i.mu.Unlock()
 			return
 		}
 	}
@@ -73,22 +86,41 @@ func (i *instance) deliverEvent(ctx context.Context, l store.BridgeLink, e core.
 	if text == "" {
 		return nil
 	}
-	if time.Since(e.CreatedAt) > MaxDeliveryAge {
+	retry := i.net.Idempotent
+	if !retry && time.Since(e.CreatedAt) > MaxDeliveryAge {
 		_, err := i.start(ctx, l, msg.ID, store.BridgeExpired)
 		return err
 	}
 	ok, err := i.start(ctx, l, msg.ID, store.BridgeSending)
-	if !ok || err != nil {
-		// Received from this link, or tried before.
+	if err != nil {
 		return err
 	}
+	if !ok {
+		// Received from this link, or tried before: again only if the
+		// network takes repeats and the send did not finish.
+		if !retry {
+			return nil
+		}
+		row, err := i.c.Store.GetBridgeMessage(ctx, l.ID, msg.ID)
+		if err != nil || !unfinished(row) {
+			return err
+		}
+	}
 	sctx, cancel := context.WithTimeout(ctx, sendTimeout)
-	remoteID, err := i.conn.Send(sctx, Outgoing{Chat: l.RemoteID, EventID: msg.ID, Text: text, Sender: i.name(ctx, msg.SenderID)})
+	remoteID, err := i.conn.Send(sctx, Outgoing{Chat: l.RemoteID, EventID: msg.ID, Text: text, Parts: msg.Parts, Sender: i.name(ctx, msg.SenderID)})
 	cancel()
 	state, errMsg := store.BridgeSent, ""
 	switch {
 	case errors.Is(err, ErrRejected):
 		state, errMsg = store.BridgeFailed, err.Error()
+	case err != nil && retry:
+		// Still sending: the error shows, and the cursor stays before
+		// the message so that it and those after it are tried again.
+		if ferr := i.c.Store.FinishBridgeMessage(context.WithoutCancel(ctx), l.ID, msg.ID, store.BridgeSending, "", err.Error()); ferr != nil {
+			return ferr
+		}
+		i.c.Chat.DeliveryChanged(ctx, l.RoomID, msg.ID)
+		return err
 	case err != nil:
 		state, errMsg = store.BridgeUnknown, err.Error()
 	}
@@ -97,6 +129,33 @@ func (i *instance) deliverEvent(ctx context.Context, l store.BridgeLink, e core.
 	}
 	i.c.Chat.DeliveryChanged(ctx, l.RoomID, msg.ID)
 	return nil
+}
+
+// unfinished reports whether an outgoing message's send may not have
+// arrived.
+func unfinished(m store.BridgeMessage) bool {
+	return m.Direction == store.BridgeOut && (m.State == store.BridgeSending || m.State == store.BridgeUnknown)
+}
+
+// waiting reports whether a link is waiting after a failure.
+func (i *instance) waiting(linkID string) bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return time.Now().Before(i.retries[linkID].at)
+}
+
+// backOff makes a link wait before it is delivered again, twice as long
+// as last time, and marks it for delivery when the wait is over.
+func (i *instance) backOff(linkID string) {
+	i.mu.Lock()
+	r := i.retries[linkID]
+	r.pause = min(max(r.pause*2, retryFirst), retryMax)
+	r.at = time.Now().Add(r.pause)
+	i.retries[linkID] = r
+	i.mu.Unlock()
+	time.AfterFunc(r.pause, func() {
+		i.mark(func(i *instance) { i.dirty[linkID] = true })
+	})
 }
 
 // start records an outgoing message in state; false means the link
@@ -131,7 +190,7 @@ func (i *instance) deliverEdit(ctx context.Context, l store.BridgeLink, e core.E
 	if err != nil {
 		return err
 	}
-	if sent.RemoteID == "" || time.Since(e.CreatedAt) > MaxDeliveryAge {
+	if sent.RemoteID == "" || !i.net.Idempotent && time.Since(e.CreatedAt) > MaxDeliveryAge {
 		return nil
 	}
 	text := e.Prose()
@@ -140,9 +199,13 @@ func (i *instance) deliverEdit(ctx context.Context, l store.BridgeLink, e core.E
 	}
 	sctx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
-	m := Outgoing{Chat: l.RemoteID, EventID: e.Edits, Text: text, Sender: i.name(ctx, e.SenderID)}
+	m := Outgoing{Chat: l.RemoteID, EventID: e.Edits, Text: text, Parts: e.Parts, Sender: i.name(ctx, e.SenderID)}
 	if err := editor.Edit(sctx, m, sent.RemoteID); err != nil {
-		// An edit is not retried either; the message stays as it was.
+		if i.net.Idempotent && !errors.Is(err, ErrRejected) {
+			// Tried again, as sends are; an edit is idempotent.
+			return err
+		}
+		// An edit is not retried otherwise; the message stays as it was.
 		i.warn(ctx, "edit", err)
 	}
 	return nil

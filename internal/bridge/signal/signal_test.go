@@ -95,20 +95,34 @@ func start(t *testing.T, linked bool, st *state) *bridgeRun {
 
 func startWith(t *testing.T, h *host, linked bool, st *state) *bridgeRun {
 	t.Helper()
-	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
 	dir := t.TempDir()
 	if linked {
-		os.WriteFile(filepath.Join(dir, "account"), []byte(fakeNumber), 0o600)
+		link(dir)
 	}
-	cfg, _ := json.Marshal(config{Path: exe, DataDir: dir})
-	info := bridge.Info{ID: "b1", Config: cfg}
+	cfg, _ := json.Marshal(config{Path: fakeExe(t), DataDir: dir})
+	var raw json.RawMessage
 	if st != nil {
-		info.State, _ = json.Marshal(st)
+		raw, _ = json.Marshal(st)
 	}
-	c, err := open(info, h)
+	return runIn(t, h, dir, cfg, raw)
+}
+
+// startOwn runs a connection in say's own directory under home, as a node
+// with that disk would, from the state another run saved.
+func startOwn(t *testing.T, h *host, home string, linked bool, st json.RawMessage) *bridgeRun {
+	t.Helper()
+	t.Setenv("XDG_DATA_HOME", home)
+	dir := filepath.Join(home, "say", "signal", "b1")
+	if linked {
+		link(dir)
+	}
+	cfg, _ := json.Marshal(config{Path: fakeExe(t)})
+	return runIn(t, h, dir, cfg, st)
+}
+
+func runIn(t *testing.T, h *host, dir string, cfg, st json.RawMessage) *bridgeRun {
+	t.Helper()
+	c, err := open(bridge.Info{ID: "b1", Config: cfg, State: st}, h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +138,33 @@ func startWith(t *testing.T, h *host, linked bool, st *state) *bridgeRun {
 		}
 	})
 	return r
+}
+
+func fakeExe(t *testing.T) string {
+	t.Helper()
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return exe
+}
+
+// link gives the fake signal-cli in dir the account.
+func link(dir string) {
+	os.MkdirAll(filepath.Join(dir, "data"), 0o700)
+	os.WriteFile(filepath.Join(dir, "data", "account"), []byte(fakeNumber), 0o600)
+}
+
+// end stops the connection and waits for Run to return.
+func (r *bridgeRun) end() {
+	r.t.Helper()
+	r.stop()
+	select {
+	case err := <-r.done:
+		r.done <- err // for the cleanup
+	case <-time.After(15 * time.Second):
+		r.t.Fatal("Run did not return")
+	}
 }
 
 func (r *bridgeRun) waitConnected() {
@@ -580,7 +621,7 @@ func TestLogOut(t *testing.T) {
 
 	// A data directory set in the config: the account's data in it goes.
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "account"), []byte(fakeNumber), 0o600)
+	link(dir)
 	cfg, _ := json.Marshal(config{Path: exe, DataDir: dir})
 	if err := logOut(context.Background(), bridge.Info{ID: "b1", Config: cfg, State: st}); err != nil {
 		t.Fatal(err)
@@ -588,7 +629,7 @@ func TestLogOut(t *testing.T) {
 	if got := strings.Join(commands(dir), ", "); got != "unregister "+fakeNumber+", deleteLocalAccountData "+fakeNumber {
 		t.Errorf("commands = %s", got)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "account")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(dir, "data", "account")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the account's data is left: %v", err)
 	}
 

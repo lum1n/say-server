@@ -44,22 +44,42 @@ type user struct {
 func (u user) name() string { return cmp.Or(u.GlobalName, u.Username, u.ID) }
 
 type channel struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID       string `json:"id"`
+	Type     int    `json:"type"`
+	Name     string `json:"name"`
+	ParentID string `json:"parent_id"`
+}
+
+// Channel types of threads: in an announcement channel, public, private.
+// A forum or media channel's posts are public threads.
+var threadTypes = []int{10, 11, 12}
+
+// parent returns the channel a thread is in, or "" for a channel that
+// is not a thread (whose parent_id is its category).
+func (ch channel) parent() string {
+	if slices.Contains(threadTypes, ch.Type) {
+		return ch.ParentID
+	}
+	return ""
 }
 
 // Message types that are something someone wrote: default, reply, and
 // the answers to slash and context menu commands.
 var shown = []int{0, 19, 20, 23}
 
-// name caches channel names, for rooms and #mentions.
+// name caches channel names, for rooms and #mentions, and the channels
+// threads are in, for webhooks.
 func (c *conn) name(chs ...channel) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, ch := range chs {
-		if ch.ID != "" && ch.Name != "" {
+		if ch.ID == "" {
+			continue
+		}
+		if ch.Name != "" {
 			c.names[ch.ID] = ch.Name
 		}
+		c.parents[ch.ID] = ch.parent()
 	}
 }
 

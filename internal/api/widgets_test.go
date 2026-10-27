@@ -325,8 +325,53 @@ func TestWidgetThreadState(t *testing.T) {
 		if tc.sender != "" {
 			th.LastMessageAt = now.Add(-tc.ago)
 		}
-		if got := toWidgetThread(th, now).State; got != tc.want {
-			t.Errorf("%s: state %q, want %q", tc.name, got, tc.want)
+		got := toWidgetThread(th, now)
+		if got.State != tc.want {
+			t.Errorf("%s: state %q, want %q", tc.name, got.State, tc.want)
+		}
+		// Every thread but a waiting visitor's goes idle on its own.
+		wantIdleAt := now.Add(-tc.ago).Add(threadIdleAfter).UTC()
+		if tc.name == "visitor left waiting on a person" {
+			if got.IdleAt != nil {
+				t.Errorf("%s: idle at %v, want never", tc.name, got.IdleAt)
+			}
+		} else if got.IdleAt == nil || !got.IdleAt.Equal(wantIdleAt) {
+			t.Errorf("%s: idle at %v, want %v", tc.name, got.IdleAt, wantIdleAt)
+		}
+	}
+}
+
+func TestWidgetInboxPush(t *testing.T) {
+	e := newEnv(t)
+	_, root := e.admin("Root")
+	ada, adaTok := e.user("Ada", core.PrincipalHuman)
+	var w wireWidget
+	e.do("POST", "/widgets", root, map[string]any{
+		"name": "Support", "origins": []string{"https://shop.example"}, "team": []string{ada.ID},
+	}, &w)
+	_, cat := e.session(w.PublicKey, "", "")
+	c := dialWS(t, e, adaTok)
+	visitor := dialWS(t, e, cat.Token)
+
+	// Ada follows no room, yet hears that the thread has a new message.
+	e.say(cat.Token, cat.Room.ID, "hello?")
+	if env := wsRead(t, c); env.Type != "inbox" || env.Status != "" || env.ID == "" {
+		t.Fatalf("after the visitor wrote = %+v, want an inbox push", env)
+	}
+	e.say(adaTok, cat.Room.ID, "hi!")
+	if env := wsRead(t, c); env.Type != "inbox" {
+		t.Fatalf("after Ada answered = %+v, want an inbox push", env)
+	}
+	// Other rooms say nothing to the inbox, and visitors have none.
+	r := e.room(adaTok, "general")
+	if env := wsRead(t, c); env.Type != "rooms" {
+		t.Fatalf("after create = %+v, want a rooms push", env)
+	}
+	e.say(adaTok, r.ID, "elsewhere")
+	for _, conn := range []*websocket.Conn{c, visitor} {
+		wsSend(t, conn, "1", "ping", nil)
+		if env := wsRead(t, conn); env.ID != "1" || env.Type != "ping" {
+			t.Fatalf("got %+v, want only the ping reply", env)
 		}
 	}
 }
@@ -398,7 +443,7 @@ func TestWidgetOffAndDeleted(t *testing.T) {
 func TestWidgetIdentity(t *testing.T) {
 	e := newEnv(t)
 	_, root := e.admin("Root")
-	ada, _ := e.user("Ada", core.PrincipalHuman)
+	ada, adaTok := e.user("Ada", core.PrincipalHuman)
 	var w wireWidget
 	e.do("POST", "/widgets", root, map[string]any{"name": "Help", "origins": []string{"https://shop.example"}, "team": []string{ada.ID}}, &w)
 
@@ -414,11 +459,42 @@ func TestWidgetIdentity(t *testing.T) {
 		t.Fatalf("second device = %d %+v", code, s2)
 	}
 	// An anonymous visitor who signs in as a subject that already has a
-	// thread gets that thread.
+	// thread gets that thread. The anonymous thread stays with the team,
+	// unmerged, and the inbox says where the visitor went.
 	_, anon := e.session(w.PublicKey, "", "")
+	e.say(anon.Token, anon.Room.ID, "hello?")
 	if code, s3 := e.session(w.PublicKey, anon.Token, id); code != 200 || s3.Principal.ID != s.Principal.ID {
 		t.Fatalf("sign-in from anonymous = %d %+v", code, s3)
 	}
+	var grace struct{ Events []wireEvent }
+	if code := e.do("GET", "/rooms/"+s.Room.ID+"/events", s.Token, nil, &grace); code != 200 || len(grace.Events) != 0 {
+		t.Fatalf("Grace's thread after sign-in = %d %+v", code, grace)
+	}
+	linked := func() wireWidgetThread {
+		t.Helper()
+		var out struct{ Threads []wireWidgetThread }
+		e.do("GET", "/widget-threads", adaTok, nil, &out)
+		for _, th := range out.Threads {
+			if th.RoomID == anon.Room.ID {
+				return th
+			}
+		}
+		t.Fatalf("anonymous thread not in the inbox: %+v", out.Threads)
+		return wireWidgetThread{}
+	}
+	if th := linked(); th.SignedInAs == nil || *th.SignedInAs != (wireSignedInAs{VisitorID: s.Principal.ID, RoomID: s.Room.ID}) ||
+		th.Verified || th.Waiting {
+		t.Fatalf("anonymous thread = %+v", th)
+	}
+	defer func() {
+		// Erasing Grace leaves the anonymous thread, linked to nobody.
+		if code := e.do("DELETE", "/visitors/"+s.Principal.ID, root, nil, nil); code != 204 {
+			t.Fatalf("delete Grace = %d", code)
+		}
+		if th := linked(); th.SignedInAs != nil {
+			t.Fatalf("anonymous thread after erasing Grace = %+v", th)
+		}
+	}()
 
 	// An anonymous visitor who signs in as a new subject keeps their
 	// thread, now under the host's name. The anonymous token is not

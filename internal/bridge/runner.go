@@ -335,6 +335,14 @@ type instance struct {
 	locks     map[string]*sync.Mutex // per link
 	links     map[string]linked      // by link id
 	names     map[string]string      // principal id → display name
+	retries   map[string]retry       // links waiting after a failure
+}
+
+// retry is when a link that failed is delivered again, and how long it
+// waited last.
+type retry struct {
+	at    time.Time
+	pause time.Duration
 }
 
 type linked struct {
@@ -349,18 +357,30 @@ func (i *instance) run(ctx context.Context) {
 	i.locks = map[string]*sync.Mutex{}
 	i.links = map[string]linked{}
 	i.names = map[string]string{}
+	i.retries = map[string]retry{}
 	i.mu.Unlock()
 	defer func() {
 		for _, l := range i.links {
 			l.unsubscribe()
 		}
 	}()
-	// What a node that stopped was sending may or may not have arrived.
-	if err := i.c.Store.MarkBridgeSendsUnknown(ctx, i.b.ID); err != nil {
-		i.warn(ctx, "mark unfinished sends", err)
+	// What a node that stopped was sending may or may not have arrived;
+	// a network that takes repeats gets it again.
+	if !i.net.Idempotent {
+		if err := i.c.Store.MarkBridgeSendsUnknown(ctx, i.b.ID); err != nil {
+			i.warn(ctx, "mark unfinished sends", err)
+		}
 	}
 	i.mark(func(i *instance) { i.refresh = true })
-	go i.connect(ctx)
+	// The run, and so the lease, ends only once the connection has
+	// stopped, so what it saves on the way out (Signal's keys) is there
+	// for the next node.
+	connected := make(chan struct{})
+	defer func() { <-connected }()
+	go func() {
+		defer close(connected)
+		i.connect(ctx)
+	}()
 	tick := time.NewTicker(resync)
 	defer tick.Stop()
 	for {

@@ -110,6 +110,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get a token for one of the person's devices
+         * @description For a node that syncs with this one, its home
+         *     (docs/adr/0015-sync.md). Takes the person's username and password
+         *     and returns a token named `device:<name>` that does not expire. It
+         *     replaces the token an earlier pairing with the same name got.
+         *     POST /logout with the token unpairs the device.
+         */
+        post: operations["pairDevice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/logout": {
         parameters: {
             query?: never;
@@ -416,7 +440,10 @@ export interface paths {
          *     `say.v1`. Like event notifications it
          *     is a hint, so also reread the list after reconnecting. It also
          *     comes when a bridge of the caller or of one of its rooms changes
-         *     state. A push `{id, type: "delivery", payload: DeliveryPush}` on a
+         *     state. A push `{id, type: "inbox"}` without a payload, to people
+         *     and agents only, says a widget thread they are in has a new
+         *     message; reread `GET /widget-threads`, and again after
+         *     reconnecting. A push `{id, type: "delivery", payload: DeliveryPush}` on a
          *     subscribed room says how a message went out to its bridges. A client that falls too far behind is
          *     closed with code 1008 and should reconnect and resubscribe from its
          *     cursors.
@@ -556,6 +583,7 @@ export interface paths {
          * The widget threads I am in (the inbox)
          * @description Widget threads whose team or agent I am in, with whether an agent
          *     still answers each, latest activity first. People and agents only.
+         *     The WebSocket pushes `inbox` when one of them has a new message.
          */
         get: operations["listWidgetThreads"];
         put?: never;
@@ -672,6 +700,10 @@ export interface paths {
          *     or `?token=<secret>`. Any node takes it. In a relay bot the chat
          *     must be linked to a room, or nothing is taken (404 `not_linked`).
          *     A repeated `id` in the same chat is ignored.
+         *
+         *     Each bridge's hook takes 60 messages at once, then 60 a minute, on
+         *     each node; only posts with the right secret count. A leaked secret
+         *     is replaced with `POST /bridges/{id}/hook-secret`.
          */
         post: operations["postHook"];
         delete?: never;
@@ -773,6 +805,30 @@ export interface paths {
         put?: never;
         /** Answer the bridge's login prompt (its owner only) */
         post: operations["answerBridge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bridges/{id}/hook-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace the secret programs post to the bridge's hook with
+         * @description For networks with a `hook_secret`, such as webhooks. A new random
+         *     secret is set and returned once; it is never read back. Posts with
+         *     the old one are refused from then on, and the bridge restarts.
+         */
+        post: operations["rotateHookSecret"];
         delete?: never;
         options?: never;
         head?: never;
@@ -920,6 +976,12 @@ export interface components {
         Login: {
             username: string;
             password: string;
+        };
+        PairDevice: {
+            username: string;
+            password: string;
+            /** @description The device's name, like `phone`. */
+            name: string;
         };
         CreatePrincipal: {
             /** @enum {string} */
@@ -1137,6 +1199,15 @@ export interface components {
             /** @description Whether the host site signed the visitor in (an identity token). */
             verified: boolean;
             /**
+             * @description Set on an anonymous visitor's thread when the visitor then
+             *     signed in as a verified visitor who already had a thread. The
+             *     two threads are not merged: the visitor carries on in `room_id`.
+             */
+            signed_in_as?: {
+                visitor_id: string;
+                room_id: string;
+            };
+            /**
              * @description `open`: an agent answers the visitor. `handed_over`: the
              *     thread is the team's, and agents answer only when mentioned.
              *     `idle`: no message for 30 minutes, unless the visitor of a
@@ -1144,13 +1215,25 @@ export interface components {
              * @enum {string}
              */
             state: "open" | "handed_over" | "idle";
-            /** @description The visitor wrote the latest message, so nobody has answered it yet. */
+            /**
+             * @description The visitor wrote the latest message, so nobody has answered it
+             *     yet. Never set on a thread with `signed_in_as`: its visitor
+             *     waits in the other thread.
+             */
             waiting: boolean;
             /**
              * Format: date-time
              * @description Absent when the thread has no messages.
              */
             last_message_at?: string;
+            /**
+             * Format: date-time
+             * @description When the thread goes idle, or went idle, if nobody writes.
+             *     Absent while the visitor of a handed-over thread waits for a
+             *     person. No push comes when a thread goes idle, so a client
+             *     that shows states rereads the inbox then.
+             */
+            idle_at?: string;
             /** Format: date-time */
             created_at: string;
         };
@@ -1208,6 +1291,11 @@ export interface components {
             capabilities: string[];
             /** @description The network takes messages posted to `/hooks/{bridge id}`. */
             hook?: boolean;
+            /**
+             * @description The setting holding the hook's secret, which
+             *     `POST /bridges/{id}/hook-secret` replaces.
+             */
+            hook_secret?: string;
         };
         /** @description A message posted to a webhook bridge's hook. */
         HookMessage: {
@@ -1649,6 +1737,36 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+        };
+    };
+    pairDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PairDevice"];
+            };
+        };
+        responses: {
+            /** @description The person and the device's token */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        principal: components["schemas"]["Principal"];
+                        token: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     logout: {
@@ -2520,6 +2638,17 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            /** @description The bridge's hook is over its limit (code rate_limited) */
+            429: {
+                headers: {
+                    /** @description Seconds until a post would pass. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listNetworks: {
@@ -2703,6 +2832,45 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             /** @description The bridge is not waiting for an answer */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rotateHookSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new secret, and the bridge */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        secret: string;
+                        bridge: components["schemas"]["Bridge"];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description The bridge is being deleted (code deleting) or its network has
+             *     no hook secret (code no_hook_secret)
+             */
             409: {
                 headers: {
                     [name: string]: unknown;

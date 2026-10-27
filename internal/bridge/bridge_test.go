@@ -38,6 +38,16 @@ func TestMain(m *testing.M) {
 			return fakes.logOut(b)
 		},
 	})
+	bridge.Register(bridge.Network{
+		Name:       "fake-idempotent",
+		Title:      "Fake that takes repeats",
+		Modes:      []string{store.ModeAccount},
+		Fields:     []bridge.Field{{Key: "server", Label: "Server", Kind: "text", Required: true}},
+		Idempotent: true,
+		Open: func(b bridge.Info, h bridge.Host) (bridge.Conn, error) {
+			return fakes.open(b, h), nil
+		},
+	})
 	os.Exit(m.Run())
 }
 
@@ -49,6 +59,9 @@ type fakeNet struct {
 	conns map[string]*fakeConn
 	// ask makes new connections ask for a code before they connect.
 	ask bool
+	// saveOnStop makes new connections save their state, slowly, as they
+	// stop.
+	saveOnStop bool
 	// logouts counts the logouts of each bridge; logoutErr fails them.
 	logouts   map[string]int
 	logoutErr error
@@ -76,7 +89,7 @@ func (n *fakeNet) loggedOut(id string) int {
 func (n *fakeNet) open(b bridge.Info, h bridge.Host) *fakeConn {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	c := &fakeConn{info: b, h: h, in: make(chan bridge.Incoming, 16), ask: n.ask}
+	c := &fakeConn{info: b, h: h, in: make(chan bridge.Incoming, 16), ask: n.ask, saveOnStop: n.saveOnStop}
 	n.conns[b.ID] = c
 	return c
 }
@@ -98,6 +111,8 @@ type fakeConn struct {
 	h    bridge.Host
 	in   chan bridge.Incoming
 	ask  bool
+
+	saveOnStop bool
 
 	mu      sync.Mutex
 	running bool
@@ -132,6 +147,10 @@ func (c *fakeConn) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			if c.saveOnStop {
+				time.Sleep(200 * time.Millisecond)
+				c.h.SaveState(context.WithoutCancel(ctx), json.RawMessage(`{"stopped":true}`))
+			}
 			return ctx.Err()
 		case m := <-c.in:
 			if err := c.h.Receive(ctx, m); err != nil {
@@ -486,6 +505,66 @@ func TestUnsureSendsAreNeverRetried(t *testing.T) {
 	}
 }
 
+func TestIdempotentSendsAreRetried(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	var b wireBridge
+	body := map[string]any{"network": "fake-idempotent", "mode": store.ModeAccount, "config": map[string]any{"server": "fake.example"}}
+	if code := e.call("POST", "/api/v1/bridges", body, &b); code != http.StatusCreated {
+		t.Fatalf("create bridge: %d", code)
+	}
+	stop := e.runner("n1")
+	c := fakes.conn(t, b.ID)
+	c.in <- bridge.Incoming{Chat: bridge.RemoteChat{ID: "g", Name: "Group"}, ID: "m1", Author: bridge.Author{ID: "bob", Name: "Bob"}, Text: "hi"}
+	l := e.portal(b.ID, "g")
+
+	// A send with an unknown outcome stays sending and holds up the ones
+	// after it.
+	c.set(func(c *fakeConn) { c.sendErr = errors.New("timeout") })
+	a, _, _ := e.srv.SendText(ctx, e.ada, l.RoomID, "first", "", "", false)
+	eventually(t, "the send failed", func() bool {
+		m, err := e.store.GetBridgeMessage(ctx, l.ID, a.ID)
+		return err == nil && m.State == store.BridgeSending && m.Error != ""
+	})
+	next, _, _ := e.srv.SendText(ctx, e.ada, l.RoomID, "second", "", "", false)
+	time.Sleep(100 * time.Millisecond)
+	if e.delivery(l.ID, next.ID) != "" {
+		t.Fatal("a later message went first")
+	}
+
+	// The node stops; another takes over, and old messages do not expire.
+	stop()
+	if e.delivery(l.ID, a.ID) != store.BridgeSending {
+		t.Fatalf("the stopped send is %q", e.delivery(l.ID, a.ID))
+	}
+	stale, err := e.srv.SendAs(ctx, e.ada, l.RoomID, core.NewID(), []core.Part{core.TextPart("long ago")}, "", time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.runner("n2")
+	c2 := fakes.conn(t, b.ID)
+	eventually(t, "all are sent", func() bool { return e.delivery(l.ID, stale.ID) == store.BridgeSent })
+	var texts []string
+	for _, s := range c2.sends() {
+		texts = append(texts, s.Text)
+		if len(s.Parts) != 1 || s.Parts[0].Kind != core.PartText {
+			t.Fatalf("parts = %+v", s.Parts)
+		}
+	}
+	if strings.Join(texts, ", ") != "first, second, long ago" {
+		t.Fatalf("sent %v", texts)
+	}
+
+	// Parts come in as they are.
+	card := core.Part{Kind: core.PartCard, Data: []byte(`{"title":"Plan"}`)}
+	c2.in <- bridge.Incoming{Chat: bridge.RemoteChat{ID: "g"}, ID: "m2", Author: bridge.Author{ID: "bob", Name: "Bob"}, Parts: []core.Part{core.TextPart("see"), card}}
+	eventually(t, "the card is in", func() bool {
+		log := e.log(l.RoomID)
+		last := log[len(log)-1]
+		return len(last.Parts) == 2 && last.Parts[1].Kind == core.PartCard
+	})
+}
+
 func TestLoginPrompt(t *testing.T) {
 	e := newEnv(t)
 	fakes.mu.Lock()
@@ -638,6 +717,35 @@ func TestTakeoverAfterCrashSendsOnce(t *testing.T) {
 	}
 	if strings.Join(texts, ",") != "one,two,three" {
 		t.Fatalf("sends = %v", texts)
+	}
+}
+
+// The lease is held until the connection has stopped, so the next node
+// gets what it saved on the way out.
+func TestHandoverWaitsForStop(t *testing.T) {
+	e := newEnv(t)
+	fakes.mu.Lock()
+	fakes.saveOnStop = true
+	fakes.mu.Unlock()
+	defer func() {
+		fakes.mu.Lock()
+		fakes.saveOnStop = false
+		fakes.mu.Unlock()
+	}()
+	b := e.addBridge(store.ModeAccount)
+	stop1 := e.runner("n1")
+	c1 := fakes.conn(t, b.ID)
+	e.runner("n2")
+	stop1()
+	var c2 *fakeConn
+	eventually(t, "n2 takes over", func() bool {
+		fakes.mu.Lock()
+		defer fakes.mu.Unlock()
+		c2 = fakes.conns[b.ID]
+		return c2 != c1 && c2.isRunning()
+	})
+	if string(c2.info.State) != `{"stopped":true}` {
+		t.Fatalf("n2 started with state %s", c2.info.State)
 	}
 }
 

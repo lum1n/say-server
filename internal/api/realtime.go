@@ -33,6 +33,19 @@ func (s *Server) notifyRooms(ctx context.Context, principalID string) {
 	s.publish(ctx, bus.RoomsSubject(principalID))
 }
 
+// notifyInbox tells the sockets of everyone in widget thread roomID to
+// reread their inbox. Visitors have no inbox, so nothing hears theirs.
+func (s *Server) notifyInbox(ctx context.Context, roomID string) {
+	ms, err := s.store.Members(ctx, roomID)
+	if err != nil {
+		slog.Warn("inbox hint failed", "room", roomID, "err", err)
+		return
+	}
+	for _, m := range ms {
+		s.publish(ctx, bus.InboxSubject(m.PrincipalID))
+	}
+}
+
 // publishStream announces a streaming message's new parts.
 func (s *Server) publishStream(ctx context.Context, msg core.Event) {
 	data, err := json.Marshal(toEvent(msg))
@@ -236,8 +249,9 @@ const maxSubscriptions = 1000
 // ws serves the client and connector WebSocket. Requests are envelopes
 // with a client-chosen id; the reply echoes the id and type with a status.
 // Events arrive as pushes of type "event" without a status, a streaming
-// message's changes as pushes of type "stream", and a push of type "rooms"
-// says the caller's room list changed.
+// message's changes as pushes of type "stream", a push of type "rooms"
+// says the caller's room list changed, and one of type "inbox" that a
+// widget thread in its inbox has a new message.
 func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	// Accept checks that the Origin matches the Host, so another site cannot
 	// open a socket with the user's cookie. A client that sent its token as
@@ -274,6 +288,18 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 		return
 	}
 	defer unsubscribe()
+	if me.Kind == core.PrincipalHuman || me.Kind == core.PrincipalAgent {
+		// Only people and agents have an inbox (listWidgetThreads).
+		unsubscribe, err := s.bus.Subscribe(bus.InboxSubject(me.ID), func(string, []byte) {
+			c.push(envelope{ID: core.NewID(), Type: "inbox"})
+		})
+		if err != nil {
+			slog.Error("websocket inbox subscription failed", "err", err)
+			conn.Close(websocket.StatusInternalError, "")
+			return
+		}
+		defer unsubscribe()
+	}
 	go c.writeLoop(ctx)
 	go c.pingLoop(ctx)
 	err = c.readLoop(ctx)

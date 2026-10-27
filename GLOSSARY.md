@@ -127,7 +127,8 @@
 
 **Hook**
 : The URL `/api/v1/hooks/{bridge id}` where programs post messages to a
-  bridge that takes them over HTTP, such as webhooks. Any node takes them.
+  bridge that takes them over HTTP, such as webhooks. Any node takes them,
+  up to a limit a minute per bridge.
 
 **IdentityLink**
 : Maps a remote user on a network to a ghost principal. Merging ghosts into

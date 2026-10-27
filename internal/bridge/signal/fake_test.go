@@ -16,7 +16,7 @@ import (
 // speaks signal-cli's JSON-RPC on stdin and stdout. Tests steer it through
 // files in its data directory:
 //
-//	account         the linked number; startLink is needed without it
+//	data/account    the linked number; startLink is needed without it
 //	scanned         lets a waiting finishLink finish, as a phone would
 //	outdated        makes a waiting finishLink fail as Signal fails an old signal-cli
 //	push-*.json     params of a "receive" notification to send, in order
@@ -26,8 +26,12 @@ import (
 //
 // Run with "-a NUMBER unregister" or "deleteLocalAccountData" instead of
 // jsonRpc, it logs the command to requests.jsonl; the latter deletes the
-// account file.
+// account file. Like signal-cli it keeps the account under data/.
 const fakeEnv = "SAY_FAKE_SIGNAL_CLI"
+
+// fakeLogEnv, if set, names a file the one-off commands are logged to as
+// well, for directories that are gone by the time the test looks.
+const fakeLogEnv = "SAY_FAKE_SIGNAL_CLI_LOG"
 
 const (
 	fakeNumber = "+4700000001"
@@ -76,12 +80,15 @@ func fakeCommand(dir string) bool {
 	f := &fake{dir: dir}
 	line, _ := json.Marshal(map[string]string{"command": command, "account": account})
 	f.log(line)
+	if p := os.Getenv(fakeLogEnv); p != "" {
+		(&fake{dir: filepath.Dir(p)}).logTo(filepath.Base(p), line)
+	}
 	switch {
 	case command == "unregister" && f.exists("offline"):
 		fmt.Fprintln(os.Stderr, "ERROR network is unreachable")
 		os.Exit(3)
 	case command == "deleteLocalAccountData":
-		os.Remove(filepath.Join(dir, "account"))
+		os.Remove(filepath.Join(dir, "data", "account"))
 	}
 	os.Exit(0)
 	return true
@@ -103,10 +110,12 @@ func (f *fake) write(m any) {
 	f.out.Flush()
 }
 
-func (f *fake) log(line []byte) {
+func (f *fake) log(line []byte) { f.logTo("requests.jsonl", line) }
+
+func (f *fake) logTo(name string, line []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	lf, err := os.OpenFile(filepath.Join(f.dir, "requests.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	lf, err := os.OpenFile(filepath.Join(f.dir, name), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
@@ -152,7 +161,7 @@ func (f *fake) handle(req wire) {
 	switch req.Method {
 	case "listAccounts":
 		list := []map[string]string{}
-		if raw, err := os.ReadFile(filepath.Join(f.dir, "account")); err == nil {
+		if raw, err := os.ReadFile(filepath.Join(f.dir, "data", "account")); err == nil {
 			list = append(list, map[string]string{"number": strings.TrimSpace(string(raw))})
 		}
 		result = list
@@ -166,7 +175,8 @@ func (f *fake) handle(req wire) {
 			rerr = &rpcError{Code: -3, Message: "Link request error: StatusCode: 409 (MissingCapabilitiesException)"}
 			break
 		}
-		os.WriteFile(filepath.Join(f.dir, "account"), []byte(fakeNumber), 0o600)
+		os.MkdirAll(filepath.Join(f.dir, "data"), 0o700)
+		os.WriteFile(filepath.Join(f.dir, "data", "account"), []byte(fakeNumber), 0o600)
 		result = map[string]string{"number": fakeNumber}
 	case "listContacts":
 		result = []map[string]any{

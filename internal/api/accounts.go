@@ -130,21 +130,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	l, err := s.store.LoginByUsername(r.Context(), strings.ToLower(strings.TrimSpace(body.Username)))
-	if errors.Is(err, store.ErrNotFound) {
-		password.CheckMissing(body.Password)
-		writeError(w, errBadCredentials)
-		return
-	}
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if ok, err := password.Check(l.PasswordHash, body.Password); err != nil || !ok {
-		writeError(w, errBadCredentials)
-		return
-	}
-	p, err := s.store.GetPrincipal(r.Context(), l.PrincipalID)
+	p, err := s.checkLogin(r, body.Username, body.Password)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -154,6 +140,59 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, toPrincipal(p))
+}
+
+// pairDevice signs a person in from one of their devices, such as a node
+// syncing with this one (docs/adr/0015-sync.md), and returns a token for
+// it that does not expire. A device pairing again under the same name
+// replaces its earlier token.
+func (s *Server) pairDevice(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Name     string `json:"name"`
+	}
+	if err := readJSON(w, r, &body); err != nil {
+		writeError(w, err)
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" || utf8.RuneCountInString(name) > 64 {
+		writeError(w, errorf(http.StatusUnprocessableEntity, "invalid", "name must be 1–64 characters"))
+		return
+	}
+	p, err := s.checkLogin(r, body.Username, body.Password)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	token := "device:" + name
+	if err := s.store.RevokeTokensNamed(r.Context(), p.ID, token); err != nil {
+		writeError(w, err)
+		return
+	}
+	secret, err := s.store.CreateToken(r.Context(), p.ID, token, time.Time{})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"principal": toPrincipal(p), "token": secret})
+}
+
+// checkLogin returns the person whose username and password these are.
+func (s *Server) checkLogin(r *http.Request, username, pw string) (core.Principal, error) {
+	l, err := s.store.LoginByUsername(r.Context(), strings.ToLower(strings.TrimSpace(username)))
+	if errors.Is(err, store.ErrNotFound) {
+		password.CheckMissing(pw)
+		return core.Principal{}, errBadCredentials
+	}
+	if err != nil {
+		return core.Principal{}, err
+	}
+	if ok, err := password.Check(l.PasswordHash, pw); err != nil || !ok {
+		return core.Principal{}, errBadCredentials
+	}
+	return s.store.GetPrincipal(r.Context(), l.PrincipalID)
 }
 
 // startSession issues a session token and sets it as the token cookie. The

@@ -14,6 +14,7 @@ import {
   listRooms,
   type Network,
   type NetworkField,
+  rotateHookSecret,
   updateBridge,
 } from "@say/sdk";
 import { type FormEvent, useState } from "react";
@@ -64,6 +65,7 @@ const stateText: Record<string, string> = {
 function deleteWarning(b: Bridge, title: string) {
   const out = {
     matrix: "say's session is logged out, unless you gave it an access token of your own.",
+    say: "this device's token on home is revoked, which unpairs it.",
     telegram: "say's session is ended.",
     signal: "say stops receiving and deletes its keys. Remove it under Linked devices on your phone too: Signal lets only the phone do that.",
   }[b.network];
@@ -121,16 +123,48 @@ function BridgeRow({ bridge: b, network }: { bridge: Bridge; network?: Network }
           {b.error}
         </p>
       )}
-      {network?.hook && (
-        <p className="muted hook">
-          Hook URL: <code>{hookURL(b.id)}</code>
-        </p>
-      )}
+      {network?.hook && <HookBox bridge={b} network={network} deleting={deleting} />}
       {b.prompt && <PromptBox bridge={b} />}
       <FormError error={toggle.error ?? remove.error} />
       {editing && !deleting && network && <ConfigForm network={network} mode={b.mode} bridge={b} onSaved={() => setEditing(false)} />}
       <Chats bridge={b} />
     </li>
+  );
+}
+
+// HookBox shows where programs post to a bridge, and lets its secret be
+// replaced when it leaks. The new one shows only until the page is left.
+function HookBox({ bridge: b, network, deleting }: { bridge: Bridge; network: Network; deleting: boolean }) {
+  const queryClient = useQueryClient();
+  const rotate = useMutation({
+    mutationFn: () => rotateHookSecret(b.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.bridges }),
+  });
+  return (
+    <>
+      <p className="muted hook">
+        Hook URL: <code>{hookURL(b.id)}</code>
+        {network.hook_secret && !deleting && (
+          <>
+            {" "}
+            <button
+              type="button"
+              className="link"
+              disabled={rotate.isPending}
+              onClick={() => confirm("Make a new secret? Programs posting with the old one are refused from now on.") && rotate.mutate()}
+            >
+              New secret
+            </button>
+          </>
+        )}
+      </p>
+      {rotate.data && (
+        <p className="hook">
+          New secret, shown only now: <code>{rotate.data.secret}</code>
+        </p>
+      )}
+      <FormError error={rotate.error} />
+    </>
   );
 }
 

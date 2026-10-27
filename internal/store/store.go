@@ -204,10 +204,14 @@ type Store interface {
 	// empty. It returns ErrVisitorExists if the visitor is not anonymous
 	// or its widget already has a visitor with that subject.
 	VerifyVisitor(ctx context.Context, principalID, subject, displayName, roomName string) (Visitor, error)
+	// LinkVisitor records that anonymous visitor principalID signed in as
+	// verified visitor verifiedID, who already had a thread; neither
+	// thread changes. A visitor that is not anonymous is ErrNotFound.
+	LinkVisitor(ctx context.Context, principalID, verifiedID string) error
 	// DeleteVisitor erases a visitor in one transaction: its thread with
 	// every event and member, the messages it wrote in other rooms, its
-	// memberships and tokens, and its guest principal. An unknown visitor
-	// is ErrNotFound.
+	// memberships and tokens, and its guest principal. Anonymous visitors
+	// linked to it are unlinked. An unknown visitor is ErrNotFound.
 	DeleteVisitor(ctx context.Context, principalID string) error
 	// WidgetThreads returns up to limit widget threads principalID is a
 	// member of, latest activity first.

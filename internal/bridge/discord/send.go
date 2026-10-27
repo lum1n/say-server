@@ -45,8 +45,16 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 }
 
 func (c *conn) send(ctx context.Context, m bridge.Outgoing) (string, error) {
+	ch, thread, err := c.hookChannel(ctx, m.Chat)
+	if err != nil {
+		return "", err
+	}
+	query := "?wait=true"
+	if thread != "" {
+		query += "&thread_id=" + thread
+	}
 	for try := 0; try < 2; try++ {
-		h, err := c.hook(ctx, m.Chat, true)
+		h, err := c.hook(ctx, ch, true)
 		if err != nil {
 			return "", err
 		}
@@ -57,10 +65,10 @@ func (c *conn) send(ctx context.Context, m bridge.Outgoing) (string, error) {
 			ID string `json:"id"`
 		}
 		body := map[string]any{"content": clip(m.Text), "username": username(m.Sender), "allowed_mentions": noMentions}
-		err = c.do(ctx, http.MethodPost, "/webhooks/"+h.ID+"/"+h.Token+"?wait=true", body, &r)
+		err = c.do(ctx, http.MethodPost, "/webhooks/"+h.ID+"/"+h.Token+query, body, &r)
 		if status(err) == http.StatusNotFound {
 			// Someone deleted the webhook; find or make another.
-			c.forgetHook(m.Chat)
+			c.forgetHook(ch)
 			continue
 		}
 		if err != nil {
@@ -98,13 +106,21 @@ func (c *conn) edit(ctx context.Context, m bridge.Outgoing, remoteID string) err
 	via := c.sentBy[remoteID]
 	c.mu.Unlock()
 	if via != "bot" {
-		h, err := c.hook(ctx, m.Chat, false)
+		ch, thread, err := c.hookChannel(ctx, m.Chat)
+		if err != nil {
+			return err
+		}
+		query := ""
+		if thread != "" {
+			query = "?thread_id=" + thread
+		}
+		h, err := c.hook(ctx, ch, false)
 		if err != nil {
 			return err
 		}
 		if h != nil {
 			body := map[string]any{"content": clip(m.Text), "allowed_mentions": noMentions}
-			err := c.do(ctx, http.MethodPatch, "/webhooks/"+h.ID+"/"+h.Token+"/messages/"+remoteID, body, nil)
+			err := c.do(ctx, http.MethodPatch, "/webhooks/"+h.ID+"/"+h.Token+"/messages/"+remoteID+query, body, nil)
 			if s := status(err); s != http.StatusNotFound && s != http.StatusForbidden {
 				return err
 			}
@@ -112,6 +128,32 @@ func (c *conn) edit(ctx context.Context, m bridge.Outgoing, remoteID string) err
 	}
 	body := map[string]any{"content": botText(m), "allowed_mentions": noMentions}
 	return c.do(ctx, http.MethodPatch, "/channels/"+m.Chat+"/messages/"+remoteID, body, nil)
+}
+
+// hookChannel returns the channel whose webhook posts to chat, and
+// chat's id again if it is a thread in that channel. A thread, such as a forum
+// post, has no webhooks of its own: its channel's post into it with
+// thread_id. What a channel is comes from the gateway, else is asked.
+func (c *conn) hookChannel(ctx context.Context, chat string) (ch, thread string, err error) {
+	c.mu.Lock()
+	parent, known := c.parents[chat]
+	c.mu.Unlock()
+	if !known {
+		var info channel
+		err := c.do(ctx, http.MethodGet, "/channels/"+chat, nil, &info)
+		if _, ok := errors.AsType[*apiError](err); err != nil && !ok {
+			return "", "", err
+		}
+		// One the bot may not see is taken for a plain channel; posting
+		// to it says why it fails.
+		info.ID = chat
+		c.name(info)
+		parent = info.parent()
+	}
+	if parent == "" {
+		return chat, "", nil
+	}
+	return parent, chat, nil
 }
 
 // hook returns a channel's say webhook: cached, found among the

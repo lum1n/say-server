@@ -85,6 +85,20 @@ read another visitor's chat.
   ghosts) or read the directory, so member lists now carry each member's
   name and kind.
 
+- **The team can follow a visitor who signed in elsewhere** (added
+  2026-10-27). When an anonymous visitor signs in as a `sub` that already
+  has a thread, the anonymous visitor records whose it was
+  (`signed_in_as`), and the inbox shows that thread as "then signed in
+  as …" with the verified thread counting its earlier chats. The logs
+  stay apart, for the reasons above; a link costs one column and keeps
+  both histories as they happened. The anonymous thread is no longer
+  *waiting*, since the visitor waits in the other one, so it goes idle
+  like any other. The link names a thread, not its contents: someone on
+  the anonymous thread's team who is not on the verified one sees the
+  link but cannot read that thread, and the web app shows the name only
+  when the inbox already holds both. Erasing the verified visitor clears
+  the link and leaves the anonymous thread, which is nobody's.
+
 - **Visitors can be erased** (added 2026-10-25). The visitor, with its
   own token (`DELETE /embed/{key}/session`), or an instance admin
   (`DELETE /visitors/{id}`), deletes the visitor in one transaction: its
@@ -114,10 +128,14 @@ read another visitor's chat.
   widget goes on a busy public site, they need per-IP limits, like
   sign-in.
 - The inbox has no per-person unread counts: "waiting" says only that
-  the visitor wrote last, which suits a team sharing threads. Messages in
-  threads that are not open are not pushed, so the web app rereads the
-  inbox every 15 seconds. It reads the latest 200 threads; older idle ones
-  drop off the end.
+  the visitor wrote last, which suits a team sharing threads. The team
+  does not follow threads they have not opened, so a new message in a
+  widget thread also sends its members' sockets an `inbox` push with no
+  payload, like `rooms` (ADR 0006), and the web app rereads the inbox on
+  it and after reconnecting. Each such message costs one read of the
+  thread's members. Going idle is not an event, so each thread says when
+  it goes idle (`idle_at`) and the web app rereads the inbox then. It
+  reads the latest 200 threads; older idle ones drop off the end.
 - Firefox has no `location.ancestorOrigins`, so there the embed page reads
   its parent's origin from the referrer. A host page whose referrer policy
   is `no-referrer` shows "not set up for this site" in Firefox.

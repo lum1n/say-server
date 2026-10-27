@@ -33,6 +33,7 @@ func init() {
 		Capabilities: []connector.Capability{connector.CapEdits},
 		Open:         open,
 		Hook:         hook,
+		HookSecret:   "token",
 	})
 }
 

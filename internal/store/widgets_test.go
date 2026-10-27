@@ -113,6 +113,35 @@ func TestWidgetsAndVisitors(t *testing.T) {
 			t.Fatalf("thread after verify = %+v, %v", r, err)
 		}
 
+		// One who signs in as a subject that has a visitor is linked to it.
+		other, err := visit("")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.LinkVisitor(ctx, other.PrincipalID, v.PrincipalID); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.LinkVisitor(ctx, v.PrincipalID, anon.PrincipalID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("link a verified visitor: %v", err)
+		}
+		other.SignedInAs = v.PrincipalID
+		if got, err := s.VisitorByPrincipal(ctx, other.PrincipalID); err != nil || got != other {
+			t.Fatalf("linked visitor = %+v, %v; want %+v", got, err, other)
+		}
+		threads, err := s.WidgetThreads(ctx, ada.ID, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, th := range threads {
+			want := ""
+			if th.PrincipalID == other.PrincipalID {
+				want = v.RoomID
+			}
+			if th.SignedInRoomID != want {
+				t.Fatalf("thread %+v: SignedInRoomID = %q, want %q", th.Visitor, th.SignedInRoomID, want)
+			}
+		}
+
 		// Deleting the widget signs its visitors out and keeps their threads.
 		token, err := s.CreateToken(ctx, v.PrincipalID, "widget", time.Time{})
 		if err != nil {
