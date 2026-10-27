@@ -9,7 +9,7 @@ PYGEN := uvx --from datamodel-code-generator==0.86.0 datamodel-codegen \
 	--use-standard-collections --use-union-operator --no-use-closed-typed-dict
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-.PHONY: build web go generate generate-py test image node-image node-test cluster-test clean libsay android ios
+.PHONY: build web go generate generate-py test image node-image node-test release cluster-test clean libsay android ios
 
 build: web go
 
@@ -64,6 +64,11 @@ node-image:
 # node-test boots the say-node image under Docker and claims it.
 node-test: node-image
 	image/node/test.sh say-node:$(VERSION)
+
+# release publishes vVERSION from this machine, as release.yml does on a
+# tag: make release VERSION=0.4.1 (DRY=1 to build without pushing).
+release:
+	scripts/release.sh $(if $(DRY),-n) $(VERSION)
 
 # cluster-test runs three nodes and Postgres in docker compose and tests
 # delivery and replay across them. The cluster is removed afterwards.

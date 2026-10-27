@@ -98,6 +98,11 @@ make cluster-test   # three nodes and Postgres in docker compose: a client on
                     # what it missed after reconnecting elsewhere
 ```
 
+A `v*` tag releases the say-node image, say for Linux and a signed
+manifest (`.github/workflows/release.yml`). `make release VERSION=0.4.1`
+does the same from your machine once the tag is pushed; `DRY=1` builds
+into `dist/` without publishing.
+
 The cluster test (`test/cluster`) only talks HTTP, so it also runs against
 any cluster you start yourself, as long as every node has the same
 `SAY_SETUP_CODE`:

@@ -6,6 +6,7 @@ name: release
 # - manifest.json, which the apps read to pick the image for a new node and
 #   say-update reads to update one, and manifest.json.minisig.
 # The manifest goes up last, so it never names an image that isn't there.
+# scripts/release.sh does the same from a laptop.
 
 on:
   push:
@@ -87,39 +88,8 @@ jobs:
           path: dist
       - name: Manifest
         run: |
-          version=${GITHUB_REF_NAME#v}
-          cd dist
-          sha256sum say-linux-* >SHA256SUMS
-          # signal-cli comes from its own releases, pinned in the Dockerfile.
-          sig_version=$(sed -n 's/^ARG SIGNAL_CLI_VERSION=//p' ../Dockerfile)
-          sig_sha=$(sed -n 's/^ARG SIGNAL_CLI_SHA256=//p' ../Dockerfile)
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
-          jq -n \
-            --arg version "$version" \
-            --arg image "ghcr.io/lum1n/say-node:$version" \
-            --arg digest "${{ needs.image.outputs.digest }}" \
-            --arg base "$base" \
-            --arg amd64 "$(sha256sum say-linux-amd64 | cut -d' ' -f1)" \
-            --arg arm64 "$(sha256sum say-linux-arm64 | cut -d' ' -f1)" \
-            --arg sig_version "$sig_version" \
-            --arg sig_sha "$sig_sha" \
-            '{
-              version: $version,
-              image: $image,
-              image_digest: $digest,
-              say: {
-                "linux-amd64": {url: "\($base)/say-linux-amd64", sha256: $amd64},
-                "linux-arm64": {url: "\($base)/say-linux-arm64", sha256: $arm64}
-              },
-              signal_cli: {
-                version: $sig_version,
-                "linux-amd64": {
-                  url: "https://github.com/AsamK/signal-cli/releases/download/v\($sig_version)/signal-cli-\($sig_version)-Linux-native.tar.gz",
-                  sha256: $sig_sha
-                }
-              }
-            }' >manifest.json
-          cat manifest.json
+          scripts/manifest.sh "${GITHUB_REF_NAME#v}" "${{ needs.image.outputs.digest }}" dist
+          cat dist/manifest.json
       - name: Sign the manifest
         env:
           MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}

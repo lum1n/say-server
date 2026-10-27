@@ -124,7 +124,9 @@ ADR 0011) and `../sessh-swift`.
   SHA-256, and signal-cli's pinned version and checksum, for
   `say-update`. It is signed with minisign (`manifest.json.minisig`).
   An Ed25519 key that say pins is simple to check from Go, unlike
-  sigstore bundles.
+  sigstore bundles. `make release VERSION=…` (`scripts/release.sh`)
+  does the same from a laptop, for when Actions isn't available; both
+  build the manifest with `scripts/manifest.sh`.
 
 ## Consequences
 
