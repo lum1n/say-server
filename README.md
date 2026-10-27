@@ -328,6 +328,25 @@ accounts, no Slack web-session tokens ([ADR
 credentials and reads these messages; bridged messages are never
 end-to-end encrypted, and Matrix's encrypted rooms aren't readable yet.
 
+### Syncing with your home say
+
+A say on your laptop or phone can sync with the say you run on a server,
+your home. On the device's **Accounts** page, add **say (home)** with
+home's address and your username there, and type your password when it
+asks; the device keeps a token of its own instead (`POST
+/api/v1/devices`), named after the device. Home's rooms show up as rooms
+on the device with the last 30 days in them, at most 500 messages each;
+people and agents there show up by name; what you write on the device
+goes to home as you, and what you write on the web or another device
+shows up as yours. Edits go both ways.
+
+Offline, the device keeps working: what you write is sent, in order,
+whenever home is back, however long that takes, and never twice. Rooms
+that are not from home stay on the device, and so do the messages of the
+device's own agents. **Delete** revokes the device's token on home.
+Attachments, reactions and read state don't sync yet ([ADR
+0015](./docs/adr/0015-sync.md)).
+
 ### Relay bots
 
 Instance admins add relay bots on the same page. A room's owner links the
@@ -388,7 +407,7 @@ placeholder page instead of the app.
 - [ADR 0012: The chat widget](./docs/adr/0012-widget.md)
 - [ADR 0013: Embedding say in apps](./docs/adr/0013-embedding.md)
 - [ADR 0014: Bridges — your own accounts first](./docs/adr/0014-bridges.md)
-- [ADR 0015: Sync with a home say](./docs/adr/0015-sync.md) (proposed)
+- [ADR 0015: Sync with a home say](./docs/adr/0015-sync.md)
 
 ## Privacy
 

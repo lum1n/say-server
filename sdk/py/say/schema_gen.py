@@ -72,6 +72,15 @@ class Login(TypedDict):
     password: str
 
 
+class PairDevice(TypedDict):
+    username: str
+    password: str
+    name: str
+    """
+    The device's name, like `phone`.
+    """
+
+
 class CreatePrincipal(TypedDict):
     kind: Literal['human', 'agent']
     display_name: NotRequired[str]

@@ -177,6 +177,51 @@ func TestLoginLogoutAndPrincipals(t *testing.T) {
 	}
 }
 
+func TestPairDevice(t *testing.T) {
+	e := newEnv(t)
+	e.srv.setupCode = "c"
+	if res, data := e.raw("POST", "/setup", map[string]string{"code": "c", "username": "ada", "password": "correct horse"}, nil); res.StatusCode != 201 {
+		t.Fatalf("setup = %d %s", res.StatusCode, data)
+	}
+	for _, body := range []map[string]string{
+		{"username": "ada", "password": "wrong password", "name": "phone"},
+		{"username": "nobody", "password": "correct horse", "name": "phone"},
+	} {
+		if res, data := e.raw("POST", "/devices", body, nil); res.StatusCode != 401 || errCode(data) != "invalid_credentials" {
+			t.Fatalf("pair %v = %d %s", body, res.StatusCode, data)
+		}
+	}
+	if res, data := e.raw("POST", "/devices", map[string]string{"username": "ada", "password": "correct horse"}, nil); res.StatusCode != 422 {
+		t.Fatalf("pair without a name = %d %s", res.StatusCode, data)
+	}
+	pair := func(name string) string {
+		t.Helper()
+		res, data := e.raw("POST", "/devices", map[string]string{"username": "Ada", "password": "correct horse", "name": name}, nil)
+		var d struct {
+			Principal wirePrincipal
+			Token     string
+		}
+		if json.Unmarshal(data, &d); res.StatusCode != 201 || d.Token == "" || d.Principal.DisplayName != "ada" {
+			t.Fatalf("pair %s = %d %s", name, res.StatusCode, data)
+		}
+		if len(res.Cookies()) != 0 {
+			t.Fatalf("pairing set a cookie: %v", res.Cookies())
+		}
+		return d.Token
+	}
+	phone, laptop := pair("phone"), pair("laptop")
+	again := pair("phone")
+	var me wirePrincipal
+	if code := e.do("GET", "/me", phone, nil, &me); code != 401 {
+		t.Fatalf("the replaced token = %d", code)
+	}
+	for _, token := range []string{again, laptop} {
+		if code := e.do("GET", "/me", token, nil, &me); code != 200 || me.DisplayName != "ada" {
+			t.Fatalf("device token = %d %+v", code, me)
+		}
+	}
+}
+
 func TestListPrincipals(t *testing.T) {
 	e := newEnv(t)
 	ada, adaTok := e.user("Ada", core.PrincipalHuman)

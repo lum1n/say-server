@@ -64,6 +64,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/devices": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Get a token for one of the person's devices
+         * @description For a node that syncs with this one, its home
+         *     (docs/adr/0015-sync.md). Takes the person's username and password
+         *     and returns a token named `device:<name>` that does not expire. It
+         *     replaces the token an earlier pairing with the same name got.
+         *     POST /logout with the token unpairs the device.
+         */
+        post: operations["pairDevice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/logout": {
         parameters: {
             query?: never;
@@ -868,6 +892,12 @@ export interface components {
             username: string;
             password: string;
         };
+        PairDevice: {
+            username: string;
+            password: string;
+            /** @description The device's name, like `phone`. */
+            name: string;
+        };
         CreatePrincipal: {
             /** @enum {string} */
             kind: "human" | "agent";
@@ -1569,6 +1599,36 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+        };
+    };
+    pairDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PairDevice"];
+            };
+        };
+        responses: {
+            /** @description The person and the device's token */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        principal: components["schemas"]["Principal"];
+                        token: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     logout: {

@@ -1,4 +1,4 @@
-package say
+package client
 
 import (
 	"context"

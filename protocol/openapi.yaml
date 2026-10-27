@@ -10,13 +10,14 @@ info:
     envelope defined in envelope.schema.json. This file is the source of
     truth for sdk/ts and sdk/py.
 
-    Every route except /health, /setup, /login and /embed/{key} needs an
+    Every route except /health, /setup, /login, /devices and /embed/{key} needs an
     access token, sent as `Authorization: Bearer <token>` or, for
     browsers, in the `say_token` cookie. A browser that cannot use the
     cookie (the widget's iframe) offers the token on /ws as the
     subprotocol `say.token.<token>` next to `say.v1`. People get the
     cookie from POST /setup or POST /login; agents get a token from
-    POST /principals or `say principal add`. Request bodies must be `application/json`.
+    POST /principals or `say principal add`; a person's devices get one
+    from POST /devices. Request bodies must be `application/json`.
 
     Realtime: every event has a per-room `seq`. A client keeps the last
     `seq` it has seen per room (its cursor) and resumes from it after a
@@ -104,6 +105,42 @@ paths:
         "400":
           $ref: "#/components/responses/Error"
         "401":
+          $ref: "#/components/responses/Error"
+  /devices:
+    post:
+      operationId: pairDevice
+      summary: Get a token for one of the person's devices
+      description: |
+        For a node that syncs with this one, its home
+        (docs/adr/0015-sync.md). Takes the person's username and password
+        and returns a token named `device:<name>` that does not expire. It
+        replaces the token an earlier pairing with the same name got.
+        POST /logout with the token unpairs the device.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PairDevice"
+      responses:
+        "201":
+          description: The person and the device's token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [principal, token]
+                properties:
+                  principal:
+                    $ref: "#/components/schemas/Principal"
+                  token:
+                    type: string
+        "400":
+          $ref: "#/components/responses/Error"
+        "401":
+          $ref: "#/components/responses/Error"
+        "422":
           $ref: "#/components/responses/Error"
   /logout:
     post:
@@ -1438,6 +1475,20 @@ components:
           type: string
         password:
           type: string
+    PairDevice:
+      type: object
+      required: [username, password, name]
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: The device's name, like `phone`.
     CreatePrincipal:
       type: object
       required: [kind]

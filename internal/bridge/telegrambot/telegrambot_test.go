@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -291,7 +292,7 @@ func TestRun(t *testing.T) {
 		Chat: bridge.RemoteChat{ID: "-1001", Name: "Crew"}, ID: "10",
 		Author: bridge.Author{ID: "7", Name: "Ada Lovelace"}, Text: "look", ReplyTo: "9", Time: time.Unix(1700000000, 0),
 	}
-	if got[0] != want {
+	if !reflect.DeepEqual(got[0], want) {
 		t.Errorf("photo message = %+v", got[0])
 	}
 	if got[1].Text != "[document: plan.pdf]" || got[1].Author != (bridge.Author{ID: "8", Name: "bob"}) || got[1].ReplyTo != "" {

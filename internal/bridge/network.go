@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/lum1n/say-v2/internal/connector"
+	"github.com/lum1n/say-v2/internal/core"
 )
 
 // Network is a kind of bridge: IRC, Matrix, Slack, …
@@ -51,6 +52,12 @@ type Network struct {
 	// with the connection stopped, and must succeed when there is no
 	// session (never logged in, or already logged out).
 	LogOut func(ctx context.Context, b Info) error
+	// Idempotent says the network takes a repeated send of a message as
+	// the same message (docs/adr/0015-sync.md). Its sends never expire: a
+	// message waits for the network however long it is away. A send whose
+	// outcome is unknown, or left sending by a node that stopped, is tried
+	// again with backoff, and the messages after it wait in log order.
+	Idempotent bool
 }
 
 // Field is one config setting of a network.
@@ -83,7 +90,8 @@ type Conn interface {
 	Run(ctx context.Context) error
 	// Send posts a message to a remote chat and returns its remote id.
 	// An error the network gave for certain should wrap ErrRejected; any
-	// other error leaves the outcome unknown, and it is never retried.
+	// other error leaves the outcome unknown, and it is never retried
+	// unless the network is Idempotent.
 	Send(ctx context.Context, m Outgoing) (remoteID string, err error)
 }
 
@@ -96,6 +104,11 @@ type Editor interface {
 // arrive.
 var ErrRejected = errors.New("rejected")
 
+// ErrPending is what Receive returns for the account's own message on an
+// Idempotent network while a send to the chat is unfinished: the message
+// may be that send's echo. The connection should receive it again later.
+var ErrPending = errors.New("bridge: a send to this chat is unfinished")
+
 // ErrUnauthorized marks a hook request without the bridge's secret.
 var ErrUnauthorized = errors.New("unauthorized")
 
@@ -106,7 +119,10 @@ func Rejected(err error) error { return fmt.Errorf("%w: %w", ErrRejected, err) }
 type Outgoing struct {
 	Chat    string // remote chat id
 	EventID string
-	Text    string
+	// Text is the message's prose. Parts are all of its content, for a
+	// network that carries more than text.
+	Text  string
+	Parts []core.Part
 	// Sender is the display name of who wrote it. In account mode it is
 	// always the owner, who the message goes out as; a bot shows it.
 	Sender string
@@ -120,12 +136,22 @@ type Incoming struct {
 	ID     string // remote message id, unique in the chat
 	Author Author
 	Text   string
+	// Parts, if set, are the message's content instead of Text.
+	Parts []core.Part
 	// Time is when it was sent; zero is now.
 	Time time.Time
-	// Edit says that the message ID now reads Text.
+	// Edit says that the message ID now reads Text, or Parts.
 	Edit bool
 	// ReplyTo is the remote id of the message this one answers.
 	ReplyTo string
+}
+
+// content returns the message's parts.
+func (m Incoming) content() []core.Part {
+	if len(m.Parts) > 0 {
+		return m.Parts
+	}
+	return []core.Part{core.TextPart(m.Text)}
 }
 
 // RemoteChat is a conversation on the network.

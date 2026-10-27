@@ -65,6 +65,7 @@ const stateText: Record<string, string> = {
 function deleteWarning(b: Bridge, title: string) {
   const out = {
     matrix: "say's session is logged out, unless you gave it an access token of your own.",
+    say: "this device's token on home is revoked, which unpairs it.",
     telegram: "say's session is ended.",
     signal: "say stops receiving and deletes its keys. Remove it under Linked devices on your phone too: Signal lets only the phone do that.",
   }[b.network];
