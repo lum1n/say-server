@@ -198,6 +198,9 @@ func (c *conn) cli(ctx context.Context, dir string, args ...string) error {
 // keys are kept before it goes on.
 var errLinked = errors.New("linked")
 
+// errSignedOut is a linked account that Signal no longer lets say use.
+var errSignedOut = errors.New("link lost: Signal signed say out; remove say under Linked devices on your phone, then scan the new code")
+
 // Run starts signal-cli, links the account if it is not yet, and passes
 // on what arrives until ctx ends or signal-cli exits. Whenever signal-cli
 // stops, its data is kept for the next node.
@@ -230,7 +233,8 @@ func (c *conn) runCLI(ctx context.Context, dir string) error {
 	// it takes too long.
 	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
 	cmd.WaitDelay = stopTimeout
-	stderr := &tail{max: 2048}
+	// Big enough for a Java stack trace, which is all that explains a crash.
+	stderr := &tail{max: 16 << 10}
 	cmd.Stderr = stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -260,6 +264,11 @@ func (c *conn) runCLI(ctx context.Context, dir string) error {
 	werr := <-exited
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if err != nil && !errors.Is(err, errLinked) {
+		if out := strings.TrimSpace(stderr.String()); out != "" {
+			slog.Warn("signal: signal-cli's output before it stopped", "bridge", c.id, "stderr", out)
+		}
 	}
 	if errors.Is(err, errClosed) {
 		msg := strings.TrimSpace(stderr.String())
@@ -342,6 +351,19 @@ func (c *conn) account(ctx context.Context, r *rpc) (number string, linked bool,
 		if a == saved {
 			return a, false, nil
 		}
+	}
+	if saved != "" {
+		// signal-cli no longer lists the account: Signal turned the linked
+		// device away, or it was removed on the phone. Forget it and its
+		// data, so the next run links again, and say so rather than
+		// quietly showing a new QR code.
+		c.mu.Lock()
+		c.st = state{}
+		c.mu.Unlock()
+		if err := c.save(ctx); err != nil {
+			return "", false, err
+		}
+		return "", false, errSignedOut
 	}
 	if len(accounts) > 0 {
 		return accounts[0], false, nil
