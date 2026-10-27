@@ -2,7 +2,8 @@ name: release
 
 # A tag such as v0.4.1 publishes a release (ADR 0017):
 # - the say-node image, ghcr.io/lum1n/say-node:0.4.1 and :stable;
-# - say for Linux, and SHA256SUMS;
+# - say for Linux, signal-cli's JVM build as bundles for say-update, and
+#   SHA256SUMS;
 # - manifest.json, which the apps read to pick the image for a new node and
 #   say-update reads to update one, and manifest.json.minisig.
 # The manifest goes up last, so it never names an image that isn't there.
@@ -39,7 +40,7 @@ jobs:
         with:
           context: .
           target: node
-          # signal-cli's native build, and exe.dev, are amd64.
+          # exe.dev is amd64.
           platforms: linux/amd64
           build-args: VERSION=${{ steps.v.outputs.version }}
           push: true
@@ -68,6 +69,12 @@ jobs:
             GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
               -ldflags "-s -w -X main.version=${GITHUB_REF_NAME#v}" \
               -o dist/say-linux-$arch ./cmd/say
+          done
+      - uses: docker/setup-buildx-action@v3
+      - name: Bundle signal-cli
+        run: |
+          for arch in amd64 arm64; do
+            scripts/signal-bundle.sh $arch dist
           done
       - uses: actions/upload-artifact@v4
         with:
@@ -116,4 +123,5 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
             dist/say-linux-amd64 dist/say-linux-arm64 dist/SHA256SUMS \
+            dist/signal-cli-jvm-linux-amd64.tar.gz dist/signal-cli-jvm-linux-arm64.tar.gz \
             dist/manifest.json dist/manifest.json.minisig

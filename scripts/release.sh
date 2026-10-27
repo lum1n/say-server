@@ -60,6 +60,7 @@ rm -rf dist && mkdir dist
 for arch in amd64 arm64; do
   GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
     -ldflags "-s -w -X main.version=$version" -o dist/say-linux-$arch ./cmd/say
+  scripts/signal-bundle.sh $arch dist
 done
 
 echo "release: manifest"
@@ -76,4 +77,5 @@ docker tag "$image:$version" "$image:stable"
 docker push "$image:stable"
 gh release create "$tag" --verify-tag --generate-notes \
   dist/say-linux-amd64 dist/say-linux-arm64 dist/SHA256SUMS \
+  dist/signal-cli-jvm-linux-amd64.tar.gz dist/signal-cli-jvm-linux-arm64.tar.gz \
   dist/manifest.json dist/manifest.json.minisig

@@ -106,8 +106,11 @@ ADR 0011) and `../sessh-swift`.
     reads.
   - The root filesystem grows to the VM's disk on first boot, and every
     VM makes its own machine ID.
-  - It is about 170 MB compressed; signal-cli's native build is most of
-    it.
+  - signal-cli is its JVM build, with a JRE. The native (GraalVM) build
+    0.14.8–0.14.9 panics in libsignal right after a phone links it
+    ("catching Java exceptions is not supported here", AsamK/signal-cli#2118),
+    so links never finished; seen on a real node on 2026-10-27. The JVM
+    build costs more disk and memory, which a 2 GB node has.
   - `make node-test` boots it under Docker and claims it, in CI too.
 - **say trusts the proxy's host.** `say serve --trust-proxy`
   (`SAY_TRUST_PROXY`, on in the image) takes the host from
@@ -116,13 +119,14 @@ ADR 0011) and `../sessh-swift`.
   node reached directly is no worse off. say already took
   `X-Forwarded-Proto` for secure cookies.
 - **Releases.** A `v*` tag builds and pushes
-  `ghcr.io/lum1n/say-node:<version>` (amd64, like signal-cli's native
-  build and exe.dev) with a keyless cosign signature. It builds `say`
+  `ghcr.io/lum1n/say-node:<version>` (amd64, like exe.dev) with a keyless cosign signature. It builds `say`
   for Linux, then publishes `manifest.json` last, so the manifest never
   names a missing image, and moves `:stable` to the same digest. The
   manifest gives the version, image and digest, each binary's URL and
-  SHA-256, and signal-cli's pinned version and checksum, for
-  `say-update`. It is signed with minisign (`manifest.json.minisig`).
+  SHA-256, and signal-cli's pinned version with its native build's
+  checksum and the JVM build as bundles the release publishes
+  (`scripts/signal-bundle.sh`: the JRE, signal-cli's jars and libsignal,
+  and the launcher, about 125 MB), for `say-update`. It is signed with minisign (`manifest.json.minisig`).
   An Ed25519 key that say pins is simple to check from Go, unlike
   sigstore bundles. `make release VERSION=…` (`scripts/release.sh`)
   does the same from a laptop, for when Actions isn't available; both
@@ -133,9 +137,12 @@ ADR 0011) and `../sessh-swift`.
   - fetches the newest manifest and checks it against the minisign key
     pinned in `say/release`; it takes only a release newer than the
     node, so an old signed manifest can't downgrade it;
-  - downloads say, and signal-cli when the release pins a new version,
-    and checks their SHA-256s, and that the new say runs and reports
-    the release's version, all before touching anything;
+  - downloads say, and signal-cli when the release pins a new version
+    or build (the JVM bundle first, else the native build), and checks
+    their SHA-256s, and that the new say runs and reports the release's
+    version, all before touching anything. A release with the node's
+    own say but another signal-cli installs just signal-cli, which is
+    how nodes made with the native build move to the JVM one;
   - stops say, copies `/var/lib/say` to `/var/lib/say-update/backup`
     (kept until the next update), swaps the binaries, starts say;
   - puts the old binaries and the data back if say doesn't report the

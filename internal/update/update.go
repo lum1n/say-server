@@ -4,16 +4,18 @@
 // run as root by say-update.timer and whenever say asks, reads the newest
 // release's signed manifest and, when it is newer:
 //
-//  1. downloads say, and signal-cli when its version changed, and checks
-//     them against the manifest's SHA-256s;
+//  1. downloads say, and signal-cli when its version or build changed, and
+//     checks them against the manifest's SHA-256s;
 //  2. stops say and copies its data aside, the backup kept until the next
 //     update;
 //  3. swaps the binaries in and starts say;
 //  4. puts the old binaries and the data back if the new say doesn't
 //     answer its health check with the new version.
 //
-// It reports what it did in a status file that say serves on
-// GET /api/v1/node.
+// A release whose say is the installed one but whose signal-cli isn't (a
+// new signal-cli, or its JVM build replacing the native one) installs just
+// signal-cli, the same way. It reports what it did in a status file that
+// say serves on GET /api/v1/node.
 package update
 
 import (
@@ -97,11 +99,16 @@ type Updater struct {
 	Platform string // such as linux-amd64
 
 	Say string // the say binary
-	// SignalCLI is the signal-cli binary, and SignalCLIVersion a file
-	// holding its version. signal-cli is left alone when either is
-	// missing.
+	// SignalCLI is the signal-cli binary (the JVM build's launcher), and
+	// SignalCLIVersion a file holding its version, with " jvm" after it
+	// for the JVM build. signal-cli is left alone when either is missing.
 	SignalCLI        string
 	SignalCLIVersion string
+	// SignalCLIJava and SignalCLIHome are where the JVM build's JRE and
+	// signal-cli's lib directory go; the launcher expects them there.
+	// Without them the native build is used.
+	SignalCLIJava string
+	SignalCLIHome string
 
 	Data   string // say's data directory, which is backed up
 	Work   string // the updater's own directory: downloads and the backup
@@ -129,6 +136,8 @@ func Node(version string) *Updater {
 		Say:              "/usr/local/bin/say",
 		SignalCLI:        "/usr/local/bin/signal-cli",
 		SignalCLIVersion: "/usr/local/lib/say/signal-cli.version",
+		SignalCLIJava:    "/opt/java",
+		SignalCLIHome:    "/opt/signal-cli",
 		Data:             "/var/lib/say",
 		Work:             "/var/lib/say-update",
 		Status:           "/var/lib/say/" + StatusFile,
@@ -155,21 +164,30 @@ func (u *Updater) Run(ctx context.Context, install bool) error {
 		return err
 	}
 	st.Latest, st.CheckedAt = m.Version, time.Now().UTC()
-	if !install || !release.Newer(m.Version, u.Version) {
+	newer := release.Newer(m.Version, u.Version)
+	_, wantSig, _, sigOK := u.signalWanted(m)
+	newSig := sigOK && wantSig != u.signalCLIVersion()
+	if !install || (!newer && !newSig) {
 		u.Log.Info("update: checked", "version", u.Version, "latest", m.Version)
 		st.State = StateOK
 		u.write(st)
 		return nil
 	}
 
-	u.Log.Info("update: installing", "from", u.Version, "to", m.Version)
+	target := u.Version
+	if newer {
+		target = m.Version
+		u.Log.Info("update: installing", "from", u.Version, "to", m.Version)
+	} else {
+		u.Log.Info("update: installing signal-cli", "from", u.signalCLIVersion(), "to", wantSig)
+	}
 	st.State = StateUpdating
 	u.write(st)
-	err = u.install(ctx, m)
+	err = u.install(ctx, m, newer)
 	var rb *rolledBack
 	switch {
 	case err == nil:
-		u.Log.Info("update: done", "version", m.Version)
+		u.Log.Info("update: done", "version", target, "signal-cli", u.signalCLIVersion())
 		st.State, st.UpdatedAt, st.UpdatedFrom = StateOK, time.Now().UTC(), u.Version
 	case errors.As(err, &rb):
 		u.Log.Error("update: rolled back", "to", u.Version, "err", rb.err)
@@ -206,11 +224,7 @@ func staged(path string) swap {
 	return swap{path, filepath.Join(dir, "."+name+".new"), filepath.Join(dir, "."+name+".prev")}
 }
 
-func (u *Updater) install(ctx context.Context, m release.Manifest) error {
-	dl, ok := m.Say[u.Platform]
-	if !ok {
-		return fmt.Errorf("release %s has no say for %s", m.Version, u.Platform)
-	}
+func (u *Updater) install(ctx context.Context, m release.Manifest, newer bool) error {
 	dir := filepath.Join(u.Work, "new")
 	os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -218,27 +232,52 @@ func (u *Updater) install(ctx context.Context, m release.Manifest) error {
 	}
 	defer os.RemoveAll(dir)
 
-	sayNew := filepath.Join(dir, "say")
-	if err := u.download(ctx, dl, sayNew); err != nil {
-		return fmt.Errorf("say: %w", err)
+	files := map[string]string{}
+	target := u.Version
+	if newer {
+		dl, ok := m.Say[u.Platform]
+		if !ok {
+			return fmt.Errorf("release %s has no say for %s", m.Version, u.Platform)
+		}
+		sayNew := filepath.Join(dir, "say")
+		if err := u.download(ctx, dl, sayNew); err != nil {
+			return fmt.Errorf("say: %w", err)
+		}
+		os.Chmod(sayNew, 0o755)
+		if out, err := exec.CommandContext(ctx, sayNew, "version").Output(); err != nil || strings.TrimSpace(string(out)) != m.Version {
+			return fmt.Errorf("the new say doesn't run, or isn't %s: %q, %v", m.Version, out, err)
+		}
+		files[u.Say], target = sayNew, m.Version
 	}
-	os.Chmod(sayNew, 0o755)
-	if out, err := exec.CommandContext(ctx, sayNew, "version").Output(); err != nil || strings.TrimSpace(string(out)) != m.Version {
-		return fmt.Errorf("the new say doesn't run, or isn't %s: %q, %v", m.Version, out, err)
-	}
-	files := map[string]string{u.Say: sayNew}
 
 	sigVersion := ""
-	if sig := m.SignalCLI; u.signalCLI() && u.Platform == "linux-amd64" && sig.LinuxAMD64 != nil && sig.Version != u.signalCLIVersion() {
+	var dirs []*dirSwap
+	if dl, want, jvm, ok := u.signalWanted(m); ok && want != u.signalCLIVersion() {
 		tgz := filepath.Join(dir, "signal-cli.tgz")
-		if err := u.download(ctx, *sig.LinuxAMD64, tgz); err != nil {
+		if err := u.download(ctx, dl, tgz); err != nil {
 			return fmt.Errorf("signal-cli: %w", err)
 		}
 		bin := filepath.Join(dir, "signal-cli")
-		if err := untarOne(tgz, "signal-cli", bin); err != nil {
+		if jvm {
+			java, home := stagedDir(u.SignalCLIJava), stagedDir(u.SignalCLIHome)
+			defer os.RemoveAll(java.new)
+			defer os.RemoveAll(home.new)
+			err := untarBundle(tgz, map[string]string{
+				"opt/java":                 java.new,
+				"opt/signal-cli":           home.new,
+				"usr/local/bin/signal-cli": bin,
+			})
+			if err != nil {
+				return fmt.Errorf("signal-cli: %w", err)
+			}
+			dirs = []*dirSwap{java, home}
+		} else if err := untarOne(tgz, "signal-cli", bin); err != nil {
 			return fmt.Errorf("signal-cli: %w", err)
 		}
-		files[u.SignalCLI], sigVersion = bin, sig.Version
+		files[u.SignalCLI], sigVersion = bin, want
+	}
+	if len(files) == 0 {
+		return nil
 	}
 
 	var swaps []swap
@@ -259,22 +298,47 @@ func (u *Updater) install(ctx context.Context, m release.Manifest) error {
 	if err := copyTree(u.Data, backup); err != nil {
 		return errors.Join(fmt.Errorf("back up %s: %w", u.Data, err), u.Service.Start(ctx))
 	}
-	oldSigVersion := u.signalCLIVersion()
-	for i, s := range swaps {
+	undo := undoing{u: u, backup: backup, sigVersion: u.signalCLIVersion()}
+	for _, s := range swaps {
 		if err := s.apply(); err != nil {
-			return u.rollback(ctx, swaps[:i], backup, oldSigVersion, err)
+			return undo.rollback(ctx, err)
+		}
+		undo.swaps = append(undo.swaps, s)
+	}
+	for _, d := range dirs {
+		undo.dirs = append(undo.dirs, d)
+		if err := d.apply(); err != nil {
+			return undo.rollback(ctx, err)
 		}
 	}
 	if sigVersion != "" {
 		os.WriteFile(u.SignalCLIVersion, []byte(sigVersion+"\n"), 0o644)
 	}
 	if err := u.Service.Start(ctx); err != nil {
-		return u.rollback(ctx, swaps, backup, oldSigVersion, fmt.Errorf("start say: %w", err))
+		return undo.rollback(ctx, fmt.Errorf("start say: %w", err))
 	}
-	if err := u.waitHealthy(ctx, m.Version); err != nil {
-		return u.rollback(ctx, swaps, backup, oldSigVersion, err)
+	if err := u.waitHealthy(ctx, target); err != nil {
+		return undo.rollback(ctx, err)
 	}
 	return nil
+}
+
+// signalWanted is the signal-cli the release brings for this node, and the
+// version file that says it is installed. The JVM build comes first; the
+// native one is for linux-amd64 only. ok is false when the updater doesn't
+// manage signal-cli here.
+func (u *Updater) signalWanted(m release.Manifest) (dl release.Download, want string, jvm, ok bool) {
+	sig := m.SignalCLI
+	if sig.Version == "" || !u.signalCLI() {
+		return dl, "", false, false
+	}
+	if d, found := sig.JVM[u.Platform]; found && u.SignalCLIJava != "" && u.SignalCLIHome != "" {
+		return d, sig.Version + " jvm", true, true
+	}
+	if u.Platform == "linux-amd64" && sig.LinuxAMD64 != nil {
+		return *sig.LinuxAMD64, sig.Version, false, true
+	}
+	return dl, "", false, false
 }
 
 // apply keeps path as prev and moves new over it. path is never missing.
@@ -286,26 +350,72 @@ func (s swap) apply() error {
 	return os.Rename(s.new, s.path)
 }
 
-func (u *Updater) rollback(ctx context.Context, swaps []swap, backup, sigVersion string, cause error) error {
+// undoing is what an install has changed so far, to put back.
+type undoing struct {
+	u          *Updater
+	swaps      []swap
+	dirs       []*dirSwap
+	backup     string
+	sigVersion string // the version file as it was; "" if there was none
+}
+
+func (r undoing) rollback(ctx context.Context, cause error) error {
+	u := r.u
 	errs := []error{u.Service.Stop(ctx)}
-	for _, s := range swaps {
+	for _, s := range r.swaps {
 		errs = append(errs, os.Rename(s.prev, s.path))
 	}
-	if sigVersion != "" {
-		errs = append(errs, os.WriteFile(u.SignalCLIVersion, []byte(sigVersion+"\n"), 0o644))
+	for _, d := range r.dirs {
+		errs = append(errs, d.undo())
+	}
+	if r.sigVersion != "" {
+		errs = append(errs, os.WriteFile(u.SignalCLIVersion, []byte(r.sigVersion+"\n"), 0o644))
 	} else {
 		os.Remove(u.SignalCLIVersion)
 	}
-	errs = append(errs, restore(backup, u.Data), u.Service.Start(ctx))
+	errs = append(errs, restore(r.backup, u.Data), u.Service.Start(ctx))
 	if err := errors.Join(errs...); err != nil {
 		return fmt.Errorf("%w, and rolling back failed too: %w", cause, err)
 	}
 	return &rolledBack{cause}
 }
 
-// signalCLI reports whether the updater manages signal-cli: the image's
-// native build, which comes with a version file. A JVM build has none and
-// is left alone.
+// dirSwap is a directory to replace, like swap: new is staged next to path
+// and the old one, if there was one, kept as prev.
+type dirSwap struct {
+	path, new, prev string
+	had             bool
+}
+
+func stagedDir(path string) *dirSwap {
+	dir, name := filepath.Split(filepath.Clean(path))
+	return &dirSwap{path: path, new: filepath.Join(dir, "."+name+".new"), prev: filepath.Join(dir, "."+name+".prev")}
+}
+
+func (d *dirSwap) apply() error {
+	os.RemoveAll(d.prev)
+	if _, err := os.Lstat(d.path); err == nil {
+		if err := os.Rename(d.path, d.prev); err != nil {
+			return err
+		}
+		d.had = true
+	}
+	return os.Rename(d.new, d.path)
+}
+
+func (d *dirSwap) undo() error {
+	if err := os.RemoveAll(d.path); err != nil {
+		return err
+	}
+	if d.had {
+		return os.Rename(d.prev, d.path)
+	}
+	return nil
+}
+
+// signalCLI reports whether the updater manages signal-cli: the image's,
+// which comes with a version file. One installed some other way has none
+// and is left alone.
 func (u *Updater) signalCLI() bool {
 	_, err := os.Stat(u.SignalCLI)
 	return u.SignalCLI != "" && err == nil && u.signalCLIVersion() != ""
@@ -417,6 +527,106 @@ func untarOne(tgz, name, dst string) error {
 		_, err = io.Copy(out, tr)
 		return errors.Join(err, out.Close())
 	}
+}
+
+// untarBundle extracts a .tar.gz whose entries sit under the keys of to,
+// each into its value: a directory's contents into a new directory, a file
+// to a path. Anything else in the archive, and anything that would land
+// outside its destination, is refused.
+func untarBundle(tgz string, to map[string]string) error {
+	f, err := os.Open(tgz)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	tr := tar.NewReader(gz)
+	found := map[string]bool{}
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		name := strings.TrimPrefix(filepath.Clean(h.Name), "./")
+		var dst, top string
+		for prefix, d := range to {
+			if name == prefix {
+				dst, top = d, prefix
+			} else if rest, ok := strings.CutPrefix(name, prefix+"/"); ok {
+				dst, top = filepath.Join(d, rest), prefix
+			}
+		}
+		if dst == "" {
+			if _, isParent := parentOf(name, to); isParent && h.Typeflag == tar.TypeDir {
+				continue
+			}
+			return fmt.Errorf("unexpected %s in the archive", h.Name)
+		}
+		if strings.Contains(name, "..") {
+			return fmt.Errorf("bad path %s in the archive", h.Name)
+		}
+		found[top] = true
+		mode := os.FileMode(h.Mode).Perm()
+		switch h.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(dst, 0o755); err != nil {
+				return err
+			}
+			os.Chmod(dst, mode|0o700)
+		case tar.TypeReg:
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return err
+			}
+			out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(out, tr)
+			if err = errors.Join(err, out.Close()); err != nil {
+				return err
+			}
+		case tar.TypeSymlink:
+			// The JRE links within itself; nothing may point out of it.
+			if filepath.IsAbs(h.Linkname) {
+				return fmt.Errorf("absolute link %s in the archive", h.Name)
+			}
+			root := to[top]
+			if rel, err := filepath.Rel(root, filepath.Join(filepath.Dir(dst), h.Linkname)); err != nil || strings.HasPrefix(rel, "..") {
+				return fmt.Errorf("link %s leaves its directory", h.Name)
+			}
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return err
+			}
+			if err := os.Symlink(h.Linkname, dst); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unexpected %s (type %c) in the archive", h.Name, h.Typeflag)
+		}
+	}
+	for prefix := range to {
+		if !found[prefix] {
+			return fmt.Errorf("no %s in the archive", prefix)
+		}
+	}
+	return nil
+}
+
+// parentOf reports whether name is a directory above one of to's keys,
+// such as opt for opt/java.
+func parentOf(name string, to map[string]string) (string, bool) {
+	for prefix := range to {
+		if strings.HasPrefix(prefix, name+"/") {
+			return prefix, true
+		}
+	}
+	return "", false
 }
 
 func copyFile(src, dst string) error {
