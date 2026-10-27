@@ -237,6 +237,18 @@ class Widget(TypedDict):
     created_at: str
 
 
+class SignedInAs(TypedDict):
+    """
+    Set on an anonymous visitor's thread when the visitor then
+    signed in as a verified visitor who already had a thread. The
+    two threads are not merged: the visitor carries on in `room_id`.
+
+    """
+
+    visitor_id: str
+    room_id: str
+
+
 class WidgetThread(TypedDict):
     room_id: str
     widget_id: str
@@ -246,6 +258,13 @@ class WidgetThread(TypedDict):
     verified: bool
     """
     Whether the host site signed the visitor in (an identity token).
+    """
+    signed_in_as: NotRequired[SignedInAs]
+    """
+    Set on an anonymous visitor's thread when the visitor then
+    signed in as a verified visitor who already had a thread. The
+    two threads are not merged: the visitor carries on in `room_id`.
+
     """
     state: Literal['open', 'handed_over', 'idle']
     """
@@ -257,7 +276,10 @@ class WidgetThread(TypedDict):
     """
     waiting: bool
     """
-    The visitor wrote the latest message, so nobody has answered it yet.
+    The visitor wrote the latest message, so nobody has answered it
+    yet. Never set on a thread with `signed_in_as`: its visitor
+    waits in the other thread.
+
     """
     last_message_at: NotRequired[str]
     """

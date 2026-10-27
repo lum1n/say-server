@@ -185,4 +185,5 @@ type WidgetVisitor struct {
 	Subject     string
 	RoomID      string
 	CreatedAt   int64
+	SignedInAs  string
 }

@@ -28,6 +28,10 @@ function Inbox() {
   const tab = tabs.find((t) => t.state === state)!;
   const shown = list.filter((t) => t.state === state);
   const widgets = new Set(list.map((t) => t.widget_id));
+  // A visitor who signed in as someone with a thread already carries on
+  // there; their anonymous thread says so, and theirs counts the others.
+  const byVisitor = new Map(list.map((t) => [t.visitor_id, t]));
+  const earlier = (t: WidgetThread) => list.filter((o) => o.signed_in_as?.visitor_id === t.visitor_id).length;
   return (
     <main className="page inbox">
       <Link to="/" className="back">‹ Rooms</Link>
@@ -51,6 +55,16 @@ function Inbox() {
               <span className="who">
                 {t.visitor_name}
                 {t.verified && <span className="badge" title="Signed in on the host site">signed in</span>}
+                {t.signed_in_as && (
+                  <span className="badge" title="Signed in on the host site and carried on in their own thread">
+                    then signed in{byVisitor.has(t.signed_in_as.visitor_id) && ` as ${byVisitor.get(t.signed_in_as.visitor_id)!.visitor_name}`}
+                  </span>
+                )}
+                {t.verified && earlier(t) > 0 && (
+                  <span className="badge" title="Threads they started before signing in">
+                    {earlier(t) === 1 ? "1 earlier chat" : `${earlier(t)} earlier chats`}
+                  </span>
+                )}
                 {t.waiting && <span className="badge waiting">waiting</span>}
               </span>
               {widgets.size > 1 && <span className="muted">{t.widget_name}</span>}

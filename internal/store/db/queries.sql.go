@@ -1314,6 +1314,25 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 	return err
 }
 
+const linkVisitor = `-- name: LinkVisitor :execrows
+UPDATE widget_visitors SET signed_in_as = $2
+WHERE principal_id = $1 AND subject = ''
+`
+
+type LinkVisitorParams struct {
+	PrincipalID string
+	SignedInAs  string
+}
+
+// Records that anonymous visitor $1 signed in as verified visitor $2.
+func (q *Queries) LinkVisitor(ctx context.Context, arg LinkVisitorParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, linkVisitor, arg.PrincipalID, arg.SignedInAs)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const listBridges = `-- name: ListBridges :many
 SELECT id, owner_id, mode, network, name, config, state, prompt, enabled, last_error, seen_at, updated_at, created_at, deleted_at FROM bridges ORDER BY created_at, id
 `
@@ -2040,6 +2059,16 @@ func (q *Queries) StreamingFrom(ctx context.Context, senderID string) ([]Event, 
 	return items, nil
 }
 
+const unlinkVisitors = `-- name: UnlinkVisitors :exec
+UPDATE widget_visitors SET signed_in_as = '' WHERE signed_in_as = $1
+`
+
+// Forgets that anonymous visitors signed in as visitor $1.
+func (q *Queries) UnlinkVisitors(ctx context.Context, signedInAs string) error {
+	_, err := q.db.ExecContext(ctx, unlinkVisitors, signedInAs)
+	return err
+}
+
 const updateBridge = `-- name: UpdateBridge :execrows
 UPDATE bridges SET name = $2, config = $3, enabled = $4, updated_at = $5
 WHERE id = $1
@@ -2199,7 +2228,7 @@ func (q *Queries) VerifyVisitor(ctx context.Context, arg VerifyVisitorParams) (i
 }
 
 const visitorByPrincipal = `-- name: VisitorByPrincipal :one
-SELECT principal_id, widget_id, subject, room_id, created_at FROM widget_visitors WHERE principal_id = $1
+SELECT principal_id, widget_id, subject, room_id, created_at, signed_in_as FROM widget_visitors WHERE principal_id = $1
 `
 
 func (q *Queries) VisitorByPrincipal(ctx context.Context, principalID string) (WidgetVisitor, error) {
@@ -2211,12 +2240,13 @@ func (q *Queries) VisitorByPrincipal(ctx context.Context, principalID string) (W
 		&i.Subject,
 		&i.RoomID,
 		&i.CreatedAt,
+		&i.SignedInAs,
 	)
 	return i, err
 }
 
 const visitorBySubject = `-- name: VisitorBySubject :one
-SELECT principal_id, widget_id, subject, room_id, created_at FROM widget_visitors WHERE widget_id = $1 AND subject = $2
+SELECT principal_id, widget_id, subject, room_id, created_at, signed_in_as FROM widget_visitors WHERE widget_id = $1 AND subject = $2
 `
 
 type VisitorBySubjectParams struct {
@@ -2233,6 +2263,7 @@ func (q *Queries) VisitorBySubject(ctx context.Context, arg VisitorBySubjectPara
 		&i.Subject,
 		&i.RoomID,
 		&i.CreatedAt,
+		&i.SignedInAs,
 	)
 	return i, err
 }
@@ -2261,8 +2292,9 @@ func (q *Queries) WidgetByKey(ctx context.Context, publicKey string) (Widget, er
 }
 
 const widgetThreadsFor = `-- name: WidgetThreadsFor :many
-SELECT v.room_id, v.widget_id, v.principal_id, v.subject, v.created_at,
+SELECT v.room_id, v.widget_id, v.principal_id, v.subject, v.signed_in_as, v.created_at,
        w.name AS widget_name, g.display_name AS visitor_name,
+       COALESCE(sv.room_id, '') AS signed_in_room_id,
        e.sender_id AS last_sender_id, e.created_at AS last_message_at,
        EXISTS (
            SELECT 1 FROM memberships rm
@@ -2272,6 +2304,7 @@ FROM widget_visitors v
 JOIN memberships m ON m.room_id = v.room_id AND m.principal_id = $1
 JOIN widgets w ON w.id = v.widget_id
 JOIN principals g ON g.id = v.principal_id
+LEFT JOIN widget_visitors sv ON sv.principal_id = v.signed_in_as
 LEFT JOIN events e ON e.room_id = v.room_id AND e.seq = (
     SELECT MAX(x.seq) FROM events x
     WHERE x.room_id = v.room_id AND x.type = 'message'
@@ -2286,21 +2319,23 @@ type WidgetThreadsForParams struct {
 }
 
 type WidgetThreadsForRow struct {
-	RoomID        string
-	WidgetID      string
-	PrincipalID   string
-	Subject       string
-	CreatedAt     int64
-	WidgetName    string
-	VisitorName   string
-	LastSenderID  sql.NullString
-	LastMessageAt sql.NullInt64
-	AgentAnswers  bool
+	RoomID         string
+	WidgetID       string
+	PrincipalID    string
+	Subject        string
+	SignedInAs     string
+	CreatedAt      int64
+	WidgetName     string
+	VisitorName    string
+	SignedInRoomID string
+	LastSenderID   sql.NullString
+	LastMessageAt  sql.NullInt64
+	AgentAnswers   bool
 }
 
 // The widget threads principal $1 is in, with each thread's latest
-// message and whether an agent still answers it, latest activity first
-// (docs/adr/0012-widget.md).
+// message, whether an agent still answers it and the thread of the
+// visitor it signed in as, latest activity first (docs/adr/0012-widget.md).
 func (q *Queries) WidgetThreadsFor(ctx context.Context, arg WidgetThreadsForParams) ([]WidgetThreadsForRow, error) {
 	rows, err := q.db.QueryContext(ctx, widgetThreadsFor, arg.PrincipalID, arg.Limit)
 	if err != nil {
@@ -2315,9 +2350,11 @@ func (q *Queries) WidgetThreadsFor(ctx context.Context, arg WidgetThreadsForPara
 			&i.WidgetID,
 			&i.PrincipalID,
 			&i.Subject,
+			&i.SignedInAs,
 			&i.CreatedAt,
 			&i.WidgetName,
 			&i.VisitorName,
+			&i.SignedInRoomID,
 			&i.LastSenderID,
 			&i.LastMessageAt,
 			&i.AgentAnswers,

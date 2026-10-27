@@ -1084,6 +1084,15 @@ export interface components {
             /** @description Whether the host site signed the visitor in (an identity token). */
             verified: boolean;
             /**
+             * @description Set on an anonymous visitor's thread when the visitor then
+             *     signed in as a verified visitor who already had a thread. The
+             *     two threads are not merged: the visitor carries on in `room_id`.
+             */
+            signed_in_as?: {
+                visitor_id: string;
+                room_id: string;
+            };
+            /**
              * @description `open`: an agent answers the visitor. `handed_over`: the
              *     thread is the team's, and agents answer only when mentioned.
              *     `idle`: no message for 30 minutes, unless the visitor of a
@@ -1091,7 +1100,11 @@ export interface components {
              * @enum {string}
              */
             state: "open" | "handed_over" | "idle";
-            /** @description The visitor wrote the latest message, so nobody has answered it yet. */
+            /**
+             * @description The visitor wrote the latest message, so nobody has answered it
+             *     yet. Never set on a thread with `signed_in_as`: its visitor
+             *     waits in the other thread.
+             */
             waiting: boolean;
             /**
              * Format: date-time

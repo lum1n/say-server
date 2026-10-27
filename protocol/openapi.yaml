@@ -1827,6 +1827,18 @@ components:
         verified:
           type: boolean
           description: Whether the host site signed the visitor in (an identity token).
+        signed_in_as:
+          type: object
+          required: [visitor_id, room_id]
+          description: |
+            Set on an anonymous visitor's thread when the visitor then
+            signed in as a verified visitor who already had a thread. The
+            two threads are not merged: the visitor carries on in `room_id`.
+          properties:
+            visitor_id:
+              type: string
+            room_id:
+              type: string
         state:
           type: string
           enum: [open, handed_over, idle]
@@ -1837,7 +1849,10 @@ components:
             handed-over thread is still waiting for a person.
         waiting:
           type: boolean
-          description: The visitor wrote the latest message, so nobody has answered it yet.
+          description: |
+            The visitor wrote the latest message, so nobody has answered it
+            yet. Never set on a thread with `signed_in_as`: its visitor
+            waits in the other thread.
         last_message_at:
           type: string
           format: date-time

@@ -398,7 +398,7 @@ func TestWidgetOffAndDeleted(t *testing.T) {
 func TestWidgetIdentity(t *testing.T) {
 	e := newEnv(t)
 	_, root := e.admin("Root")
-	ada, _ := e.user("Ada", core.PrincipalHuman)
+	ada, adaTok := e.user("Ada", core.PrincipalHuman)
 	var w wireWidget
 	e.do("POST", "/widgets", root, map[string]any{"name": "Help", "origins": []string{"https://shop.example"}, "team": []string{ada.ID}}, &w)
 
@@ -414,11 +414,42 @@ func TestWidgetIdentity(t *testing.T) {
 		t.Fatalf("second device = %d %+v", code, s2)
 	}
 	// An anonymous visitor who signs in as a subject that already has a
-	// thread gets that thread.
+	// thread gets that thread. The anonymous thread stays with the team,
+	// unmerged, and the inbox says where the visitor went.
 	_, anon := e.session(w.PublicKey, "", "")
+	e.say(anon.Token, anon.Room.ID, "hello?")
 	if code, s3 := e.session(w.PublicKey, anon.Token, id); code != 200 || s3.Principal.ID != s.Principal.ID {
 		t.Fatalf("sign-in from anonymous = %d %+v", code, s3)
 	}
+	var grace struct{ Events []wireEvent }
+	if code := e.do("GET", "/rooms/"+s.Room.ID+"/events", s.Token, nil, &grace); code != 200 || len(grace.Events) != 0 {
+		t.Fatalf("Grace's thread after sign-in = %d %+v", code, grace)
+	}
+	linked := func() wireWidgetThread {
+		t.Helper()
+		var out struct{ Threads []wireWidgetThread }
+		e.do("GET", "/widget-threads", adaTok, nil, &out)
+		for _, th := range out.Threads {
+			if th.RoomID == anon.Room.ID {
+				return th
+			}
+		}
+		t.Fatalf("anonymous thread not in the inbox: %+v", out.Threads)
+		return wireWidgetThread{}
+	}
+	if th := linked(); th.SignedInAs == nil || *th.SignedInAs != (wireSignedInAs{VisitorID: s.Principal.ID, RoomID: s.Room.ID}) ||
+		th.Verified || th.Waiting {
+		t.Fatalf("anonymous thread = %+v", th)
+	}
+	defer func() {
+		// Erasing Grace leaves the anonymous thread, linked to nobody.
+		if code := e.do("DELETE", "/visitors/"+s.Principal.ID, root, nil, nil); code != 204 {
+			t.Fatalf("delete Grace = %d", code)
+		}
+		if th := linked(); th.SignedInAs != nil {
+			t.Fatalf("anonymous thread after erasing Grace = %+v", th)
+		}
+	}()
 
 	// An anonymous visitor who signs in as a new subject keeps their
 	// thread, now under the host's name. The anonymous token is not
