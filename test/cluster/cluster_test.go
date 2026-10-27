@@ -30,6 +30,7 @@ const (
 	deliveryTimeout = 5 * time.Second
 )
 
+// test-a-roony
 func TestCluster(t *testing.T) {
 	var nodes []string
 	for _, n := range strings.Split(os.Getenv("SAY_CLUSTER_NODES"), ",") {
