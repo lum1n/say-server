@@ -28,6 +28,12 @@ export interface RealtimeOptions {
    */
   onRoomsChanged?: () => void;
   /**
+   * onInboxChanged says a widget thread in the caller's inbox has a new
+   * message, or the socket reconnected and may have missed one. Reread
+   * the inbox when it fires.
+   */
+  onInboxChanged?: () => void;
+  /**
    * onDelivery says how a message in a followed room went out to the
    * room's bridges. Like onStream it is not replayed.
    */
@@ -89,7 +95,10 @@ export class Realtime {
       this.backoff = 500;
       this.opts.onStatus?.("open");
       for (const [room, after] of this.cursors) this.request("subscribe", { room_id: room, after });
-      if (this.opened) this.opts.onRoomsChanged?.();
+      if (this.opened) {
+        this.opts.onRoomsChanged?.();
+        this.opts.onInboxChanged?.();
+      }
       this.opened = true;
     };
     ws.onmessage = (msg) => this.receive(msg.data);
@@ -111,6 +120,10 @@ export class Realtime {
     if (env.status) return;
     if (env.type === "rooms") {
       this.opts.onRoomsChanged?.();
+      return;
+    }
+    if (env.type === "inbox") {
+      this.opts.onInboxChanged?.();
       return;
     }
     if (env.type === "delivery") {

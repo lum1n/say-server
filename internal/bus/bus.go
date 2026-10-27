@@ -29,6 +29,10 @@ func RoomStreamSubject(roomID string) string { return "room." + roomID + ".strea
 // room's settings, changed.
 func RoomsSubject(principalID string) string { return "principal." + principalID + ".rooms" }
 
+// InboxSubject is where a principal hears that a widget thread it is in
+// has a new message, so its inbox may have changed.
+func InboxSubject(principalID string) string { return "principal." + principalID + ".inbox" }
+
 // BuiltinAgentsSubject announces that a built-in agent was created or
 // changed.
 const BuiltinAgentsSubject = "builtin_agents"

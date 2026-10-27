@@ -670,7 +670,10 @@ type wireWidgetThread struct {
 	// A visitor who signed in elsewhere waits there, not here.
 	Waiting       bool       `json:"waiting"`
 	LastMessageAt *time.Time `json:"last_message_at,omitempty"`
-	CreatedAt     time.Time  `json:"created_at"`
+	// IdleAt is when the thread goes, or went, idle without a new
+	// message; nil while a visitor waits for a person.
+	IdleAt    *time.Time `json:"idle_at,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
 }
 
 type wireSignedInAs struct {
@@ -692,8 +695,12 @@ func toWidgetThread(th store.WidgetThread, now time.Time) wireWidgetThread {
 		at := th.LastMessageAt.UTC()
 		out.LastMessageAt, active = &at, at
 	}
+	if !(out.Waiting && !th.AgentAnswers) {
+		at := active.UTC().Add(threadIdleAfter)
+		out.IdleAt = &at
+	}
 	switch {
-	case now.Sub(active) >= threadIdleAfter && !(out.Waiting && !th.AgentAnswers):
+	case out.IdleAt != nil && !now.Before(*out.IdleAt):
 		out.State = threadIdle
 	case th.AgentAnswers:
 		out.State = threadOpen

@@ -325,8 +325,53 @@ func TestWidgetThreadState(t *testing.T) {
 		if tc.sender != "" {
 			th.LastMessageAt = now.Add(-tc.ago)
 		}
-		if got := toWidgetThread(th, now).State; got != tc.want {
-			t.Errorf("%s: state %q, want %q", tc.name, got, tc.want)
+		got := toWidgetThread(th, now)
+		if got.State != tc.want {
+			t.Errorf("%s: state %q, want %q", tc.name, got.State, tc.want)
+		}
+		// Every thread but a waiting visitor's goes idle on its own.
+		wantIdleAt := now.Add(-tc.ago).Add(threadIdleAfter).UTC()
+		if tc.name == "visitor left waiting on a person" {
+			if got.IdleAt != nil {
+				t.Errorf("%s: idle at %v, want never", tc.name, got.IdleAt)
+			}
+		} else if got.IdleAt == nil || !got.IdleAt.Equal(wantIdleAt) {
+			t.Errorf("%s: idle at %v, want %v", tc.name, got.IdleAt, wantIdleAt)
+		}
+	}
+}
+
+func TestWidgetInboxPush(t *testing.T) {
+	e := newEnv(t)
+	_, root := e.admin("Root")
+	ada, adaTok := e.user("Ada", core.PrincipalHuman)
+	var w wireWidget
+	e.do("POST", "/widgets", root, map[string]any{
+		"name": "Support", "origins": []string{"https://shop.example"}, "team": []string{ada.ID},
+	}, &w)
+	_, cat := e.session(w.PublicKey, "", "")
+	c := dialWS(t, e, adaTok)
+	visitor := dialWS(t, e, cat.Token)
+
+	// Ada follows no room, yet hears that the thread has a new message.
+	e.say(cat.Token, cat.Room.ID, "hello?")
+	if env := wsRead(t, c); env.Type != "inbox" || env.Status != "" || env.ID == "" {
+		t.Fatalf("after the visitor wrote = %+v, want an inbox push", env)
+	}
+	e.say(adaTok, cat.Room.ID, "hi!")
+	if env := wsRead(t, c); env.Type != "inbox" {
+		t.Fatalf("after Ada answered = %+v, want an inbox push", env)
+	}
+	// Other rooms say nothing to the inbox, and visitors have none.
+	r := e.room(adaTok, "general")
+	if env := wsRead(t, c); env.Type != "rooms" {
+		t.Fatalf("after create = %+v, want a rooms push", env)
+	}
+	e.say(adaTok, r.ID, "elsewhere")
+	for _, conn := range []*websocket.Conn{c, visitor} {
+		wsSend(t, conn, "1", "ping", nil)
+		if env := wsRead(t, conn); env.ID != "1" || env.Type != "ping" {
+			t.Fatalf("got %+v, want only the ping reply", env)
 		}
 	}
 }

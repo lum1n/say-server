@@ -294,6 +294,14 @@ class WidgetThread(TypedDict):
     """
     Absent when the thread has no messages.
     """
+    idle_at: NotRequired[str]
+    """
+    When the thread goes idle, or went idle, if nobody writes.
+    Absent while the visitor of a handed-over thread waits for a
+    person. No push comes when a thread goes idle, so a client
+    that shows states rereads the inbox then.
+
+    """
     created_at: str
 
 

@@ -128,10 +128,14 @@ read another visitor's chat.
   widget goes on a busy public site, they need per-IP limits, like
   sign-in.
 - The inbox has no per-person unread counts: "waiting" says only that
-  the visitor wrote last, which suits a team sharing threads. Messages in
-  threads that are not open are not pushed, so the web app rereads the
-  inbox every 15 seconds. It reads the latest 200 threads; older idle ones
-  drop off the end.
+  the visitor wrote last, which suits a team sharing threads. The team
+  does not follow threads they have not opened, so a new message in a
+  widget thread also sends its members' sockets an `inbox` push with no
+  payload, like `rooms` (ADR 0006), and the web app rereads the inbox on
+  it and after reconnecting. Each such message costs one read of the
+  thread's members. Going idle is not an event, so each thread says when
+  it goes idle (`idle_at`) and the web app rereads the inbox then. It
+  reads the latest 200 threads; older idle ones drop off the end.
 - Firefox has no `location.ancestorOrigins`, so there the embed page reads
   its parent's origin from the referrer. A host page whose referrer policy
   is `no-referrer` shows "not set up for this site" in Firefox.

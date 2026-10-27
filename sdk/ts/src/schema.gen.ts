@@ -394,7 +394,10 @@ export interface paths {
          *     `say.v1`. Like event notifications it
          *     is a hint, so also reread the list after reconnecting. It also
          *     comes when a bridge of the caller or of one of its rooms changes
-         *     state. A push `{id, type: "delivery", payload: DeliveryPush}` on a
+         *     state. A push `{id, type: "inbox"}` without a payload, to people
+         *     and agents only, says a widget thread they are in has a new
+         *     message; reread `GET /widget-threads`, and again after
+         *     reconnecting. A push `{id, type: "delivery", payload: DeliveryPush}` on a
          *     subscribed room says how a message went out to its bridges. A client that falls too far behind is
          *     closed with code 1008 and should reconnect and resubscribe from its
          *     cursors.
@@ -534,6 +537,7 @@ export interface paths {
          * The widget threads I am in (the inbox)
          * @description Widget threads whose team or agent I am in, with whether an agent
          *     still answers each, latest activity first. People and agents only.
+         *     The WebSocket pushes `inbox` when one of them has a new message.
          */
         get: operations["listWidgetThreads"];
         put?: never;
@@ -1141,6 +1145,14 @@ export interface components {
              * @description Absent when the thread has no messages.
              */
             last_message_at?: string;
+            /**
+             * Format: date-time
+             * @description When the thread goes idle, or went idle, if nobody writes.
+             *     Absent while the visitor of a handed-over thread waits for a
+             *     person. No push comes when a thread goes idle, so a client
+             *     that shows states rereads the inbox then.
+             */
+            idle_at?: string;
             /** Format: date-time */
             created_at: string;
         };
