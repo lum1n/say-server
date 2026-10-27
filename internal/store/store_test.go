@@ -222,6 +222,78 @@ func TestTokenExpiryAndRevocation(t *testing.T) {
 	})
 }
 
+func TestTokenRecords(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		p, _ := seed(t, s)
+		q, _ := seed(t, s)
+		phone, tok, err := s.IssueToken(ctx, NewToken{PrincipalID: p.ID, Name: "device:phone", UserAgent: "say-ios/1.0"})
+		if err != nil || tok.ID == "" || tok.Name != "device:phone" || tok.UserAgent != "say-ios/1.0" || !tok.ExpiresAt.IsZero() {
+			t.Fatalf("IssueToken = %+v, %v", tok, err)
+		}
+		expires := time.Now().Add(time.Hour).Truncate(time.Millisecond)
+		_, laptop, _ := s.IssueToken(ctx, NewToken{PrincipalID: p.ID, Name: "session", UserAgent: strings.Repeat("x", 1000), Expires: expires})
+		s.CreateToken(ctx, p.ID, "old", time.Now().Add(-time.Second))
+		s.CreateToken(ctx, q.ID, "cli", time.Time{})
+
+		got, id, err := s.Authenticate(ctx, phone)
+		if err != nil || got.ID != p.ID || id != tok.ID {
+			t.Fatalf("Authenticate = %+v %q, %v", got, id, err)
+		}
+		toks, err := s.Tokens(ctx, p.ID)
+		if err != nil || len(toks) != 2 {
+			t.Fatalf("Tokens = %+v, %v", toks, err)
+		}
+		byID := map[string]Token{toks[0].ID: toks[0], toks[1].ID: toks[1]}
+		if l := byID[laptop.ID]; len(l.UserAgent) != 256 || !l.ExpiresAt.Equal(expires) || !l.LastUsedAt.IsZero() {
+			t.Fatalf("the session = %+v", l)
+		}
+		if ph := byID[tok.ID]; time.Since(ph.LastUsedAt) > time.Minute || ph.CreatedAt.IsZero() {
+			t.Fatalf("the phone after use = %+v", ph)
+		}
+
+		if err := s.RevokeTokenID(ctx, q.ID, tok.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("revoking someone else's token: %v", err)
+		}
+		if err := s.RevokeTokenID(ctx, p.ID, tok.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.PrincipalByToken(ctx, phone); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("revoked token: %v", err)
+		}
+		if err := s.RevokeTokenID(ctx, p.ID, tok.ID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("revoking twice: %v", err)
+		}
+	})
+}
+
+func TestPairings(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		p, _ := seed(t, s)
+		code, err := s.CreatePairing(ctx, p.ID, time.Now().Add(time.Minute))
+		if err != nil || len(code) != 11 || code[5] != '-' {
+			t.Fatalf("CreatePairing = %q, %v", code, err)
+		}
+		if _, err := s.RedeemPairing(ctx, "WRONG-CODE0"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("a wrong code: %v", err)
+		}
+		// Typed by hand: lower case, no dash, O for 0 and l for 1.
+		typed := strings.ToLower(strings.ReplaceAll(code, "-", " "))
+		typed = strings.NewReplacer("0", "o", "1", "l").Replace(typed)
+		if id, err := s.RedeemPairing(ctx, typed); err != nil || id != p.ID {
+			t.Fatalf("RedeemPairing(%q) = %q, %v", typed, id, err)
+		}
+		if _, err := s.RedeemPairing(ctx, code); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("a used code: %v", err)
+		}
+		old, _ := s.CreatePairing(ctx, p.ID, time.Now().Add(-time.Second))
+		if _, err := s.RedeemPairing(ctx, old); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("an expired code: %v", err)
+		}
+	})
+}
+
 func TestUsers(t *testing.T) {
 	eachEngine(t, func(t *testing.T, s Store) {
 		ctx := context.Background()

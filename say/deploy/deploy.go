@@ -254,42 +254,76 @@ func setupOpen(ctx context.Context, hc *http.Client, url string) error {
 	return nil
 }
 
-// Claim creates the node's admin with code and returns a session token.
-func Claim(ctx context.Context, hc *http.Client, url, code, username, password string) (string, error) {
+// Claim creates the node's admin with code, then pairs the device it runs
+// on as device and returns that device's token, which doesn't expire and
+// can be revoked on its own (docs/adr/0018-devices.md).
+func Claim(ctx context.Context, hc *http.Client, url, code, username, password, device string) (string, error) {
 	if hc == nil {
 		hc = http.DefaultClient
 	}
-	body, _ := json.Marshal(map[string]string{"code": code, "username": username, "password": password})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(url, "/")+"/api/v1/setup", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	res, err := hc.Do(req)
+	url = strings.TrimRight(url, "/")
+	res, err := postJSON(ctx, hc, url+"/api/v1/setup", map[string]string{"code": code, "username": username, "password": password})
 	if err != nil {
 		return "", err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusCreated {
-		var e struct {
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		json.NewDecoder(res.Body).Decode(&e)
-		switch e.Error.Code {
+		switch e := apiError(res); e.Code {
 		case "setup_done":
 			return "", ErrSetupDone
 		case "setup_closed":
 			return "", ErrSetupClosed
+		default:
+			return "", fmt.Errorf("claiming the node: %s %s", res.Status, e.Message)
 		}
-		return "", fmt.Errorf("claiming the node: %s %s", res.Status, e.Error.Message)
 	}
+	// Setup also signed in a browser session, which a device doesn't need.
 	for _, c := range res.Cookies() {
 		if c.Name == "say_token" {
-			return c.Value, nil
+			if req, err := http.NewRequestWithContext(ctx, http.MethodPost, url+"/api/v1/logout", nil); err == nil {
+				req.AddCookie(c)
+				if res, err := hc.Do(req); err == nil {
+					res.Body.Close()
+				}
+			}
 		}
 	}
-	return "", errors.New("claiming the node: no session in the answer")
+	res, err = postJSON(ctx, hc, url+"/api/v1/devices", map[string]string{"username": username, "password": password, "name": device})
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	var d struct {
+		Token string `json:"token"`
+	}
+	if res.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("pairing this device with the node: %s %s", res.Status, apiError(res).Message)
+	}
+	if err := json.NewDecoder(res.Body).Decode(&d); err != nil || d.Token == "" {
+		return "", fmt.Errorf("pairing this device with the node: no token in the answer")
+	}
+	return d.Token, nil
+}
+
+func postJSON(ctx context.Context, hc *http.Client, url string, body any) (*http.Response, error) {
+	b, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	return hc.Do(req)
+}
+
+type errorBody struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func apiError(res *http.Response) errorBody {
+	var e struct {
+		Error errorBody `json:"error"`
+	}
+	json.NewDecoder(res.Body).Decode(&e)
+	return e.Error
 }

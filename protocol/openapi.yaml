@@ -153,11 +153,15 @@ paths:
       operationId: pairDevice
       summary: Get a token for one of the person's devices
       description: |
-        For a node that syncs with this one, its home
-        (docs/adr/0015-sync.md). Takes the person's username and password
-        and returns a token named `device:<name>` that does not expire. It
+        For an app, or a node that syncs with this one
+        (docs/adr/0015-sync.md, docs/adr/0018-devices.md). The device
+        proves who it is with the person's username and password, or with
+        a pairing code from POST /pairings on a device they're signed in
+        on (401 `invalid_pairing_code` if it is wrong, used or expired).
+        It gets a token named `device:<name>` that does not expire, and
         replaces the token an earlier pairing with the same name got.
-        POST /logout with the token unpairs the device.
+        POST /logout with the token, or DELETE
+        /principals/{id}/tokens/{token_id}, unpairs the device.
       security: []
       requestBody:
         required: true
@@ -193,6 +197,84 @@ paths:
         "204":
           description: Signed out
         "401":
+          $ref: "#/components/responses/Error"
+  /pairings:
+    post:
+      operationId: createPairing
+      summary: Make a code that adds another device for you
+      description: |
+        "Add a device": the code is good once, for 10 minutes, and the
+        new device sends it to POST /devices. Apps show it as a QR code
+        of `<node URL>/pair?code=<code>`. People only; others get 403.
+      responses:
+        "201":
+          description: The code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pairing"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+  /principals/{id}/tokens:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: listTokens
+      summary: A principal's sessions, devices and other tokens
+      description: |
+        Your own, or anyone's for instance admins. Expired tokens aren't
+        listed. `current` marks the token the request came with.
+      responses:
+        "200":
+          description: The tokens, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tokens]
+                properties:
+                  tokens:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Token"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /principals/{id}/tokens/{token_id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+    delete:
+      operationId: revokeToken
+      summary: Sign a session or device out
+      description: |
+        Its WebSockets close with code 4001 and its event streams end
+        within a heartbeat (25 s).
+      responses:
+        "204":
+          description: Revoked
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
           $ref: "#/components/responses/Error"
   /principals:
     get:
@@ -678,6 +760,10 @@ paths:
         - `hello`: `WsHello`; opens a bot session (below). The reply
           payload is `WsHelloReply`.
         - `ack`: `WsAck`; bot sessions only.
+
+        The server closes the socket with 4001 when its token is revoked
+        or expires; sign in again rather than reconnecting. 1008 means the
+        client fell behind; reconnect and resume from its cursors.
 
         **Bot sessions.** An agent's socket that says `hello` follows
         every room the agent is in, and rooms it is added to later, by
@@ -1568,15 +1654,54 @@ components:
           type: string
         password:
           type: string
+    Pairing:
+      type: object
+      required: [code, expires_at]
+      properties:
+        code:
+          type: string
+          description: Ten characters in two groups, such as `K3X9Q-2M7TA`
+        expires_at:
+          type: string
+          format: date-time
+    Token:
+      type: object
+      required: [id, name, created_at, current]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          description: "`session` (a browser), `device:<name>`, `agent`, `cli` or `widget`, or an embedding app's client name"
+        user_agent:
+          type: string
+          description: The client that got the token
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          description: Absent for tokens that don't expire
+        last_used_at:
+          type: string
+          format: date-time
+          description: Recorded at most hourly; absent if not seen since
+        current:
+          type: boolean
     PairDevice:
       type: object
-      required: [username, password, name]
+      required: [name]
       additionalProperties: false
+      description: A username and password, or a pairing code.
       properties:
         username:
           type: string
         password:
           type: string
+        pairing_code:
+          type: string
+          description: From POST /pairings, such as `K3X9Q-2M7TA`. Case, dashes and spaces don't matter.
         name:
           type: string
           minLength: 1

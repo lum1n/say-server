@@ -99,12 +99,35 @@ ORDER BY seq DESC
 LIMIT $3;
 
 -- name: CreateToken :exec
-INSERT INTO tokens (hash, principal_id, name, expires_at, created_at)
-VALUES ($1, $2, $3, $4, $5);
+INSERT INTO tokens (hash, id, principal_id, name, user_agent, expires_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7);
 
 -- name: PrincipalByToken :one
-SELECT p.* FROM principals p JOIN tokens t ON t.principal_id = p.id
+SELECT p.*, t.id AS token_id, t.last_used_at FROM principals p JOIN tokens t ON t.principal_id = p.id
 WHERE t.hash = $1 AND (t.expires_at = 0 OR t.expires_at > $2);
+
+-- name: TouchToken :exec
+UPDATE tokens SET last_used_at = $2 WHERE hash = $1;
+
+-- name: TokensFor :many
+SELECT id, name, user_agent, expires_at, last_used_at, created_at FROM tokens
+WHERE principal_id = $1 AND (expires_at = 0 OR expires_at > $2)
+ORDER BY created_at DESC, id;
+
+-- name: DeleteTokenID :execrows
+DELETE FROM tokens WHERE principal_id = $1 AND id = $2;
+
+-- name: CreatePairing :exec
+INSERT INTO pairings (hash, principal_id, expires_at, created_at) VALUES ($1, $2, $3, $4);
+
+-- name: DeleteExpiredPairings :exec
+DELETE FROM pairings WHERE expires_at <= $1;
+
+-- name: RedeemPairing :one
+DELETE FROM pairings WHERE hash = $1 AND expires_at > $2 RETURNING principal_id;
+
+-- name: DeletePrincipalPairings :exec
+DELETE FROM pairings WHERE principal_id = $1;
 
 -- name: DeleteToken :exec
 DELETE FROM tokens WHERE hash = $1;

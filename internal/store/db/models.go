@@ -136,6 +136,13 @@ type Membership struct {
 	Scopes      string
 }
 
+type Pairing struct {
+	Hash        string
+	PrincipalID string
+	ExpiresAt   int64
+	CreatedAt   int64
+}
+
 type Principal struct {
 	ID          string
 	Kind        string
@@ -163,6 +170,9 @@ type Token struct {
 	Name        string
 	CreatedAt   int64
 	ExpiresAt   int64
+	ID          string
+	UserAgent   string
+	LastUsedAt  int64
 }
 
 type Widget struct {

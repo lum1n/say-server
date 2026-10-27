@@ -121,11 +121,15 @@ export interface paths {
         put?: never;
         /**
          * Get a token for one of the person's devices
-         * @description For a node that syncs with this one, its home
-         *     (docs/adr/0015-sync.md). Takes the person's username and password
-         *     and returns a token named `device:<name>` that does not expire. It
+         * @description For an app, or a node that syncs with this one
+         *     (docs/adr/0015-sync.md, docs/adr/0018-devices.md). The device
+         *     proves who it is with the person's username and password, or with
+         *     a pairing code from POST /pairings on a device they're signed in
+         *     on (401 `invalid_pairing_code` if it is wrong, used or expired).
+         *     It gets a token named `device:<name>` that does not expire, and
          *     replaces the token an earlier pairing with the same name got.
-         *     POST /logout with the token unpairs the device.
+         *     POST /logout with the token, or DELETE
+         *     /principals/{id}/tokens/{token_id}, unpairs the device.
          */
         post: operations["pairDevice"];
         delete?: never;
@@ -149,6 +153,75 @@ export interface paths {
          */
         post: operations["logout"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/pairings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a code that adds another device for you
+         * @description "Add a device": the code is good once, for 10 minutes, and the
+         *     new device sends it to POST /devices. Apps show it as a QR code
+         *     of `<node URL>/pair?code=<code>`. People only; others get 403.
+         */
+        post: operations["createPairing"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/principals/{id}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A principal's sessions, devices and other tokens
+         * @description Your own, or anyone's for instance admins. Expired tokens aren't
+         *     listed. `current` marks the token the request came with.
+         */
+        get: operations["listTokens"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/principals/{id}/tokens/{token_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Sign a session or device out
+         * @description Its WebSockets close with code 4001 and its event streams end
+         *     within a heartbeat (25 s).
+         */
+        delete: operations["revokeToken"];
         options?: never;
         head?: never;
         patch?: never;
@@ -414,6 +487,10 @@ export interface paths {
          *     - `hello`: `WsHello`; opens a bot session (below). The reply
          *       payload is `WsHelloReply`.
          *     - `ack`: `WsAck`; bot sessions only.
+         *
+         *     The server closes the socket with 4001 when its token is revoked
+         *     or expires; sign in again rather than reconnecting. 1008 means the
+         *     client fell behind; reconnect and resume from its cursors.
          *
          *     **Bot sessions.** An agent's socket that says `hello` follows
          *     every room the agent is in, and rooms it is added to later, by
@@ -977,9 +1054,38 @@ export interface components {
             username: string;
             password: string;
         };
+        Pairing: {
+            /** @description Ten characters in two groups, such as `K3X9Q-2M7TA` */
+            code: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        Token: {
+            id: string;
+            /** @description `session` (a browser), `device:<name>`, `agent`, `cli` or `widget`, or an embedding app's client name */
+            name: string;
+            /** @description The client that got the token */
+            user_agent?: string;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description Absent for tokens that don't expire
+             */
+            expires_at?: string;
+            /**
+             * Format: date-time
+             * @description Recorded at most hourly; absent if not seen since
+             */
+            last_used_at?: string;
+            current: boolean;
+        };
+        /** @description A username and password, or a pairing code. */
         PairDevice: {
-            username: string;
-            password: string;
+            username?: string;
+            password?: string;
+            /** @description From POST /pairings, such as `K3X9Q-2M7TA`. Case, dashes and spaces don't matter. */
+            pairing_code?: string;
             /** @description The device's name, like `phone`. */
             name: string;
         };
@@ -1786,6 +1892,79 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Error"];
+        };
+    };
+    createPairing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The code */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Pairing"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    listTokens: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The tokens, newest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tokens: components["schemas"]["Token"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    revokeToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                token_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Revoked */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     listPrincipals: {

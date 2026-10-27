@@ -267,7 +267,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pushMsg:
 		cmds = append(cmds, m.waitPush(), m.push(say.Push(msg)))
 	case closeMsg:
-		m.status = "disconnected"
+		if !strings.HasPrefix(m.status, "signed out") {
+			m.status = "disconnected"
+		}
 	case errMsg:
 		m.status = msg.err.Error()
 	case tea.KeyMsg:
@@ -291,6 +293,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // push applies something the server pushed.
 func (m *Model) push(p say.Push) tea.Cmd {
 	switch p.Type {
+	case "signed_out":
+		m.status = "signed out: this token was revoked or has expired"
+		return nil
 	case "rooms":
 		// Members may have changed too.
 		return tea.Batch(m.loadRooms(), m.loadPeople(), m.loadMembers(m.open))

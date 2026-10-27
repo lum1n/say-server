@@ -39,7 +39,16 @@ export interface RealtimeOptions {
    */
   onDelivery?: (push: DeliveryPush) => void;
   onStatus?: (status: RealtimeStatus) => void;
+  /**
+   * onSignedOut says the server closed the socket because its token was
+   * revoked or expired (close code 4001). Realtime stops reconnecting;
+   * sign in again.
+   */
+  onSignedOut?: () => void;
 }
+
+/** SignedOutCode is the close code of a socket whose token was revoked or expired. */
+export const SignedOutCode = 4001;
 
 type Envelope = { id: string; type: string; status?: "ok" | "error" | "unknown"; payload?: unknown };
 
@@ -102,9 +111,14 @@ export class Realtime {
       this.opened = true;
     };
     ws.onmessage = (msg) => this.receive(msg.data);
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       if (this.ws !== ws || this.closed) return;
       this.opts.onStatus?.("closed");
+      if (e.code === SignedOutCode) {
+        this.closed = true;
+        this.opts.onSignedOut?.();
+        return;
+      }
       this.timer = setTimeout(() => this.connect(), this.backoff);
       this.backoff = Math.min(this.backoff * 2, maxBackoff);
     };

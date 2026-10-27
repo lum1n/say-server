@@ -115,9 +115,47 @@ class Login(TypedDict):
     password: str
 
 
+class Pairing(TypedDict):
+    code: str
+    """
+    Ten characters in two groups, such as `K3X9Q-2M7TA`
+    """
+    expires_at: str
+
+
+class Token(TypedDict):
+    id: str
+    name: str
+    """
+    `session` (a browser), `device:<name>`, `agent`, `cli` or `widget`, or an embedding app's client name
+    """
+    user_agent: NotRequired[str]
+    """
+    The client that got the token
+    """
+    created_at: str
+    expires_at: NotRequired[str]
+    """
+    Absent for tokens that don't expire
+    """
+    last_used_at: NotRequired[str]
+    """
+    Recorded at most hourly; absent if not seen since
+    """
+    current: bool
+
+
 class PairDevice(TypedDict):
-    username: str
-    password: str
+    """
+    A username and password, or a pairing code.
+    """
+
+    username: NotRequired[str]
+    password: NotRequired[str]
+    pairing_code: NotRequired[str]
+    """
+    From POST /pairings, such as `K3X9Q-2M7TA`. Case, dashes and spaces don't matter.
+    """
     name: str
     """
     The device's name, like `phone`.

@@ -142,43 +142,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, toPrincipal(p))
 }
 
-// pairDevice signs a person in from one of their devices, such as a node
-// syncing with this one (docs/adr/0015-sync.md), and returns a token for
-// it that does not expire. A device pairing again under the same name
-// replaces its earlier token.
-func (s *Server) pairDevice(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		Name     string `json:"name"`
-	}
-	if err := readJSON(w, r, &body); err != nil {
-		writeError(w, err)
-		return
-	}
-	name := strings.TrimSpace(body.Name)
-	if name == "" || utf8.RuneCountInString(name) > 64 {
-		writeError(w, errorf(http.StatusUnprocessableEntity, "invalid", "name must be 1–64 characters"))
-		return
-	}
-	p, err := s.checkLogin(r, body.Username, body.Password)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	token := "device:" + name
-	if err := s.store.RevokeTokensNamed(r.Context(), p.ID, token); err != nil {
-		writeError(w, err)
-		return
-	}
-	secret, err := s.store.CreateToken(r.Context(), p.ID, token, time.Time{})
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"principal": toPrincipal(p), "token": secret})
-}
-
 // checkLogin returns the person whose username and password these are.
 func (s *Server) checkLogin(r *http.Request, username, pw string) (core.Principal, error) {
 	l, err := s.store.LoginByUsername(r.Context(), strings.ToLower(strings.TrimSpace(username)))
@@ -199,7 +162,9 @@ func (s *Server) checkLogin(r *http.Request, username, pw string) (core.Principa
 // cookie is HttpOnly, so page scripts never see the secret.
 func (s *Server) startSession(w http.ResponseWriter, r *http.Request, p core.Principal) error {
 	expires := time.Now().Add(sessionTTL)
-	secret, err := s.store.CreateToken(r.Context(), p.ID, "session", expires)
+	secret, _, err := s.store.IssueToken(r.Context(), store.NewToken{
+		PrincipalID: p.ID, Name: "session", UserAgent: r.UserAgent(), Expires: expires,
+	})
 	if err != nil {
 		return err
 	}

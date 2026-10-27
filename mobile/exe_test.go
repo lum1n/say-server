@@ -89,7 +89,7 @@ func TestExe(t *testing.T) {
 	if err := e.WaitOpen(d.URL); err != nil {
 		t.Fatal(err)
 	}
-	session, err := ClaimNode(d.URL, d.SetupCode, "ada", "a long password")
+	session, err := ClaimNode(d.URL, d.SetupCode, "ada", "a long password", "test phone")
 	if err != nil || session == "" {
 		t.Fatalf("claim: %q, %v", session, err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/pem"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
@@ -248,10 +249,10 @@ func TestDeploy(t *testing.T) {
 		t.Fatalf("new = %q", cmds[0])
 	}
 
-	if _, err := deploy.Claim(ctx, nil, d.URL, "WRONG-CODE", "ada", "a long password"); err == nil {
+	if _, err := deploy.Claim(ctx, nil, d.URL, "WRONG-CODE", "ada", "a long password", "test"); err == nil {
 		t.Fatal("claimed with a wrong code")
 	}
-	token, err := deploy.Claim(ctx, nil, d.URL, d.SetupCode, "ada", "a long password")
+	token, err := deploy.Claim(ctx, nil, d.URL, d.SetupCode, "ada", "a long password", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +260,20 @@ func TestDeploy(t *testing.T) {
 	if err != nil || !me.Admin {
 		t.Fatalf("me = %+v, %v", me, err)
 	}
-	if _, err := deploy.Claim(ctx, nil, d.URL, d.SetupCode, "bob", "a long password"); !errors.Is(err, deploy.ErrSetupDone) {
+	// The claim leaves one token: the device's, not setup's session.
+	req, _ := http.NewRequest("GET", d.URL+"/api/v1/principals/"+me.ID+"/tokens", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var toks struct{ Tokens []struct{ Name string } }
+	json.NewDecoder(res.Body).Decode(&toks)
+	res.Body.Close()
+	if len(toks.Tokens) != 1 || toks.Tokens[0].Name != "device:test" {
+		t.Fatalf("tokens after the claim = %+v", toks.Tokens)
+	}
+	if _, err := deploy.Claim(ctx, nil, d.URL, d.SetupCode, "bob", "a long password", "test"); !errors.Is(err, deploy.ErrSetupDone) {
 		t.Fatalf("second claim: %v", err)
 	}
 	if err := deploy.WaitOpen(ctx, http.DefaultClient, d.URL, time.Second); !errors.Is(err, deploy.ErrSetupDone) {

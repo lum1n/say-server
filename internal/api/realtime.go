@@ -15,6 +15,7 @@ import (
 
 	"github.com/lum1n/say-server/internal/bus"
 	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 // Realtime delivery reads the store, not the bus. The bus only says "room R
@@ -155,6 +156,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, me core.Principa
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
+	secret := requestToken(r)
 	var mu sync.Mutex // the heartbeat and follow both write
 	write := func(f func() error) error {
 		mu.Lock()
@@ -174,6 +176,10 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, me core.Principa
 				return
 			case <-t.C:
 				if write(func() error { _, err := fmt.Fprint(w, ": ping\n\n"); return err }) != nil {
+					cancel()
+					return
+				}
+				if s.signedOut(ctx, secret) {
 					cancel()
 					return
 				}
@@ -262,11 +268,12 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	}
 	conn.SetReadLimit(maxBody)
 	c := &wsConn{
-		s:    s,
-		me:   me,
-		conn: conn,
-		out:  make(chan envelope, outboundBuffer),
-		subs: map[string]context.CancelFunc{},
+		s:     s,
+		me:    me,
+		token: requestToken(r),
+		conn:  conn,
+		out:   make(chan envelope, outboundBuffer),
+		subs:  map[string]context.CancelFunc{},
 	}
 	ctx, cancel := context.WithCancel(r.Context())
 	c.cancel = cancel
@@ -305,8 +312,8 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	err = c.readLoop(ctx)
 	switch {
 	case websocket.CloseStatus(err) != -1:
-	case errors.Is(err, errTooSlow):
-		conn.Close(websocket.StatusPolicyViolation, "too slow; reconnect and resume from your cursors")
+	case errors.Is(err, errTooSlow), errors.Is(err, errSignedOut):
+		// fail closed it.
 	case ctx.Err() != nil:
 		conn.Close(websocket.StatusGoingAway, "server shutting down")
 	default:
@@ -314,11 +321,27 @@ func (s *Server) ws(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	}
 }
 
-var errTooSlow = errors.New("client too slow")
+var (
+	errTooSlow   = errors.New("client too slow")
+	errSignedOut = errors.New("token revoked or expired")
+)
+
+// StatusSignedOut closes a WebSocket whose token was revoked or has
+// expired, so the client signs in again rather than reconnecting.
+const StatusSignedOut websocket.StatusCode = 4001
+
+// signedOut reports whether the token a connection opened with no longer
+// signs anyone in. Long-lived connections check it at each heartbeat, so
+// revoking a device cuts it off (docs/adr/0018-devices.md).
+func (s *Server) signedOut(ctx context.Context, secret string) bool {
+	_, err := s.store.PrincipalByToken(ctx, secret)
+	return errors.Is(err, store.ErrNotFound)
+}
 
 type wsConn struct {
 	s      *Server
 	me     core.Principal
+	token  string // the secret it opened with
 	conn   *websocket.Conn
 	out    chan envelope
 	cancel context.CancelFunc
@@ -368,6 +391,10 @@ func (c *wsConn) pingLoop(ctx context.Context) {
 				c.fail(err)
 				return
 			}
+			if c.s.signedOut(ctx, c.token) {
+				c.fail(errSignedOut)
+				return
+			}
 		}
 	}
 }
@@ -400,11 +427,22 @@ func (c *wsConn) pushFrame(env envelope) {
 // fail records why the connection ends and stops it.
 func (c *wsConn) fail(err error) {
 	c.mu.Lock()
-	if c.err == nil {
+	first := c.err == nil
+	if first {
 		c.err = err
 	}
 	c.mu.Unlock()
-	c.cancel()
+	// A close the client should act on is sent before the connection goes:
+	// cancelling the read would drop it without a close frame. The read
+	// loop then ends with the close.
+	switch {
+	case first && errors.Is(err, errTooSlow):
+		go c.conn.Close(websocket.StatusPolicyViolation, "too slow; reconnect and resume from your cursors")
+	case first && errors.Is(err, errSignedOut):
+		go c.conn.Close(StatusSignedOut, "this token was revoked or has expired; sign in again")
+	default:
+		c.cancel()
+	}
 }
 
 func (c *wsConn) readLoop(ctx context.Context) error {

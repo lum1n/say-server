@@ -26,6 +26,8 @@ type Push struct {
 // and when the socket drops it reconnects with backoff and resubscribes
 // from the cursors, so no event is missed or delivered twice. After a
 // reconnect it pushes "rooms", since room changes may have been missed.
+// When the server signs the token out (revoked or expired), it pushes
+// "signed_out" and stops: Pushes closes.
 type Realtime struct {
 	c      *Client
 	ctx    context.Context
@@ -124,7 +126,10 @@ func (r *Realtime) run(conn *websocket.Conn) {
 			return
 		}
 		first = false
-		r.read(conn)
+		if err := r.read(conn); websocket.CloseStatus(err) == statusSignedOut {
+			r.push(Push{Type: "signed_out"})
+			return
+		}
 		r.mu.Lock()
 		r.conn = nil
 		r.mu.Unlock()
@@ -145,12 +150,15 @@ func (r *Realtime) run(conn *websocket.Conn) {
 	}
 }
 
-// read delivers pushes until the socket fails.
-func (r *Realtime) read(conn *websocket.Conn) {
+// statusSignedOut closes a socket whose token was revoked or expired.
+const statusSignedOut websocket.StatusCode = 4001
+
+// read delivers pushes until the socket fails, and returns why.
+func (r *Realtime) read(conn *websocket.Conn) error {
 	for {
 		_, data, err := conn.Read(r.ctx)
 		if err != nil {
-			return
+			return err
 		}
 		var env struct {
 			Type    string          `json:"type"`
@@ -163,7 +171,7 @@ func (r *Realtime) read(conn *websocket.Conn) {
 		switch env.Type {
 		case "rooms":
 			if !r.push(Push{Type: "rooms"}) {
-				return
+				return r.ctx.Err()
 			}
 		case "event", "stream":
 			var e Event
@@ -179,7 +187,7 @@ func (r *Realtime) read(conn *websocket.Conn) {
 			r.mu.Unlock()
 			// A resubscribe can overlap events already delivered.
 			if followed && fresh && !r.push(Push{Type: env.Type, Event: &e}) {
-				return
+				return r.ctx.Err()
 			}
 		}
 	}
