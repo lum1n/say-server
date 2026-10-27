@@ -37,11 +37,14 @@ RUN export CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 
 # signal-cli for the Signal bridge. Signal's servers turn away old
 # versions, so keep it current (and LIBSIGNAL_VERSION at the libsignal it
-# ships with). On amd64 it is the native build, which needs no Java.
-# Elsewhere it is the JVM build with a JRE: its jar carries libsignal only
-# for amd64, so libsignal_jni.so for the image's architecture comes from
-# github.com/exquo/signal-libs-build. SIGNAL_CLI_BUILD=jvm takes the JVM
-# build on amd64 too; SIGNAL_CLI_VERSION="" leaves signal-cli out.
+# ships with). It is the JVM build with a JRE: the native (GraalVM) build
+# 0.14.8-0.14.9 panics in libsignal right after linking a device ("catching
+# Java exceptions is not supported here", AsamK/signal-cli#2118), so links
+# never finish. Its jar carries libsignal only for amd64, so libsignal_jni.so
+# for the image's architecture comes from github.com/exquo/signal-libs-build.
+# SIGNAL_CLI_BUILD=native takes the native build (amd64 only);
+# SIGNAL_CLI_VERSION="" leaves signal-cli out. scripts/signal-bundle.sh
+# packs this stage's output for say-update.
 FROM eclipse-temurin:25-jre AS jre
 FROM debian:bookworm-slim AS target
 FROM --platform=$BUILDPLATFORM debian:bookworm-slim AS signal
@@ -60,7 +63,7 @@ COPY --from=go /signal-cli-jvm /tmp/
 RUN set -e; mkdir /out; \
     [ -n "$SIGNAL_CLI_VERSION" ] || exit 0; \
     build="$SIGNAL_CLI_BUILD"; \
-    [ -n "$build" ] || { [ "$TARGETARCH" = amd64 ] && build=native || build=jvm; }; \
+    [ -n "$build" ] || build=jvm; \
     release="https://github.com/AsamK/signal-cli/releases/download/v${SIGNAL_CLI_VERSION}"; \
     mkdir -p /out/usr/local/bin; \
     if [ "$build" = native ]; then \
@@ -89,6 +92,8 @@ RUN set -e; mkdir /out; \
       tar -xzf /tmp/libsignal.tgz -C /out/opt/signal-cli/lib libsignal_jni.so; \
       cp -a /tmp/jre /out/opt/java; \
       cp /tmp/signal-cli-jvm /out/usr/local/bin/signal-cli; \
+      mkdir -p /out/usr/local/lib/say; \
+      echo "$SIGNAL_CLI_VERSION jvm" >/out/usr/local/lib/say/signal-cli.version; \
     fi
 
 # The say-node image (docker build --target node), for your own node on a
@@ -114,8 +119,8 @@ RUN apt-get update \
  # Grows the root filesystem to the VM's disk on first boot, as exeuntu does.
  && echo '/dev/vda / ext4 defaults,x-systemd.growfs 0 1' >/etc/fstab
 COPY --from=go /say /usr/local/bin/say
-# signal-cli's native build (the image is amd64), and the version file
-# say-update reads to tell whether a release brings a new signal-cli.
+# signal-cli with its JRE, and the version file say-update reads to tell
+# whether a release brings a new signal-cli.
 COPY --from=signal /out/ /
 COPY image/node/init /usr/local/bin/init
 COPY image/node/say-env /usr/local/lib/say/say-env

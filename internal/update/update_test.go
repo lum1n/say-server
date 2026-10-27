@@ -83,7 +83,7 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	root := t.TempDir()
-	for _, d := range []string{"bin", "lib", "data/signal", "work"} {
+	for _, d := range []string{"bin", "lib", "opt", "data/signal", "work"} {
 		os.MkdirAll(filepath.Join(root, d), 0o755)
 	}
 	write := func(name string, b []byte, mode os.FileMode) {
@@ -108,6 +108,8 @@ func newEnv(t *testing.T) *env {
 		Say:              filepath.Join(root, "bin/say"),
 		SignalCLI:        filepath.Join(root, "bin/signal-cli"),
 		SignalCLIVersion: filepath.Join(root, "lib/signal-cli.version"),
+		SignalCLIJava:    filepath.Join(root, "opt/java"),
+		SignalCLIHome:    filepath.Join(root, "opt/signal-cli"),
 		Data:             filepath.Join(root, "data"),
 		Work:             filepath.Join(root, "work"),
 		Status:           filepath.Join(root, "data", StatusFile),
@@ -159,6 +161,38 @@ func (e *env) publish(version string, sayBin []byte, sigVersion string) release.
 	return m
 }
 
+// bundle is signal-cli's JVM build as scripts/signal-bundle.sh packs it.
+func bundle(version string) []byte {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	dir := func(name string) { tw.WriteHeader(&tar.Header{Name: name + "/", Mode: 0o755, Typeflag: tar.TypeDir}) }
+	file := func(name, body string) {
+		tw.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(body)), Typeflag: tar.TypeReg})
+		tw.Write([]byte(body))
+	}
+	for _, d := range []string{"opt", "opt/java", "opt/java/bin", "opt/signal-cli", "opt/signal-cli/lib", "usr", "usr/local", "usr/local/bin"} {
+		dir(d)
+	}
+	file("opt/java/bin/java", "java")
+	tw.WriteHeader(&tar.Header{Name: "opt/java/bin/jre", Linkname: "java", Typeflag: tar.TypeSymlink})
+	file("opt/signal-cli/lib/signal-cli-"+version+".jar", "jar "+version)
+	file("usr/local/bin/signal-cli", "launcher "+version)
+	tw.Close()
+	gz.Close()
+	return buf.Bytes()
+}
+
+// publishJVM is publish with signal-cli's JVM build for linux-amd64 too.
+func (e *env) publishJVM(version string, sayBin []byte, sigVersion string, b []byte) release.Manifest {
+	m := e.publish(version, sayBin, sigVersion)
+	m.SignalCLI.JVM = map[string]release.Download{
+		"linux-amd64": {URL: e.srv.File("/signal-cli-jvm.tgz", b), SHA256: sum(b)},
+	}
+	e.srv.Publish(m)
+	return m
+}
+
 func (e *env) read(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(e.root, name))
@@ -203,7 +237,7 @@ func (e *env) unchanged(t *testing.T) {
 
 func TestUpToDate(t *testing.T) {
 	e := newEnv(t)
-	e.publish("0.4.0", script("0.4.0", "same"), "0.14.9")
+	e.publish("0.4.0", script("0.4.0", "same"), "0.14.8")
 	if err := e.u.Run(context.Background(), true); err != nil {
 		t.Fatal(err)
 	}
@@ -351,6 +385,120 @@ func TestSignalCLIWithoutVersion(t *testing.T) {
 	}
 	if got := e.read(t, "bin/say"); got != string(script("0.4.1", "new")) {
 		t.Errorf("say = %q", got)
+	}
+}
+
+// A release with the same say but signal-cli's JVM build switches just
+// signal-cli, from the native build.
+func TestSwitchToJVM(t *testing.T) {
+	e := newEnv(t)
+	e.publishJVM("0.4.0", script("0.4.0", "same"), "0.14.9", bundle("0.14.9"))
+	if err := e.u.Run(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"bin/say":                                  string(script("0.4.0", "old")),
+		"bin/signal-cli":                           "launcher 0.14.9",
+		"bin/.signal-cli.prev":                     "old signal-cli",
+		"lib/signal-cli.version":                   "0.14.9 jvm\n",
+		"opt/java/bin/java":                        "java",
+		"opt/java/bin/jre":                         "java",
+		"opt/signal-cli/lib/signal-cli-0.14.9.jar": "jar 0.14.9",
+		"data/say.db":                              "0.4.0 data",
+	} {
+		if got := e.read(t, name); got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	if st := e.status(t); st.State != StateOK || st.UpdatedFrom != "0.4.0" {
+		t.Fatalf("status = %+v", st)
+	}
+	if e.say.running != "0.4.0" || e.say.stops != 1 {
+		t.Fatalf("running %q, stopped %d times", e.say.running, e.say.stops)
+	}
+
+	// Once it's there, the next check changes nothing.
+	if err := e.u.Run(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if e.say.stops != 1 {
+		t.Fatal("say was stopped again")
+	}
+
+	// A newer signal-cli replaces the JVM build, keeping the last one.
+	e.publishJVM("0.4.0", script("0.4.0", "same"), "0.15.0", bundle("0.15.0"))
+	if err := e.u.Run(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.read(t, "opt/.signal-cli.prev/lib/signal-cli-0.14.9.jar"); got != "jar 0.14.9" {
+		t.Errorf("previous lib = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(e.root, "opt/signal-cli/lib/signal-cli-0.14.9.jar")); err == nil {
+		t.Error("the old jar is still in lib")
+	}
+	if got := e.read(t, "lib/signal-cli.version"); got != "0.15.0 jvm\n" {
+		t.Errorf("version = %q", got)
+	}
+}
+
+// A say that fails after the switch takes the native signal-cli back too.
+func TestJVMRollback(t *testing.T) {
+	e := newEnv(t)
+	e.publishJVM("0.4.1", script("0.4.1", "unhealthy"), "0.14.9", bundle("0.14.9"))
+	err := e.u.Run(context.Background(), true)
+	if err == nil || !strings.Contains(err.Error(), "rolled back") {
+		t.Fatalf("Run = %v", err)
+	}
+	e.unchanged(t)
+	for _, name := range []string{"opt/java", "opt/signal-cli", "opt/.java.new"} {
+		if _, err := os.Stat(filepath.Join(e.root, name)); err == nil {
+			t.Errorf("%s is left", name)
+		}
+	}
+}
+
+// A bundle with anything else in it, or a link out of its directory, is
+// refused before say is touched.
+func TestBadBundle(t *testing.T) {
+	for name, extra := range map[string]func(tw *tar.Writer){
+		"stray file": func(tw *tar.Writer) {
+			tw.WriteHeader(&tar.Header{Name: "etc/passwd", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg})
+			tw.Write([]byte("x"))
+		},
+		"link out": func(tw *tar.Writer) {
+			tw.WriteHeader(&tar.Header{Name: "opt/java/evil", Linkname: "../../../etc", Typeflag: tar.TypeSymlink})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			var buf bytes.Buffer
+			gz := gzip.NewWriter(&buf)
+			tw := tar.NewWriter(gz)
+			r := tar.NewReader(func() *gzip.Reader { g, _ := gzip.NewReader(bytes.NewReader(bundle("0.14.9"))); return g }())
+			for {
+				h, err := r.Next()
+				if err != nil {
+					break
+				}
+				tw.WriteHeader(h)
+				if h.Typeflag == tar.TypeReg {
+					b := make([]byte, h.Size)
+					r.Read(b)
+					tw.Write(b)
+				}
+			}
+			extra(tw)
+			tw.Close()
+			gz.Close()
+			e.publishJVM("0.4.1", script("0.4.1", "new"), "0.14.9", buf.Bytes())
+			if err := e.u.Run(context.Background(), true); err == nil {
+				t.Fatal("no error")
+			}
+			if e.say.stops != 0 {
+				t.Fatal("say was stopped")
+			}
+			e.unchanged(t)
+		})
 	}
 }
 
