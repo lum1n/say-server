@@ -46,11 +46,17 @@ type Manifest struct {
 	SignalCLI SignalCLI           `json:"signal_cli"`
 }
 
-// SignalCLI is the signal-cli release the say-node image pins. Its
-// native build is for linux-amd64 only.
+// SignalCLI is the signal-cli release the say-node image pins.
 type SignalCLI struct {
-	Version    string    `json:"version"`
+	Version string `json:"version"`
+	// LinuxAMD64 is signal-cli's native build. Updaters before 0.1.4 know
+	// only this one.
 	LinuxAMD64 *Download `json:"linux-amd64,omitempty"`
+	// JVM is the JVM build, keyed by GOOS-GOARCH: a .tar.gz that
+	// scripts/signal-bundle.sh lays out from / with opt/java (the JRE),
+	// opt/signal-cli/lib (jars and libsignal) and usr/local/bin/signal-cli
+	// (the launcher). Updaters prefer it.
+	JVM map[string]Download `json:"jvm,omitempty"`
 }
 
 // Download is a file and its SHA-256, in hex.

@@ -48,6 +48,8 @@ mkdir "$tmp/release"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=99.0.0" \
 	-o "$tmp/release/say-linux-amd64" ./cmd/say
 cp "$tmp/release/say-linux-amd64" "$tmp/release/say-linux-arm64"
+# The image already has this signal-cli, so the updater never fetches these.
+for arch in amd64 arm64; do : >"$tmp/release/signal-cli-jvm-linux-$arch.tar.gz"; done
 scripts/manifest.sh 99.0.0 sha256:test "$tmp/release"
 files=http://$name-files:8000
 jq --arg base "$files" '.say[].url |= ($base + "/" + (split("/") | last))' \
