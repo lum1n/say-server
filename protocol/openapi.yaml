@@ -987,6 +987,10 @@ paths:
         or `?token=<secret>`. Any node takes it. In a relay bot the chat
         must be linked to a room, or nothing is taken (404 `not_linked`).
         A repeated `id` in the same chat is ignored.
+
+        Each bridge's hook takes 60 messages at once, then 60 a minute, on
+        each node; only posts with the right secret count. A leaked secret
+        is replaced with `POST /bridges/{id}/hook-secret`.
       security:
         - {}
       requestBody:
@@ -1004,6 +1008,17 @@ paths:
           $ref: "#/components/responses/Error"
         "404":
           $ref: "#/components/responses/Error"
+        "429":
+          description: The bridge's hook is over its limit (code rate_limited)
+          headers:
+            Retry-After:
+              description: Seconds until a post would pass.
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /networks:
     get:
       operationId: listNetworks
@@ -1172,6 +1187,41 @@ paths:
           $ref: "#/components/responses/Error"
         "409":
           description: The bridge is not waiting for an answer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /bridges/{id}/hook-secret:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+    post:
+      operationId: rotateHookSecret
+      summary: Replace the secret programs post to the bridge's hook with
+      description: |
+        For networks with a `hook_secret`, such as webhooks. A new random
+        secret is set and returned once; it is never read back. Posts with
+        the old one are refused from then on, and the bridge restarts.
+      responses:
+        "200":
+          description: The new secret, and the bridge
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, bridge]
+                properties:
+                  secret:
+                    type: string
+                  bridge:
+                    $ref: "#/components/schemas/Bridge"
+        "401":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          description: |
+            The bridge is being deleted (code deleting) or its network has
+            no hook secret (code no_hook_secret)
           content:
             application/json:
               schema:
@@ -1889,6 +1939,11 @@ components:
         hook:
           description: The network takes messages posted to `/hooks/{bridge id}`.
           type: boolean
+        hook_secret:
+          description: |
+            The setting holding the hook's secret, which
+            `POST /bridges/{id}/hook-secret` replaces.
+          type: string
     HookMessage:
       description: A message posted to a webhook bridge's hook.
       type: object

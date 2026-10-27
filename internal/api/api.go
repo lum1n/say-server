@@ -35,6 +35,9 @@ type Config struct {
 	// (docs/adr/0005-agent-safety.md). Its zero limits take the Default
 	// constants; Paused is ignored.
 	Agents core.AgentPolicy
+	// HookLimit is how many messages a minute each bridge's hook takes on
+	// this node; zero is DefaultHookLimit.
+	HookLimit int
 }
 
 type Server struct {
@@ -44,6 +47,7 @@ type Server struct {
 	bus       bus.Bus
 	defaults  core.AgentPolicy
 	setupCode string
+	hooks     *hookLimiter
 	// resync is how often a realtime follower rereads the store without a
 	// bus notification; heartbeat is how often idle streams are pinged.
 	resync    time.Duration
@@ -61,6 +65,7 @@ func New(c Config) *Server {
 		bus:       c.Bus,
 		defaults:  c.Agents,
 		setupCode: c.SetupCode,
+		hooks:     newHookLimiter(c.HookLimit),
 		resync:    30 * time.Second,
 		heartbeat: 25 * time.Second,
 	}
@@ -105,6 +110,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/bridges/{id}", s.authed(s.updateBridge))
 	mux.HandleFunc("DELETE /api/v1/bridges/{id}", s.authed(s.deleteBridge))
 	mux.HandleFunc("POST /api/v1/bridges/{id}/answer", s.authed(s.answerBridge))
+	mux.HandleFunc("POST /api/v1/bridges/{id}/hook-secret", s.authed(s.rotateHookSecret))
 	mux.HandleFunc("GET /api/v1/bridges/{id}/links", s.authed(s.listLinks))
 	mux.HandleFunc("POST /api/v1/bridges/{id}/links", s.authed(s.createLink))
 	mux.HandleFunc("DELETE /api/v1/bridges/{id}/links/{link_id}", s.authed(s.deleteLink))

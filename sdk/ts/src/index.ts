@@ -387,6 +387,16 @@ export async function answerBridge(id: string, value: string, client = defaultCl
   if (!response.ok) fail(response, error);
 }
 
+/**
+ * rotateHookSecret sets a new random secret for the bridge's hook and
+ * returns it; it is never shown again, and the old one stops working.
+ */
+export async function rotateHookSecret(id: string, client = defaultClient): Promise<{ secret: string; bridge: Bridge }> {
+  const { data, error, response } = await client.POST("/bridges/{id}/hook-secret", { params: { path: { id } } });
+  if (!data) fail(response, error);
+  return data;
+}
+
 export async function listBridgeLinks(id: string, client = defaultClient): Promise<BridgeLink[]> {
   const { data, error, response } = await client.GET("/bridges/{id}/links", { params: { path: { id } } });
   if (!data) fail(response, error);

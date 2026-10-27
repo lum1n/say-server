@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -34,6 +36,9 @@ type wireNetwork struct {
 	// Hook says the network takes messages posted to
 	// /api/v1/hooks/{bridge id}.
 	Hook bool `json:"hook"`
+	// HookSecret is the config field holding the hook's secret, which
+	// POST /api/v1/bridges/{id}/hook-secret replaces.
+	HookSecret string `json:"hook_secret,omitempty"`
 }
 
 type wireBridge struct {
@@ -102,7 +107,7 @@ func (s *Server) listNetworks(w http.ResponseWriter, r *http.Request, me core.Pr
 		for i, c := range n.Capabilities {
 			caps[i] = string(c)
 		}
-		out = append(out, wireNetwork{Name: n.Name, Title: n.Title, Modes: n.Modes, Fields: n.Fields, Capabilities: caps, Hook: n.Hook != nil})
+		out = append(out, wireNetwork{Name: n.Name, Title: n.Title, Modes: n.Modes, Fields: n.Fields, Capabilities: caps, Hook: n.Hook != nil, HookSecret: n.HookSecret})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"networks": out})
 }
@@ -343,6 +348,14 @@ func (s *Server) hook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errorf(http.StatusBadRequest, "invalid", "%v", err))
 		return
 	}
+	if wait, ok := s.hooks.take(b.ID, time.Now()); !ok {
+		retry := max(time.Duration(math.Ceil(wait.Seconds()))*time.Second, time.Second)
+		ae := errorf(http.StatusTooManyRequests, "rate_limited",
+			"this hook takes %d messages a minute; try again in %s", s.hooks.perMinute, retry)
+		ae.RetryAfter = retry
+		writeError(w, ae)
+		return
+	}
 	err = bridge.ReceiveHooked(r.Context(), bridge.Config{Store: s.store, Bus: s.bus, Chat: s}, b, msgs)
 	if errors.Is(err, bridge.ErrNotLinked) {
 		err = errorf(http.StatusNotFound, "not_linked", "%v", err)
@@ -352,6 +365,42 @@ func (s *Server) hook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// rotateHookSecret replaces the secret programs post to the bridge's hook
+// with, and returns the new one, which is never shown again. Posts with
+// the old secret are refused from then on.
+func (s *Server) rotateHookSecret(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	b, err := s.bridgeFor(r.Context(), me, r.PathValue("id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !b.DeletedAt.IsZero() {
+		writeError(w, errDeleting)
+		return
+	}
+	n, ok := bridge.Lookup(b.Network)
+	if !ok || n.Hook == nil || n.HookSecret == "" {
+		writeError(w, errorf(http.StatusConflict, "no_hook_secret", "this bridge has no hook secret"))
+		return
+	}
+	var raw [32]byte
+	rand.Read(raw[:])
+	secret := base64.RawURLEncoding.EncodeToString(raw[:])
+	patch, _ := json.Marshal(map[string]string{n.HookSecret: secret})
+	if err := applyBridge(n, bridgeSettings{Config: patch}, &b); err != nil {
+		writeError(w, err)
+		return
+	}
+	b.UpdatedAt = time.Now().Truncate(time.Millisecond)
+	if err := s.store.UpdateBridge(r.Context(), b); err != nil {
+		writeError(w, err)
+		return
+	}
+	s.hooks.reset(b.ID)
+	s.publish(r.Context(), bus.BridgesSubject)
+	writeJSON(w, http.StatusOK, map[string]any{"secret": secret, "bridge": toBridge(b)})
 }
 
 type wireLink struct {

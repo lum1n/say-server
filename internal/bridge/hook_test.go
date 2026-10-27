@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/lum1n/say-v2/internal/api"
 	"github.com/lum1n/say-v2/internal/core"
 	"github.com/lum1n/say-v2/internal/store"
 
@@ -104,5 +105,82 @@ func TestWebhookBridge(t *testing.T) {
 	}
 	if m, _ := e.store.GetBridgeMessage(ctx, link.ID, msg.ID); m.RemoteID != "42" {
 		t.Fatalf("remote id = %q", m.RemoteID)
+	}
+}
+
+func TestWebhookLimitAndNewSecret(t *testing.T) {
+	e := newEnv(t)
+	// A node whose hooks take two messages a minute.
+	limited := httptest.NewServer(api.New(api.Config{Version: "test", Store: e.store, Bus: e.bus, HookLimit: 2}).Handler())
+	defer limited.Close()
+
+	var b wireBridge
+	body := map[string]any{"network": "webhook", "mode": "bot", "config": map[string]any{"token": "s3cret"}}
+	if code := e.call("POST", "/api/v1/bridges", body, &b); code != http.StatusCreated {
+		t.Fatalf("create: %d", code)
+	}
+	var room struct{ ID string }
+	e.call("POST", "/api/v1/rooms", map[string]string{"kind": "group", "name": "Ops"}, &room)
+	if code := e.call("POST", "/api/v1/bridges/"+b.ID+"/links", map[string]string{"room_id": room.ID, "remote_id": "default"}, nil); code != http.StatusCreated {
+		t.Fatalf("link: %d", code)
+	}
+
+	hook := func(secret string) *http.Response {
+		t.Helper()
+		req, _ := http.NewRequest("POST", limited.URL+"/api/v1/hooks/"+b.ID, strings.NewReader(`{"text":"x"}`))
+		req.Header.Set("Authorization", "Bearer "+secret)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res
+	}
+	// Wrong secrets don't use up the allowance.
+	for range 3 {
+		if res := hook("wrong"); res.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("wrong secret: %d", res.StatusCode)
+		}
+	}
+	for i := range 2 {
+		if res := hook("s3cret"); res.StatusCode != http.StatusNoContent {
+			t.Fatalf("message %d: %d", i, res.StatusCode)
+		}
+	}
+	res := hook("s3cret")
+	if res.StatusCode != http.StatusTooManyRequests || res.Header.Get("Retry-After") == "" {
+		t.Fatalf("over the limit: %d, Retry-After %q", res.StatusCode, res.Header.Get("Retry-After"))
+	}
+	if n := len(e.log(room.ID)); n != 2 {
+		t.Fatalf("%d messages in the room", n)
+	}
+
+	// A new secret: the old one is refused, the new one works.
+	var rotated struct {
+		Secret string     `json:"secret"`
+		Bridge wireBridge `json:"bridge"`
+	}
+	if code := e.call("POST", "/api/v1/bridges/"+b.ID+"/hook-secret", nil, &rotated); code != http.StatusOK || len(rotated.Secret) < 32 || rotated.Bridge.ID != b.ID {
+		t.Fatalf("new secret: %d %+v", code, rotated)
+	}
+	if res := hook("s3cret"); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("old secret: %d", res.StatusCode)
+	}
+	req, _ := http.NewRequest("POST", e.http.URL+"/api/v1/hooks/"+b.ID, strings.NewReader(`{"text":"y"}`))
+	req.Header.Set("Authorization", "Bearer "+rotated.Secret)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("new secret: %d", res.StatusCode)
+	}
+
+	// Bridges without a hook secret have nothing to replace.
+	var fake wireBridge
+	e.call("POST", "/api/v1/bridges", map[string]any{"network": "fake", "mode": "bot", "config": map[string]any{"server": "fake.example"}}, &fake)
+	if code := e.call("POST", "/api/v1/bridges/"+fake.ID+"/hook-secret", nil, nil); code != http.StatusConflict {
+		t.Fatalf("fake: %d", code)
 	}
 }

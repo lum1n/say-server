@@ -626,6 +626,10 @@ export interface paths {
          *     or `?token=<secret>`. Any node takes it. In a relay bot the chat
          *     must be linked to a room, or nothing is taken (404 `not_linked`).
          *     A repeated `id` in the same chat is ignored.
+         *
+         *     Each bridge's hook takes 60 messages at once, then 60 a minute, on
+         *     each node; only posts with the right secret count. A leaked secret
+         *     is replaced with `POST /bridges/{id}/hook-secret`.
          */
         post: operations["postHook"];
         delete?: never;
@@ -727,6 +731,30 @@ export interface paths {
         put?: never;
         /** Answer the bridge's login prompt (its owner only) */
         post: operations["answerBridge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/bridges/{id}/hook-secret": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace the secret programs post to the bridge's hook with
+         * @description For networks with a `hook_secret`, such as webhooks. A new random
+         *     secret is set and returned once; it is never read back. Posts with
+         *     the old one are refused from then on, and the bridge restarts.
+         */
+        post: operations["rotateHookSecret"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1127,6 +1155,11 @@ export interface components {
             capabilities: string[];
             /** @description The network takes messages posted to `/hooks/{bridge id}`. */
             hook?: boolean;
+            /**
+             * @description The setting holding the hook's secret, which
+             *     `POST /bridges/{id}/hook-secret` replaces.
+             */
+            hook_secret?: string;
         };
         /** @description A message posted to a webhook bridge's hook. */
         HookMessage: {
@@ -2394,6 +2427,17 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            /** @description The bridge's hook is over its limit (code rate_limited) */
+            429: {
+                headers: {
+                    /** @description Seconds until a post would pass. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listNetworks: {
@@ -2577,6 +2621,45 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             /** @description The bridge is not waiting for an answer */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    rotateHookSecret: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The new secret, and the bridge */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        secret: string;
+                        bridge: components["schemas"]["Bridge"];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /**
+             * @description The bridge is being deleted (code deleting) or its network has
+             *     no hook secret (code no_hook_secret)
+             */
             409: {
                 headers: {
                     [name: string]: unknown;

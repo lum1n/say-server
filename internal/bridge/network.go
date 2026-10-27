@@ -42,6 +42,9 @@ type Network struct {
 	// node may call it, also one not running the bridge. An error
 	// wrapping ErrUnauthorized is answered 401, others 400.
 	Hook func(b Info, r *http.Request) ([]Incoming, error)
+	// HookSecret, if set, names the secret Field that Hook checks, so
+	// that it can be replaced with a new random one.
+	HookSecret string
 	// LogOut, if set, ends the session say holds on the network when the
 	// bridge is deleted, so it no longer shows among the account's
 	// devices or sessions. It runs on the node holding the bridge's lease,

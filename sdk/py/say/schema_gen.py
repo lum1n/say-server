@@ -325,6 +325,12 @@ class Network(TypedDict):
     """
     The network takes messages posted to `/hooks/{bridge id}`.
     """
+    hook_secret: NotRequired[str]
+    """
+    The setting holding the hook's secret, which
+    `POST /bridges/{id}/hook-secret` replaces.
+
+    """
 
 
 class HookMessage(TypedDict):

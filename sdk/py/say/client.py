@@ -272,6 +272,10 @@ class Client:
         """answer_bridge answers a bridge's login prompt."""
         self.request("POST", f"/bridges/{_seg(id)}/answer", {"value": value})
 
+    def rotate_hook_secret(self, id: str) -> dict[str, Any]:
+        """rotate_hook_secret sets a new random secret for the bridge's hook and returns it with the bridge."""
+        return self.request("POST", f"/bridges/{_seg(id)}/hook-secret")
+
     def list_bridge_links(self, id: str) -> list[BridgeLink]:
         return self.request("GET", f"/bridges/{_seg(id)}/links")["links"]
 

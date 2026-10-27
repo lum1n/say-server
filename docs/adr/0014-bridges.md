@@ -123,7 +123,13 @@ only, as are the Telegram Bot API and webhooks.
 A network may also take messages over HTTP (`Network.Hook`). Any node
 answers the hook: receiving needs only the store, so the request does not
 have to reach the node holding the bridge's lease. In a relay bot every
-message must be for a linked chat, or none is taken.
+message must be for a linked chat, or none is taken. Each bridge's hook
+takes 60 messages at once, then 60 a minute (`api.Config.HookLimit`),
+counted after the secret is checked so that strangers can't use up a
+bridge's allowance; each node counts on its own, so the limit scales with
+the number of nodes. A network that names its secret field
+(`Network.HookSecret`) lets the secret be replaced with a new random one,
+`POST /bridges/{id}/hook-secret`, when it leaks.
 
 A network that hands back a remote id the link already has (a webhook
 that always answers the same id) gets its send kept as sent, without the
