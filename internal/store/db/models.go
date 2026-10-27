@@ -63,6 +63,13 @@ type BridgeMessage struct {
 	CreatedAt int64
 }
 
+type BridgeScreen struct {
+	Hash      string
+	BridgeID  string
+	ExpiresAt int64
+	CreatedAt int64
+}
+
 type BuiltinAgent struct {
 	PrincipalID      string
 	Provider         string

@@ -826,7 +826,8 @@ a {
 }
 
 .devices .qr,
-.accounts .qr {
+.accounts .qr,
+.link .qr {
   width: 220px;
   max-width: 100%;
   background: #fff;
@@ -835,7 +836,8 @@ a {
 }
 
 .devices .qr svg,
-.accounts .qr svg {
+.accounts .qr svg,
+.link .qr svg {
   display: block;
   width: 100%;
   height: auto;

@@ -126,6 +126,18 @@ DELETE FROM pairings WHERE expires_at <= $1;
 -- name: RedeemPairing :one
 DELETE FROM pairings WHERE hash = $1 AND expires_at > $2 RETURNING principal_id;
 
+-- name: CreateBridgeScreen :exec
+INSERT INTO bridge_screens (hash, bridge_id, expires_at, created_at) VALUES ($1, $2, $3, $4);
+
+-- name: DeleteExpiredBridgeScreens :exec
+DELETE FROM bridge_screens WHERE expires_at <= $1;
+
+-- name: BridgeScreen :one
+SELECT bridge_id FROM bridge_screens WHERE hash = $1 AND expires_at > $2;
+
+-- name: DeleteBridgeScreens :exec
+DELETE FROM bridge_screens WHERE bridge_id = $1;
+
 -- name: DeletePrincipalPairings :exec
 DELETE FROM pairings WHERE principal_id = $1;
 

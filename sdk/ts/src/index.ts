@@ -67,6 +67,7 @@ export type BridgeState = Schemas["BridgeState"];
 export type BridgeSettings = Schemas["BridgeSettings"];
 export type BridgePrompt = Schemas["BridgePrompt"];
 export type BridgeLink = Schemas["BridgeLink"];
+export type BridgeScreen = Schemas["BridgeScreen"];
 export type CreateBridgeLink = Schemas["CreateBridgeLink"];
 export type RoomBridge = Schemas["RoomBridge"];
 export type Delivery = Schemas["Delivery"];
@@ -409,6 +410,23 @@ export async function deleteBridge(id: string, client = defaultClient): Promise<
 export async function answerBridge(id: string, value: string, client = defaultClient): Promise<void> {
   const { error, response } = await client.POST("/bridges/{id}/answer", { params: { path: { id } }, body: { value } });
   if (!response.ok) fail(response, error);
+}
+
+/**
+ * createBridgeScreen makes a code that shows the bridge's login step on the
+ * say's /link page, on another screen, for 10 minutes.
+ */
+export async function createBridgeScreen(id: string, client = defaultClient): Promise<Pairing> {
+  const { data, error, response } = await client.POST("/bridges/{id}/screen", { params: { path: { id } } });
+  if (!data) fail(response, error);
+  return data;
+}
+
+/** getBridgeScreen reads a bridge's login step with a screen code; it needs no sign-in. */
+export async function getBridgeScreen(code: string, client = defaultClient): Promise<BridgeScreen> {
+  const { data, error, response } = await client.GET("/screens/{code}", { params: { path: { code } } });
+  if (!data) fail(response, error);
+  return data;
 }
 
 /**

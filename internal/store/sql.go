@@ -234,13 +234,18 @@ const (
 	pairingLen      = 10
 )
 
-func (s *sqlStore) CreatePairing(ctx context.Context, principalID string, expires time.Time) (string, error) {
+// newCode makes a code of pairingLen characters from pairingAlphabet.
+func newCode() string {
 	b := make([]byte, pairingLen)
 	rand.Read(b)
 	for i := range b {
 		b[i] = pairingAlphabet[int(b[i])%len(pairingAlphabet)]
 	}
-	code := string(b)
+	return string(b)
+}
+
+func (s *sqlStore) CreatePairing(ctx context.Context, principalID string, expires time.Time) (string, error) {
+	code := newCode()
 	now := time.Now()
 	err := s.tx(ctx, func(q *db.Queries) error {
 		if err := q.DeleteExpiredPairings(ctx, now.UnixMilli()); err != nil {
@@ -254,6 +259,28 @@ func (s *sqlStore) CreatePairing(ctx context.Context, principalID string, expire
 		return "", err
 	}
 	return code[:5] + "-" + code[5:], nil
+}
+
+func (s *sqlStore) CreateBridgeScreen(ctx context.Context, bridgeID string, expires time.Time) (string, error) {
+	code := newCode()
+	now := time.Now()
+	err := s.tx(ctx, func(q *db.Queries) error {
+		if err := q.DeleteExpiredBridgeScreens(ctx, now.UnixMilli()); err != nil {
+			return err
+		}
+		return q.CreateBridgeScreen(ctx, db.CreateBridgeScreenParams{
+			Hash: tokenHash(code), BridgeID: bridgeID, ExpiresAt: expires.UnixMilli(), CreatedAt: now.UnixMilli(),
+		})
+	})
+	if err != nil {
+		return "", err
+	}
+	return code[:5] + "-" + code[5:], nil
+}
+
+func (s *sqlStore) BridgeScreen(ctx context.Context, code string) (string, error) {
+	id, err := s.q().BridgeScreen(ctx, db.BridgeScreenParams{Hash: tokenHash(normalizePairing(code)), ExpiresAt: time.Now().UnixMilli()})
+	return id, notFound(err)
 }
 
 func (s *sqlStore) RedeemPairing(ctx context.Context, code string) (string, error) {

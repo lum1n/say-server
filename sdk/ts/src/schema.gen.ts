@@ -888,6 +888,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/bridges/{id}/screen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Show the bridge's login step on another screen (its owner only)
+         * @description Makes a code, like a pairing code, good for 10 minutes, that shows
+         *     the bridge's login step (Signal's QR code, say) on the say's
+         *     `/link` page without signing in there: for when the phone that
+         *     must scan the code is the one the person uses say on. Apps show
+         *     `<say>/link` and the code, or the link `<say>/link?code=<code>`.
+         */
+        post: operations["createBridgeScreen"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/screens/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description From POST /bridges/{id}/screen. Case, dashes and spaces don't matter. */
+                code: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A bridge's login step, for a screen code
+         * @description Needs no token, and may be read any number of times until the
+         *     code runs out, so the `/link` page can follow the bridge until it
+         *     is live. Shows nothing else about the bridge or its owner.
+         */
+        get: operations["getBridgeScreen"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/bridges/{id}/hook-secret": {
         parameters: {
             query?: never;
@@ -1440,6 +1491,12 @@ export interface components {
             text: string;
             /** @description What to show, such as a QR code's contents. */
             data?: string;
+        };
+        BridgeScreen: {
+            network: string;
+            title: string;
+            state: components["schemas"]["BridgeState"];
+            prompt?: components["schemas"]["BridgePrompt"];
         };
         Bridge: {
             id: string;
@@ -3019,6 +3076,55 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+        };
+    };
+    createBridgeScreen: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["BridgeID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The code */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Pairing"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    getBridgeScreen: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description From POST /bridges/{id}/screen. Case, dashes and spaces don't matter. */
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The bridge's network, state and login step */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BridgeScreen"];
+                };
+            };
+            404: components["responses"]["Error"];
         };
     };
     rotateHookSecret: {
