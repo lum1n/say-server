@@ -9,6 +9,8 @@
 // The bot reads channels over the Gateway (a websocket) and writes through
 // a webhook it owns in each channel, so messages from say show under the
 // name of who wrote them. Without the Manage Webhooks permission it posts
-// as itself, with the name in bold. Both are called over plain HTTP and a
-// websocket, without a Discord SDK.
+// as itself, with the name in bold. A linked thread (a forum post is one)
+// is written to through its channel's webhook. Both are called over plain
+// HTTP and a websocket, without a Discord SDK. A bot in many servers
+// connects in as many Gateway shards as Discord asks for.
 package discord

@@ -118,6 +118,29 @@ func author(m *message, botID int64) bridge.Author {
 	return bridge.Author{ID: strconv.FormatInt(m.Chat.ID, 10), Name: chatName(m.Chat)}
 }
 
+// topicID is the id a forum topic is linked by, "<chat id>/<topic id>",
+// for a message in a topic; "" for others, such as those in General.
+func topicID(m *message) string {
+	if !m.IsTopicMessage || m.MessageThreadID == 0 {
+		return ""
+	}
+	return strconv.FormatInt(m.Chat.ID, 10) + "/" + strconv.FormatInt(m.MessageThreadID, 10)
+}
+
+// splitChat parses a linked chat id into the chat and its topic, 0 when
+// it is a whole chat.
+func splitChat(id string) (chat string, topic int64) {
+	chat, t, ok := strings.Cut(id, "/")
+	if !ok {
+		return id, 0
+	}
+	topic, err := strconv.ParseInt(t, 10, 64)
+	if err != nil {
+		return id, 0
+	}
+	return chat, topic
+}
+
 func remoteChat(c chat) bridge.RemoteChat {
 	return bridge.RemoteChat{ID: strconv.FormatInt(c.ID, 10), Name: chatName(c), Direct: c.Type == "private"}
 }

@@ -38,29 +38,50 @@ type frame struct {
 	T  string          `json:"t"`
 }
 
-// session is one Gateway connection.
+// session is one Gateway connection, of one shard.
 type session struct {
 	c     *conn
 	ws    *websocket.Conn
+	shard [2]int       // this shard and how many there are
 	seq   atomic.Int64 // last sequence number, 0 for none
 	acked atomic.Bool  // the last heartbeat was answered
 }
 
-// dial asks for the Gateway's URL and connects to it.
-func (c *conn) dial(ctx context.Context) (*websocket.Conn, error) {
-	u := c.gateway
-	if u == "" {
-		var r struct {
-			URL string `json:"url"`
-		}
-		if err := c.do(ctx, http.MethodGet, "/gateway/bot", nil, &r); err != nil {
+// gatewayBot is where the bot connects: the Gateway's URL, the number of
+// shards Discord asks for (one per 1000 or so servers), and how many of
+// them may log in at once.
+type gatewayBot struct {
+	URL    string `json:"url"`
+	Shards int    `json:"shards"`
+	Limit  struct {
+		Remaining      int   `json:"remaining"`
+		ResetAfter     int64 `json:"reset_after"` // ms
+		MaxConcurrency int   `json:"max_concurrency"`
+	} `json:"session_start_limit"`
+}
+
+// gatewayInfo asks where to connect, unless c.gateway says.
+func (c *conn) gatewayInfo(ctx context.Context) (gatewayBot, error) {
+	g := gatewayBot{URL: c.gateway}
+	if g.URL == "" {
+		if err := c.do(ctx, http.MethodGet, "/gateway/bot", nil, &g); err != nil {
 			if status(err) == http.StatusUnauthorized {
-				return nil, fmt.Errorf("discord: the bot token was refused: %w", err)
+				return g, fmt.Errorf("discord: the bot token was refused: %w", err)
 			}
-			return nil, err
+			return g, err
 		}
-		u = r.URL
+		if g.Limit.Remaining == 0 && g.Limit.ResetAfter > 0 {
+			wait := time.Duration(g.Limit.ResetAfter) * time.Millisecond
+			return g, fmt.Errorf("discord: the bot has logged in to the gateway too often today; it may again in %s", wait.Round(time.Minute))
+		}
 	}
+	g.Shards = max(g.Shards, 1)
+	g.Limit.MaxConcurrency = max(g.Limit.MaxConcurrency, 1)
+	return g, nil
+}
+
+// dial connects to the Gateway.
+func (c *conn) dial(ctx context.Context, u string) (*websocket.Conn, error) {
 	pu, err := url.Parse(u)
 	if err != nil {
 		return nil, fmt.Errorf("discord: gateway URL: %w", err)
@@ -93,18 +114,19 @@ func (s *session) hello(ctx context.Context) (time.Duration, error) {
 	return time.Duration(d.Interval) * time.Millisecond, nil
 }
 
-// identify logs the bot in.
+// identify logs the bot in, for its shard's servers.
 func (s *session) identify(ctx context.Context) error {
-	err := wsjson.Write(ctx, s.ws, map[string]any{
-		"op": opIdentify,
-		"d": map[string]any{
-			"token":   s.c.cfg.BotToken,
-			"intents": intents,
-			"properties": map[string]string{
-				"os": "linux", "browser": "say", "device": "say",
-			},
+	d := map[string]any{
+		"token":   s.c.cfg.BotToken,
+		"intents": intents,
+		"properties": map[string]string{
+			"os": "linux", "browser": "say", "device": "say",
 		},
-	})
+	}
+	if s.shard[1] > 1 {
+		d["shard"] = s.shard
+	}
+	err := wsjson.Write(ctx, s.ws, map[string]any{"op": opIdentify, "d": d})
 	if err != nil {
 		return fmt.Errorf("discord: gateway: %w", err)
 	}

@@ -34,7 +34,8 @@ var fields = []bridge.Field{
 			"Message Content intent and copy the bot's token. Invite the bot to your server (OAuth2, scope bot) with the " +
 			"View Channels, Send Messages, Read Message History and Manage Webhooks permissions; with Manage Webhooks " +
 			"messages from say show under the writer's name. Link a room by the channel's id: turn on Developer Mode in " +
-			"Discord's settings, then right-click the channel and Copy Channel ID.",
+			"Discord's settings, then right-click the channel and Copy Channel ID. A thread or a forum post is linked the " +
+			"same way, by its own id; a forum as a whole is not.",
 	},
 }
 
@@ -73,21 +74,22 @@ func open(b bridge.Info, h bridge.Host) (bridge.Conn, error) {
 		st.Hooks = map[string]string{}
 	}
 	return &conn{
-		h:          h,
-		cfg:        cfg,
-		api:        "https://discord.com/api/v10",
-		http:       &http.Client{Timeout: 30 * time.Second},
-		catchUpMax: 500,
-		saveEvery:  30 * time.Second,
-		linkedTTL:  5 * time.Second,
-		readyWait:  30 * time.Second,
-		buckets:    map[string]time.Time{},
-		names:      map[string]string{},
-		last:       st.Last,
-		hookIDs:    st.Hooks,
-		hooks:      map[string]*webhook{},
-		noHook:     map[string]time.Time{},
-		sentBy:     map[string]string{},
+		h:            h,
+		cfg:          cfg,
+		api:          "https://discord.com/api/v10",
+		http:         &http.Client{Timeout: 30 * time.Second},
+		saveEvery:    30 * time.Second,
+		linkedTTL:    5 * time.Second,
+		readyWait:    30 * time.Second,
+		identifyWait: 5 * time.Second,
+		buckets:      map[string]time.Time{},
+		names:        map[string]string{},
+		parents:      map[string]string{},
+		last:         st.Last,
+		hookIDs:      st.Hooks,
+		hooks:        map[string]*webhook{},
+		noHook:       map[string]time.Time{},
+		sentBy:       map[string]string{},
 	}, nil
 }
 
@@ -100,10 +102,10 @@ type conn struct {
 	// gateway, if set, is dialed instead of asking for the gateway's URL.
 	gateway string
 
-	catchUpMax int           // messages fetched of a channel on connect
-	saveEvery  time.Duration // how often changed state is saved
-	linkedTTL  time.Duration // how stale the linked channels may get
-	readyWait  time.Duration // how long to wait for READY
+	saveEvery    time.Duration // how often changed state is saved
+	linkedTTL    time.Duration // how stale the linked channels may get
+	readyWait    time.Duration // how long to wait for READY
+	identifyWait time.Duration // between groups of shards logging in
 
 	// hookMu serializes finding and making webhooks.
 	hookMu sync.Mutex
@@ -114,6 +116,7 @@ type conn struct {
 	global   time.Time
 	buckets  map[string]time.Time // route: no calls until
 	names    map[string]string    // channel id: name
+	parents  map[string]string    // channel id: its channel if a thread, else ""
 	linked   map[string]bool
 	linkedAt time.Time
 	last     map[string]string // channel id: newest message id seen
@@ -127,7 +130,9 @@ type conn struct {
 	dirty   bool
 }
 
-// Run connects to the Gateway, catches up and receives until ctx ends.
+// Run connects to the Gateway, in as many shards as Discord asks for,
+// catches up and receives until ctx ends. A shard that fails ends Run,
+// and the next one connects them all again.
 func (c *conn) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
@@ -139,41 +144,62 @@ func (c *conn) Run(ctx context.Context) error {
 		done()
 	}()
 
-	ws, err := c.dial(ctx)
+	g, err := c.gatewayInfo(ctx)
 	if err != nil {
-		return err
-	}
-	defer ws.CloseNow()
-	s := &session{c: c, ws: ws}
-	interval, err := s.hello(ctx)
-	if err != nil {
-		return err
-	}
-	if err := s.identify(ctx); err != nil {
 		return err
 	}
 	// The gateway reads into a queue and Run hands what arrives to the
 	// core, so Sends (plain HTTP calls) never wait on the reader.
 	events := make(chan message, 256)
-	ready := make(chan struct{})
-	errc := make(chan error, 3)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		errc <- s.read(ctx, ready, events)
-	}()
-	go func() {
-		defer wg.Done()
-		errc <- s.heartbeat(ctx, interval)
-	}()
-	select {
-	case <-ready:
-	case err := <-errc:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(c.readyWait):
-		return errors.New("discord: the gateway did not get ready")
+	errc := make(chan error, 2*g.Shards+1)
+	readies := make([]chan struct{}, g.Shards)
+	for i := range g.Shards {
+		// Discord lets max_concurrency shards log in every 5 seconds.
+		if i > 0 && i%g.Limit.MaxConcurrency == 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case err := <-errc:
+				return err
+			case <-time.After(c.identifyWait):
+			}
+		}
+		ws, err := c.dial(ctx, g.URL)
+		if err != nil {
+			return err
+		}
+		defer ws.CloseNow()
+		s := &session{c: c, ws: ws, shard: [2]int{i, g.Shards}}
+		interval, err := s.hello(ctx)
+		if err != nil {
+			return err
+		}
+		if err := s.identify(ctx); err != nil {
+			return err
+		}
+		ready := make(chan struct{})
+		readies[i] = ready
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			errc <- s.read(ctx, ready, events)
+		}()
+		go func() {
+			defer wg.Done()
+			errc <- s.heartbeat(ctx, interval)
+		}()
+	}
+	timeout := time.After(c.readyWait)
+	for _, ready := range readies {
+		select {
+		case <-ready:
+		case err := <-errc:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout:
+			return errors.New("discord: the gateway did not get ready")
+		}
 	}
 
 	// Where to catch up from is taken before any live message is
@@ -260,20 +286,11 @@ func (c *conn) catchUp(ctx context.Context, chats []string, from map[string]stri
 		if !ok {
 			continue
 		}
-		msgs, err := c.history(ctx, ch, after)
-		if _, ok := errors.AsType[*apiError](err); ok {
-			// Gone, or the bot may not read it.
-			c.caughtUp(ch)
-			continue
-		}
-		if err != nil {
+		err := c.history(ctx, ch, after)
+		if _, ok := errors.AsType[*apiError](err); err != nil && !ok {
 			return err
 		}
-		for _, m := range msgs {
-			if err := c.receive(ctx, m); err != nil {
-				return err
-			}
-		}
+		// Caught up, or the channel is gone or the bot may not read it.
 		c.caughtUp(ch)
 	}
 	// Channels no longer linked need no catching up, nor a place kept.
@@ -289,30 +306,32 @@ func (c *conn) catchUp(ctx context.Context, chats []string, from map[string]stri
 	return c.saveState(ctx)
 }
 
-// history returns up to catchUpMax messages of a channel after a message
-// id, oldest first.
-func (c *conn) history(ctx context.Context, ch, after string) ([]message, error) {
-	var out []message
-	for len(out) < c.catchUpMax {
+// history receives the messages of a channel after a message id, oldest
+// first, a page at a time. Each page moves the place saved for the
+// channel, so a long gap cut short by a restart goes on where it stopped.
+func (c *conn) history(ctx context.Context, ch, after string) error {
+	for {
 		var page []message
 		path := fmt.Sprintf("/channels/%s/messages?after=%s&limit=100", ch, after)
 		if err := c.do(ctx, http.MethodGet, path, nil, &page); err != nil {
-			return nil, err
+			return err
+		}
+		if len(page) == 0 {
+			return nil
 		}
 		sortByID(page)
-		for i := range page {
-			page[i].ChannelID = ch
-		}
-		out = append(out, page...)
-		if len(page) < 100 {
-			break
+		for _, m := range page {
+			m.ChannelID = ch
+			if err := c.receive(ctx, m); err != nil {
+				return err
+			}
 		}
 		after = page[len(page)-1].ID
+		c.behindTo(ch, after)
+		if len(page) < 100 {
+			return nil
+		}
 	}
-	if len(out) > c.catchUpMax {
-		out = out[:c.catchUpMax]
-	}
-	return out, nil
 }
 
 // seen notes the newest message of a channel, for catching up later.
@@ -321,6 +340,17 @@ func (c *conn) seen(ch, id string) {
 	defer c.mu.Unlock()
 	if cur, ok := c.last[ch]; !ok || snowLess(cur, id) {
 		c.last[ch] = id
+		c.dirty = true
+	}
+}
+
+// behindTo notes that a channel's missed messages are in up to an id,
+// while it catches up.
+func (c *conn) behindTo(ch, id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if cur, ok := c.behind[ch]; ok && snowLess(cur, id) {
+		c.behind[ch] = id
 		c.dirty = true
 	}
 }

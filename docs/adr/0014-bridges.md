@@ -116,8 +116,8 @@ only, as are the Telegram Bot API and webhooks.
 
 | Network | Route | Notes |
 |---|---|---|
-| Discord | A bot the admin creates, over the Gateway and REST | People in say show under their own names through a channel webhook named "say" (Manage Webhooks), else as "**Name**: text"; missed messages are fetched on reconnect |
-| Telegram bot | Bot API with long polling | Privacy mode off to see all group messages; `/chatid` tells the chat id to link |
+| Discord | A bot the admin creates, over the Gateway and REST | People in say show under their own names through a channel webhook named "say" (Manage Webhooks), else as "**Name**: text"; a thread or forum post is linked by its id and written to through its channel's webhook; all missed messages are fetched on reconnect; as many Gateway shards as Discord asks for |
+| Telegram bot | Bot API with long polling | Privacy mode off to see all group messages; `/chatid` tells the chat id to link, and in a forum topic the topic's (`chat/topic`), which mirrors that topic alone |
 | Webhooks | `POST /api/v1/hooks/{bridge id}` in; a POST to the admin's URL out | Out in say's JSON, or the Slack or Discord webhook format; optional HMAC signature |
 
 A network may also take messages over HTTP (`Network.Hook`). Any node

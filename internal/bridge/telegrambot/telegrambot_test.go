@@ -352,6 +352,59 @@ func TestChatID(t *testing.T) {
 	}
 }
 
+func TestTopics(t *testing.T) {
+	f := newFakeAPI(t)
+	forum := map[string]any{"id": -1001, "type": "supergroup", "title": "Crew", "is_forum": true}
+	inTopic := func(update, id, topic int, text string) map[string]any {
+		return map[string]any{"update_id": update, "message": map[string]any{
+			"message_id": id, "message_thread_id": topic, "is_topic_message": true, "from": ada(), "chat": forum, "date": 1, "text": text,
+			"reply_to_message": map[string]any{"message_id": topic, "chat": forum, "date": 1},
+		}}
+	}
+	f.push(
+		inTopic(1, 50, 42, "in the linked topic"),
+		inTopic(2, 51, 7, "in another topic"),
+		map[string]any{"update_id": 3, "message": map[string]any{"message_id": 52, "from": ada(), "chat": forum, "date": 1, "text": "in General"}},
+		inTopic(4, 53, 42, "/chatid"),
+	)
+	h := &fakeHost{chats: []string{"-1001", "-1001/42"}}
+	c := newConn(t, f, h, "")
+	run(t, c)
+	eventually(t, "the offset is saved", func() bool { return h.lastState() == `{"offset":5}` })
+	got := h.received()
+	if len(got) != 3 {
+		t.Fatalf("got %d messages: %+v", len(got), got)
+	}
+	for i, chat := range []string{"-1001/42", "-1001", "-1001"} {
+		if got[i].Chat.ID != chat || got[i].ReplyTo != "" {
+			t.Errorf("message %d = %+v, want chat %s", i, got[i], chat)
+		}
+	}
+	answer := f.callsOf("sendMessage")[0].params
+	if answer["chat_id"] != "-1001" || answer["message_thread_id"] != float64(42) || !strings.Contains(answer["text"].(string), "<code>-1001/42</code>") {
+		t.Errorf("/chatid answer = %v", answer)
+	}
+
+	if _, err := c.Send(context.Background(), bridge.Outgoing{Chat: "-1001/42", Sender: "Ada", Text: "hi topic"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.callsOf("sendMessage")[1].params; p["chat_id"] != "-1001" || p["message_thread_id"] != float64(42) {
+		t.Errorf("send = %v", p)
+	}
+	if _, err := c.Send(context.Background(), bridge.Outgoing{Chat: "-1001", Sender: "Ada", Text: "hi group"}); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.callsOf("sendMessage")[2].params; p["chat_id"] != "-1001" || p["message_thread_id"] != nil {
+		t.Errorf("send to the group = %v", p)
+	}
+	if err := c.Edit(context.Background(), bridge.Outgoing{Chat: "-1001/42", Sender: "Ada", Text: "edited"}, "101"); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.callsOf("editMessageText")[0].params; p["chat_id"] != "-1001" {
+		t.Errorf("edit = %v", p)
+	}
+}
+
 func TestSend(t *testing.T) {
 	f := newFakeAPI(t)
 	c := newConn(t, f, &fakeHost{}, "")
