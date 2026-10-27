@@ -144,6 +144,13 @@ type Store interface {
 	CreatePairing(ctx context.Context, principalID string, expires time.Time) (code string, err error)
 	RedeemPairing(ctx context.Context, code string) (principalID string, err error)
 
+	// CreateBridgeScreen makes a code, like a pairing code, that shows
+	// bridgeID's login step on another screen until expires. BridgeScreen
+	// returns the bridge a code is for, any number of times until then, or
+	// ErrNotFound.
+	CreateBridgeScreen(ctx context.Context, bridgeID string, expires time.Time) (code string, err error)
+	BridgeScreen(ctx context.Context, code string) (bridgeID string, err error)
+
 	// CreateRoom writes the room and its owner's membership in one
 	// transaction.
 	CreateRoom(ctx context.Context, r core.Room, owner core.Membership) error

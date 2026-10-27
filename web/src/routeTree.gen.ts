@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
+import { Route as LinkRouteImport } from './routes/link'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as SetupRouteImport } from './routes/setup'
@@ -24,6 +25,11 @@ import { Route as AppRoomsRoomIdRouteImport } from './routes/_app/rooms.$roomId'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LinkRoute = LinkRouteImport.update({
+  id: '/link',
+  path: '/link',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -84,6 +90,7 @@ const AppRoomsRoomIdRoute = AppRoomsRoomIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
+  '/link': typeof LinkRoute
   '/login': typeof LoginRoute
   '/pair': typeof PairRoute
   '/setup': typeof SetupRoute
@@ -96,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/rooms/$roomId': typeof AppRoomsRoomIdRoute
 }
 export interface FileRoutesByTo {
+  '/link': typeof LinkRoute
   '/login': typeof LoginRoute
   '/pair': typeof PairRoute
   '/setup': typeof SetupRoute
@@ -111,6 +119,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
+  '/link': typeof LinkRoute
   '/login': typeof LoginRoute
   '/pair': typeof PairRoute
   '/setup': typeof SetupRoute
@@ -127,6 +136,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/link'
     | '/login'
     | '/pair'
     | '/setup'
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/rooms/$roomId'
   fileRoutesByTo: FileRoutesByTo
   to:
+    | '/link'
     | '/login'
     | '/pair'
     | '/setup'
@@ -153,6 +164,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_app'
+    | '/link'
     | '/login'
     | '/pair'
     | '/setup'
@@ -168,6 +180,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
+  LinkRoute: typeof LinkRoute
   LoginRoute: typeof LoginRoute
   PairRoute: typeof PairRoute
   SetupRoute: typeof SetupRoute
@@ -181,6 +194,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/link': {
+      id: '/link'
+      path: '/link'
+      fullPath: '/link'
+      preLoaderRoute: typeof LinkRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -287,6 +307,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
+  LinkRoute: LinkRoute,
   LoginRoute: LoginRoute,
   PairRoute: PairRoute,
   SetupRoute: SetupRoute,

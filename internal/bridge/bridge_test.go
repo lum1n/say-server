@@ -597,6 +597,91 @@ func TestLoginPrompt(t *testing.T) {
 	}
 }
 
+// A screen code shows the login step on another screen, without a token,
+// until it runs out; it shows nothing else about the bridge.
+func TestScreenCode(t *testing.T) {
+	e := newEnv(t)
+	fakes.mu.Lock()
+	fakes.ask = true
+	fakes.mu.Unlock()
+	defer func() {
+		fakes.mu.Lock()
+		fakes.ask = false
+		fakes.mu.Unlock()
+	}()
+	b := e.addBridge(store.ModeAccount)
+	e.runner("n1")
+	eventually(t, "the bridge asks", func() bool { return e.bridge(b.ID).State == "login" })
+
+	var made struct {
+		Code      string    `json:"code"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	if code := e.call("POST", "/api/v1/bridges/"+b.ID+"/screen", nil, &made); code != http.StatusCreated || len(made.Code) != 11 {
+		t.Fatalf("screen: %d %+v", code, made)
+	}
+	if left := time.Until(made.ExpiresAt); left < 9*time.Minute || left > 10*time.Minute {
+		t.Fatalf("expires in %s", left)
+	}
+	screen := func(code string) (int, map[string]any) {
+		res, err := http.Get(e.http.URL + "/api/v1/screens/" + code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out map[string]any
+		json.NewDecoder(res.Body).Decode(&out)
+		return res.StatusCode, out
+	}
+	// Twice, typed loosely the second time: the page polls it.
+	for _, code := range []string{made.Code, strings.ToLower(strings.ReplaceAll(made.Code, "-", " "))} {
+		status, out := screen(code)
+		prompt, _ := out["prompt"].(map[string]any)
+		if status != http.StatusOK || out["state"] != "login" || out["network"] != "fake" || prompt["kind"] != "code" {
+			t.Fatalf("screen %q: %d %v", code, status, out)
+		}
+		for _, secret := range []string{"id", "owner_id", "config", "error"} {
+			if _, ok := out[secret]; ok {
+				t.Fatalf("screen shows %s: %v", secret, out)
+			}
+		}
+	}
+	if status, _ := screen("AAAAA-AAAAA"); status != http.StatusNotFound {
+		t.Fatalf("wrong code: %d", status)
+	}
+
+	// Only its owner may make one.
+	bo := core.Principal{ID: core.NewID(), Kind: core.PrincipalHuman, DisplayName: "Bo"}
+	if err := e.store.CreatePrincipal(context.Background(), bo); err != nil {
+		t.Fatal(err)
+	}
+	token, _ := e.store.CreateToken(context.Background(), bo.ID, "test", time.Time{})
+	req, _ := http.NewRequest("POST", e.http.URL+"/api/v1/bridges/"+b.ID+"/screen", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("someone else's bridge: %d", res.StatusCode)
+	}
+
+	// A code that ran out shows nothing.
+	old, err := e.store.CreateBridgeScreen(context.Background(), b.ID, time.Now().Add(-time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := screen(old); status != http.StatusNotFound {
+		t.Fatalf("expired code: %d", status)
+	}
+
+	// Deleting the bridge takes its codes with it.
+	if err := e.store.DeleteBridge(context.Background(), b.ID); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBotRelaysRooms(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()

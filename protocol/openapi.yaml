@@ -10,7 +10,7 @@ info:
     envelope defined in envelope.schema.json. This file is the source of
     truth for sdk/ts and sdk/py.
 
-    Every route except /health, /setup, /login, /devices and /embed/{key} needs an
+    Every route except /health, /setup, /login, /devices, /screens/{code} and /embed/{key} needs an
     access token, sent as `Authorization: Bearer <token>` or, for
     browsers, in the `say_token` cookie. A browser that cannot use the
     cookie (the widget's iframe) offers the token on /ws as the
@@ -1360,6 +1360,56 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+  /bridges/{id}/screen:
+    parameters:
+      - $ref: "#/components/parameters/BridgeID"
+    post:
+      operationId: createBridgeScreen
+      summary: Show the bridge's login step on another screen (its owner only)
+      description: |
+        Makes a code, like a pairing code, good for 10 minutes, that shows
+        the bridge's login step (Signal's QR code, say) on the say's
+        `/link` page without signing in there: for when the phone that
+        must scan the code is the one the person uses say on. Apps show
+        `<say>/link` and the code, or the link `<say>/link?code=<code>`.
+      responses:
+        "201":
+          description: The code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Pairing"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+  /screens/{code}:
+    parameters:
+      - name: code
+        in: path
+        required: true
+        description: From POST /bridges/{id}/screen. Case, dashes and spaces don't matter.
+        schema:
+          type: string
+    get:
+      operationId: getBridgeScreen
+      summary: A bridge's login step, for a screen code
+      description: |
+        Needs no token, and may be read any number of times until the
+        code runs out, so the `/link` page can follow the bridge until it
+        is live. Shows nothing else about the bridge or its owner.
+      security: []
+      responses:
+        "200":
+          description: The bridge's network, state and login step
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeScreen"
+        "404":
+          $ref: "#/components/responses/Error"
   /bridges/{id}/hook-secret:
     parameters:
       - $ref: "#/components/parameters/BridgeID"
@@ -2296,6 +2346,18 @@ components:
         data:
           description: What to show, such as a QR code's contents.
           type: string
+    BridgeScreen:
+      type: object
+      required: [network, title, state]
+      properties:
+        network:
+          type: string
+        title:
+          type: string
+        state:
+          $ref: "#/components/schemas/BridgeState"
+        prompt:
+          $ref: "#/components/schemas/BridgePrompt"
     Bridge:
       type: object
       required: [id, owner_id, mode, network, name, config, secrets_set, enabled, state, created_at]

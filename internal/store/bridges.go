@@ -161,7 +161,7 @@ func (s *sqlStore) MarkBridgeDeleted(ctx context.Context, id string, at time.Tim
 
 func (s *sqlStore) DeleteBridge(ctx context.Context, id string) error {
 	return s.tx(ctx, func(q *db.Queries) error {
-		steps := []func(context.Context, string) error{q.DeleteBridgeMessagesOf, q.DeleteBridgeLinksOf, q.DeleteBridgeGhosts}
+		steps := []func(context.Context, string) error{q.DeleteBridgeMessagesOf, q.DeleteBridgeLinksOf, q.DeleteBridgeGhosts, q.DeleteBridgeScreens}
 		for _, step := range steps {
 			if err := step(ctx, id); err != nil {
 				return err

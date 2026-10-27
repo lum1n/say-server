@@ -357,8 +357,11 @@ func TestLogOut(t *testing.T) {
 		t.Fatalf("logging out twice: %v", err)
 	}
 
-	// A token the person gave is theirs: it stays logged in.
+	// A token the person gave is theirs: it stays logged in. The first
+	// session's sync may still be asking the fake server, hence the lock.
+	f.mu.Lock()
 	f.tokens["given"] = "@ada:hs"
+	f.mu.Unlock()
 	tcfg := map[string]any{"homeserver": f.URL, "user_id": "@ada:hs", "access_token": "given"}
 	h2 := newFakeHost()
 	_, done2 := start(t, tcfg, nil, h2)

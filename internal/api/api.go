@@ -128,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/bridges/{id}", s.authed(s.updateBridge))
 	mux.HandleFunc("DELETE /api/v1/bridges/{id}", s.authed(s.deleteBridge))
 	mux.HandleFunc("POST /api/v1/bridges/{id}/answer", s.authed(s.answerBridge))
+	mux.HandleFunc("POST /api/v1/bridges/{id}/screen", s.authed(s.createBridgeScreen))
+	mux.HandleFunc("GET /api/v1/screens/{code}", s.bridgeScreen)
 	mux.HandleFunc("POST /api/v1/bridges/{id}/hook-secret", s.authed(s.rotateHookSecret))
 	mux.HandleFunc("GET /api/v1/bridges/{id}/links", s.authed(s.listLinks))
 	mux.HandleFunc("POST /api/v1/bridges/{id}/links", s.authed(s.createLink))

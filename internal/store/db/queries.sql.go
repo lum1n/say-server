@@ -273,6 +273,22 @@ func (q *Queries) BridgeMessageByRemote(ctx context.Context, arg BridgeMessageBy
 	return i, err
 }
 
+const bridgeScreen = `-- name: BridgeScreen :one
+SELECT bridge_id FROM bridge_screens WHERE hash = $1 AND expires_at > $2
+`
+
+type BridgeScreenParams struct {
+	Hash      string
+	ExpiresAt int64
+}
+
+func (q *Queries) BridgeScreen(ctx context.Context, arg BridgeScreenParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, bridgeScreen, arg.Hash, arg.ExpiresAt)
+	var bridge_id string
+	err := row.Scan(&bridge_id)
+	return bridge_id, err
+}
+
 const bumpSeq = `-- name: BumpSeq :one
 UPDATE rooms SET last_seq = last_seq + 1 WHERE id = $1 RETURNING last_seq
 `
@@ -422,6 +438,27 @@ func (q *Queries) CreateBridgeLink(ctx context.Context, arg CreateBridgeLinkPara
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const createBridgeScreen = `-- name: CreateBridgeScreen :exec
+INSERT INTO bridge_screens (hash, bridge_id, expires_at, created_at) VALUES ($1, $2, $3, $4)
+`
+
+type CreateBridgeScreenParams struct {
+	Hash      string
+	BridgeID  string
+	ExpiresAt int64
+	CreatedAt int64
+}
+
+func (q *Queries) CreateBridgeScreen(ctx context.Context, arg CreateBridgeScreenParams) error {
+	_, err := q.db.ExecContext(ctx, createBridgeScreen,
+		arg.Hash,
+		arg.BridgeID,
+		arg.ExpiresAt,
+		arg.CreatedAt,
+	)
+	return err
 }
 
 const createBuiltinAgent = `-- name: CreateBuiltinAgent :exec
@@ -727,12 +764,30 @@ func (q *Queries) DeleteBridgeMessagesOf(ctx context.Context, bridgeID string) e
 	return err
 }
 
+const deleteBridgeScreens = `-- name: DeleteBridgeScreens :exec
+DELETE FROM bridge_screens WHERE bridge_id = $1
+`
+
+func (q *Queries) DeleteBridgeScreens(ctx context.Context, bridgeID string) error {
+	_, err := q.db.ExecContext(ctx, deleteBridgeScreens, bridgeID)
+	return err
+}
+
 const deleteConnectorSession = `-- name: DeleteConnectorSession :exec
 DELETE FROM connector_sessions WHERE id = $1
 `
 
 func (q *Queries) DeleteConnectorSession(ctx context.Context, id string) error {
 	_, err := q.db.ExecContext(ctx, deleteConnectorSession, id)
+	return err
+}
+
+const deleteExpiredBridgeScreens = `-- name: DeleteExpiredBridgeScreens :exec
+DELETE FROM bridge_screens WHERE expires_at <= $1
+`
+
+func (q *Queries) DeleteExpiredBridgeScreens(ctx context.Context, expiresAt int64) error {
+	_, err := q.db.ExecContext(ctx, deleteExpiredBridgeScreens, expiresAt)
 	return err
 }
 

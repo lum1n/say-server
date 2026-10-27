@@ -514,6 +514,13 @@ class BridgePrompt(TypedDict):
     """
 
 
+class BridgeScreen(TypedDict):
+    network: str
+    title: str
+    state: BridgeState
+    prompt: NotRequired[BridgePrompt]
+
+
 class Bridge(TypedDict):
     id: str
     owner_id: str
