@@ -287,6 +287,26 @@ func TestLinkedAccountSkipsLinking(t *testing.T) {
 	}
 }
 
+func TestLostAccountSaysSoAndLinksAgain(t *testing.T) {
+	// The state remembers an account that signal-cli no longer lists, as
+	// after Signal turned the linked device away.
+	r := start(t, false, &state{Account: fakeNumber, UUID: fakeUUID})
+	select {
+	case err := <-r.done:
+		r.done <- err // for the cleanup
+		if !errors.Is(err, errSignedOut) {
+			t.Fatalf("Run: %v", err)
+		}
+	case p := <-r.h.prompts:
+		t.Fatalf("linked again without saying why: %+v", p)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not return")
+	}
+	if s := r.h.saved(); s.Account != "" || len(s.Data) != 0 {
+		t.Fatalf("state still has the account: %+v", s)
+	}
+}
+
 func TestReceive(t *testing.T) {
 	r := start(t, true, &state{Account: fakeNumber})
 	r.waitConnected()
