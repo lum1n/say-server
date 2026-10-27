@@ -1,0 +1,15 @@
+#!/bin/sh
+# Writes the node's SAY_* settings to /run/say.env for say.service. A
+# host passes them its own way: exe.dev's `new --env` lands in
+# /etc/profile.d/exe-env.sh, and `docker run -e` in PID 1's environment.
+# systemd hands neither to services. Later sources win.
+set -e
+umask 077
+{
+	tr '\0' '\n' </proc/1/environ
+	if [ -r /etc/profile.d/exe-env.sh ]; then
+		# Empty, so that only the file's settings come out, not the unit's.
+		env -i /bin/sh -c 'set -a; . /etc/profile.d/exe-env.sh; env'
+	fi
+} | grep -E '^SAY_[A-Z0-9_]+=' >/run/say.env.new || true
+mv /run/say.env.new /run/say.env

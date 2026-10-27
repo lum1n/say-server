@@ -1,0 +1,32 @@
+[Unit]
+Description=say
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=say
+Group=say
+ExecStartPre=+/usr/local/lib/say/say-env
+ExecStart=/usr/local/bin/say serve
+# The host's settings (/run/say.env) override these.
+Environment=SAY_ADDR=:80
+Environment=SAY_DB=/var/lib/say/say.db
+Environment=SAY_TRUST_PROXY=true
+# say-update.service reports here (GET /api/v1/node).
+Environment=SAY_UPDATE_DIR=/var/lib/say
+# Bridges keep their files, such as signal-cli's keys, under here.
+Environment=XDG_DATA_HOME=/var/lib/say
+EnvironmentFile=-/run/say.env
+StateDirectory=say
+WorkingDirectory=/var/lib/say
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

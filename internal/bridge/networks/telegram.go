@@ -2,4 +2,4 @@
 
 package networks
 
-import _ "github.com/lum1n/say-v2/internal/bridge/telegram"
+import _ "github.com/lum1n/say-server/internal/bridge/telegram"

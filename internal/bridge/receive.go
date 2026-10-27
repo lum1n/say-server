@@ -8,8 +8,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/store"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 // Receive takes in a message from the network. A Conn must not call it

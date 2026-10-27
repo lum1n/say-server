@@ -45,7 +45,7 @@ const (
 	maxAttempts = 5
 	// maxRetryAfter caps how long one rate-limited call waits.
 	maxRetryAfter = time.Minute
-	userAgent     = "DiscordBot (https://github.com/lum1n/say-v2, 1)"
+	userAgent     = "DiscordBot (https://github.com/lum1n/say-server, 1)"
 )
 
 // do calls the REST API with a JSON body and decodes the answer into out.

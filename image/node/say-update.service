@@ -1,0 +1,9 @@
+[Unit]
+Description=Update say to the newest release
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Root: it replaces /usr/local/bin/say and restarts say.service.
+ExecStart=/usr/local/bin/say update
+TimeoutStartSec=20min

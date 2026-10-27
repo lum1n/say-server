@@ -69,6 +69,17 @@ jobs:
           go-version-file: go.mod
       - run: make cluster-test
 
+  node-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # The test updates the node to a release it signs itself.
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends minisign
+      - run: make node-test
+
   web:
     runs-on: ubuntu-latest
     steps:

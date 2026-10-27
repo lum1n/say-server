@@ -23,8 +23,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/connector"
-	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-server/internal/connector"
+	"github.com/lum1n/say-server/internal/core"
 )
 
 // Network is a kind of bridge: IRC, Matrix, Slack, …

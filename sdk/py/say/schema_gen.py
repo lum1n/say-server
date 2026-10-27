@@ -11,6 +11,39 @@ class Health(TypedDict):
     version: str
 
 
+class NodeUpdate(TypedDict):
+    """
+    The updater's last run.
+    """
+
+    state: NotRequired[Literal['checking', 'updating', 'ok', 'failed', 'rolled_back']]
+    """
+    Absent before the first run. `failed` changed nothing; `rolled_back` means the new version failed and the old one is back.
+    """
+    error: NotRequired[str]
+    latest: NotRequired[str]
+    """
+    The newest release, as of checked_at
+    """
+    available: bool
+    """
+    latest is newer than this node
+    """
+    requested: bool
+    """
+    An update was asked for and hasn't started
+    """
+    checked_at: NotRequired[str]
+    updated_at: NotRequired[str]
+    """
+    When the last update that worked finished
+    """
+    updated_from: NotRequired[str]
+    """
+    The version before that update
+    """
+
+
 class Error1(TypedDict):
     code: str
     """
@@ -18,7 +51,8 @@ class Error1(TypedDict):
     not_found, conflict, bad_request, unsupported_media_type,
     invalid, hop_limit, agents_paused, agent_budget,
     rate_limited, too_many, invalid_credentials,
-    bad_setup_code, setup_done, username_taken or internal.
+    bad_setup_code, setup_done, setup_closed, username_taken
+    or internal.
 
     """
     message: str
@@ -46,6 +80,15 @@ class Connector(TypedDict):
 
 class SetupStatus(TypedDict):
     needed: bool
+    """
+    No admin exists yet.
+    """
+    open: bool
+    """
+    POST /setup can succeed now: no admin yet, and the setup
+    window (if any) hasn't closed.
+
+    """
 
 
 Username: TypeAlias = str
@@ -724,6 +767,11 @@ class WsError(TypedDict):
     """
     For agent_budget and rate_limited, seconds until a send would pass.
     """
+
+
+class NodeInfo(TypedDict):
+    version: str
+    update: NodeUpdate | None
 
 
 class Principal(TypedDict):

@@ -10,7 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/lum1n/say-v2/internal/core"
+	"github.com/lum1n/say-server/internal/core"
 )
 
 type bearer struct{ token string }

@@ -1,0 +1,1 @@
+{"version":"0.4.1","image":"ghcr.io/lum1n/say-node:0.4.1","image_digest":"sha256:ab","say":{"linux-amd64":{"url":"https://example.com/say","sha256":"00"}},"signal_cli":{"version":"0.14.9","linux-amd64":{"url":"https://example.com/sig.tgz","sha256":"11"}}}

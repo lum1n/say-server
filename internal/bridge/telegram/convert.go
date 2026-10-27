@@ -12,7 +12,7 @@ import (
 
 	"github.com/gotd/td/tg"
 
-	"github.com/lum1n/say-v2/internal/bridge"
+	"github.com/lum1n/say-server/internal/bridge"
 )
 
 // receiver turns updates into incoming messages. It is the handler of

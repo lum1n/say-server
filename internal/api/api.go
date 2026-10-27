@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/bus"
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/store"
+	"github.com/lum1n/say-server/internal/bus"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 //go:embed all:static
@@ -31,6 +31,10 @@ type Config struct {
 	// SetupCode must accompany POST /api/v1/setup, which creates the first
 	// admin. Empty when the instance is already set up.
 	SetupCode string
+	// SetupUntil, when set, closes setup at that time even without an
+	// admin, so a node nobody claimed can't be claimed later
+	// (docs/adr/0017-own-node.md).
+	SetupUntil time.Time
 	// Agents is the agent policy of rooms that set no limits of their own
 	// (docs/adr/0005-agent-safety.md). Its zero limits take the Default
 	// constants; Paused is ignored.
@@ -38,16 +42,22 @@ type Config struct {
 	// HookLimit is how many messages a minute each bridge's hook takes on
 	// this node; zero is DefaultHookLimit.
 	HookLimit int
+	// UpdateDir, on a node that updates itself, holds the updater's status
+	// file and say's requests to update (internal/update). Empty
+	// elsewhere.
+	UpdateDir string
 }
 
 type Server struct {
-	version   string
-	assets    fs.FS
-	store     store.Store
-	bus       bus.Bus
-	defaults  core.AgentPolicy
-	setupCode string
-	hooks     *hookLimiter
+	version    string
+	assets     fs.FS
+	store      store.Store
+	bus        bus.Bus
+	defaults   core.AgentPolicy
+	setupCode  string
+	setupUntil time.Time
+	updateDir  string
+	hooks      *hookLimiter
 	// resync is how often a realtime follower rereads the store without a
 	// bus notification; heartbeat is how often idle streams are pinged.
 	resync    time.Duration
@@ -59,15 +69,17 @@ func New(c Config) *Server {
 	c.Agents.Paused = false
 	c.Agents = withDefaults(c.Agents, builtinAgentPolicy)
 	return &Server{
-		version:   c.Version,
-		assets:    assets,
-		store:     c.Store,
-		bus:       c.Bus,
-		defaults:  c.Agents,
-		setupCode: c.SetupCode,
-		hooks:     newHookLimiter(c.HookLimit),
-		resync:    30 * time.Second,
-		heartbeat: 25 * time.Second,
+		version:    c.Version,
+		assets:     assets,
+		store:      c.Store,
+		bus:        c.Bus,
+		defaults:   c.Agents,
+		setupCode:  c.SetupCode,
+		setupUntil: c.SetupUntil,
+		updateDir:  c.UpdateDir,
+		hooks:      newHookLimiter(c.HookLimit),
+		resync:     30 * time.Second,
+		heartbeat:  25 * time.Second,
 	}
 }
 
@@ -75,6 +87,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/health", s.health)
 	mux.HandleFunc("GET /api/v1/setup", s.setupStatus)
+	mux.HandleFunc("GET /api/v1/node", s.authed(s.getNode))
+	mux.HandleFunc("POST /api/v1/node/update", s.authed(s.updateNode))
 	mux.HandleFunc("POST /api/v1/setup", s.setup)
 	mux.HandleFunc("POST /api/v1/login", s.login)
 	mux.HandleFunc("POST /api/v1/logout", s.authed(s.logout))

@@ -1,6 +1,6 @@
 package say
 
-import "github.com/lum1n/say-v2/internal/client"
+import "github.com/lum1n/say-server/internal/client"
 
 // The client of the say API lives in internal/client, so that the say
 // bridge network can use it too (docs/adr/0015-sync.md); these are its

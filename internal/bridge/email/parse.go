@@ -16,7 +16,7 @@ import (
 	"github.com/emersion/go-message/mail"
 	"golang.org/x/net/html"
 
-	"github.com/lum1n/say-v2/internal/bridge"
+	"github.com/lum1n/say-server/internal/bridge"
 )
 
 // message is a mail as say sees it.

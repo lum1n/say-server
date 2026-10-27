@@ -1,0 +1,11 @@
+# say runs unprivileged, so it asks for an update (POST /api/v1/node/update)
+# by making this file; `say update` removes it.
+[Unit]
+Description=Update say when it asks
+
+[Path]
+PathExists=/var/lib/say/update-request
+Unit=say-update.service
+
+[Install]
+WantedBy=paths.target

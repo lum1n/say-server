@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/bridge"
-	"github.com/lum1n/say-v2/internal/store"
+	"github.com/lum1n/say-server/internal/bridge"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 func init() {

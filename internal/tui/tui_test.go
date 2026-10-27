@@ -11,7 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/cursor"
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/lum1n/say-v2/say"
+	"github.com/lum1n/say-server/say"
 )
 
 func TestApply(t *testing.T) {

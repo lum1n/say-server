@@ -15,6 +15,11 @@
 : The one-time code the server logs on first start. The setup wizard needs
   it to create the first admin.
 
+**Setup window**
+: How long after start a node accepts its setup code
+  (`--setup-minutes`). A deployed node that nobody claims in time refuses
+  setup and is removed.
+
 **Session**
 : An access token issued by sign-in, carried in the `say_token` cookie and
   valid for 30 days. Signing out revokes it.
@@ -162,6 +167,14 @@
 **Node**
 : One running say: store, bus, API and built-in agents. `say serve` runs
   one as a server; an app runs one inside itself with `say.Open`.
+
+**Own node**
+: A person's always-on node in their own account at a host such as
+  exe.dev, deployed and claimed from the app. Their phone syncs with it.
+
+**Claim**
+: Creating a new node's admin with the setup code chosen when it was
+  deployed. The app does it, so the person never sees the code.
 
 **Embedded node**
 : A node inside another program, reached over an in-memory connection

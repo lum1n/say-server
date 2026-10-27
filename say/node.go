@@ -28,14 +28,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/agents"
-	"github.com/lum1n/say-v2/internal/api"
-	"github.com/lum1n/say-v2/internal/bridge"
-	_ "github.com/lum1n/say-v2/internal/bridge/networks" // registers every network
-	"github.com/lum1n/say-v2/internal/bus"
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/password"
-	"github.com/lum1n/say-v2/internal/store"
+	"github.com/lum1n/say-server/internal/agents"
+	"github.com/lum1n/say-server/internal/api"
+	"github.com/lum1n/say-server/internal/bridge"
+	_ "github.com/lum1n/say-server/internal/bridge/networks" // registers every network
+	"github.com/lum1n/say-server/internal/bus"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/password"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 // Config is how to run a node. The zero value runs a single node on
@@ -48,6 +48,20 @@ type Config struct {
 	// SetupCode guards the setup wizard while no admin exists; it is
 	// random when empty. Nodes that call LocalUser never need the wizard.
 	SetupCode string
+	// SetupWindow, when set, closes the wizard that long after Open if
+	// nobody has used it (a node deployed for someone who never claims
+	// it).
+	SetupWindow time.Duration
+	// TrustProxy takes the host from X-Forwarded-Host, for a node behind
+	// a reverse proxy (such as exe.dev's) that every request comes
+	// through. Origin checks, such as the WebSocket's, then see the
+	// address people use. Never set it when clients can reach the node
+	// directly: they could claim any host.
+	TrustProxy bool
+	// UpdateDir, on a node that updates itself (the say-node image), is
+	// where `say update` reports and say asks it to run, for
+	// GET /api/v1/node.
+	UpdateDir string
 
 	// Peers are host:port cluster addresses of other nodes. Setting them
 	// runs the NATS cluster bus, which needs a postgres:// DB.
@@ -125,8 +139,15 @@ func Open(ctx context.Context, c Config) (*Node, error) {
 		bridges: make(chan struct{}),
 		setup:   code,
 	}
-	n.api = api.New(api.Config{Version: c.Version, Store: st, Bus: b, SetupCode: code})
+	var setupUntil time.Time
+	if code != "" && c.SetupWindow > 0 {
+		setupUntil = time.Now().Add(c.SetupWindow)
+	}
+	n.api = api.New(api.Config{Version: c.Version, Store: st, Bus: b, SetupCode: code, SetupUntil: setupUntil, UpdateDir: c.UpdateDir})
 	n.handler = n.api.Handler()
+	if c.TrustProxy {
+		n.handler = forwardedHost(n.handler)
+	}
 	n.client = &http.Client{Transport: &http.Transport{
 		DialContext:         func(ctx context.Context, _, _ string) (net.Conn, error) { return n.mem.dial(ctx) },
 		MaxIdleConnsPerHost: 16,
@@ -195,6 +216,18 @@ func (n *Node) serve(l net.Listener) {
 	n.servers = append(n.servers, srv)
 	n.mu.Unlock()
 	go srv.Serve(l)
+}
+
+// forwardedHost serves requests with the host the proxy was asked for.
+func forwardedHost(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fh := r.Header.Get("X-Forwarded-Host"); fh != "" {
+			// A proxy chain may list several; the first is the client's.
+			fh, _, _ = strings.Cut(fh, ",")
+			r.Host = strings.TrimSpace(fh)
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
 // Handler serves the API, the web app and /mcp, to mount in a program's

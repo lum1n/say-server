@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lum1n/say-v2/internal/core"
-	"github.com/lum1n/say-v2/internal/store/db"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/store/db"
 )
 
 // ErrLinkExists is CreateBridgeLink's error when the bridge already links

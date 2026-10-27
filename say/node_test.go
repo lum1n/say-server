@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 func openNode(t *testing.T) *Node {
@@ -171,5 +173,37 @@ func TestListen(t *testing.T) {
 	}
 	if _, err := n.Request(context.Background(), "GET", "/api/v1/health", "", ""); err == nil {
 		t.Fatal("in-memory endpoint works after Close")
+	}
+}
+
+// Behind exe.dev's proxy the browser's Origin is the public host, which
+// reaches say only as X-Forwarded-Host.
+func TestTrustProxy(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, trust := range []bool{false, true} {
+		n, err := Open(ctx, Config{DB: filepath.Join(t.TempDir(), "say.db"), TrustProxy: trust})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer n.Close()
+		ada, _ := n.LocalUser(ctx, "ada", "Ada", "test")
+		addr, err := n.Listen("127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn, _, err := websocket.Dial(ctx, "ws://"+addr.String()+"/api/v1/ws", &websocket.DialOptions{
+			HTTPHeader: http.Header{
+				"Authorization":    {"Bearer " + ada.Token},
+				"Origin":           {"https://say-k3x9.exe.xyz"},
+				"X-Forwarded-Host": {"say-k3x9.exe.xyz"},
+			},
+		})
+		if trust != (err == nil) {
+			t.Fatalf("TrustProxy %v: dial from the public origin = %v", trust, err)
+		}
+		if conn != nil {
+			conn.CloseNow()
+		}
 	}
 }

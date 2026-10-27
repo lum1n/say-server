@@ -47,9 +47,14 @@ INFO open the setup wizard to create the admin url="http://localhost:7290/setup?
 Open it to create the admin. The code means that whoever reaches a fresh
 public instance first cannot claim it. Set `--setup-code` (or
 `SAY_SETUP_CODE`) to choose the code yourself, for example to give every
-cluster node the same one. Once an admin exists the wizard is closed and
-people sign in at `/login`. Admins add people and agents on the web app's
+cluster node the same one. `--setup-minutes` (`SAY_SETUP_MINUTES`) closes
+the wizard that long after start if nobody has used it. Once an admin
+exists the wizard is closed and people sign in at `/login`. Admins add people and agents on the web app's
 People page, or with `POST /api/v1/principals`.
+
+Behind a reverse proxy that every request comes through, `--trust-proxy`
+(`SAY_TRUST_PROXY=true`) takes the host from `X-Forwarded-Host`, so
+browsers' WebSockets pass say's origin check.
 
 Cluster mode is the same binary:
 
@@ -86,10 +91,17 @@ With Docker:
 
 ```sh
 make image          # builds the say image (distroless, data in /data)
+make node-test      # builds the say-node image (systemd, say on port 80) and
+                    # boots it the way exe.dev does
 make cluster-test   # three nodes and Postgres in docker compose: a client on
                     # one node sees messages posted to another, and replays
                     # what it missed after reconnecting elsewhere
 ```
+
+A `v*` tag releases the say-node image, say for Linux and a signed
+manifest (`.github/workflows/release.yml`). `make release VERSION=0.4.1`
+tags HEAD, pushes the tag and does the same from your machine; `DRY=1`
+builds into `dist/` without publishing.
 
 The cluster test (`test/cluster`) only talks HTTP, so it also runs against
 any cluster you start yourself, as long as every node has the same
@@ -246,6 +258,39 @@ reads earlier messages, and ↑ in an empty input edits your last message.
 `/members` shows the room's members and agent settings; owners change them
 with `/agents pause`, `/agents resume`, `/agents hops|turns|window|rate N`
 and `/responder NAME on|off`.
+
+### Your own node on exe.dev
+
+The apps will set up an always-on say node in the person's own exe.dev
+account in one step, so their messages never sit on a server we run
+([ADR 0017](./docs/adr/0017-own-node.md)). The Go side is done (packages
+`say/exe` and `say/deploy`, bound for the apps in `mobile/`), and `say
+exe` runs the same flow from a terminal:
+
+```sh
+say exe login    # exe.dev's sign-in: type your email, open the link it sends
+say exe deploy   # make a node, wait for it, claim it; prints its address and admin password
+say exe ls
+say exe rm say-k3x9q2
+```
+
+`say exe login --token exe0…` uses a token you made on a computer that
+can already `ssh exe.dev` instead.
+
+A node runs the say-node image (`docker build --target node`): systemd
+as PID 1, say on port 80 with its data in `/var/lib/say`, and signal-cli.
+A `v*` tag publishes it to `ghcr.io/lum1n/say-node` with a signed
+`manifest.json` that tells the apps which version to deploy. You can run
+it anywhere that boots containers as machines, or under Docker:
+
+```sh
+docker run --privileged -p 8080:80 -e SAY_SETUP_CODE=… say-node
+```
+
+A node updates itself: `say update`, run daily by systemd, installs a
+newer signed release and rolls back if it isn't healthy. Admins see the
+version and can update now with `GET /api/v1/node` and
+`POST /api/v1/node/update`.
 
 ### Widgets
 
@@ -408,6 +453,7 @@ placeholder page instead of the app.
 - [ADR 0013: Embedding say in apps](./docs/adr/0013-embedding.md)
 - [ADR 0014: Bridges — your own accounts first](./docs/adr/0014-bridges.md)
 - [ADR 0015: Sync with a home say](./docs/adr/0015-sync.md)
+- [ADR 0017: Your own node, deployed to exe.dev from the app](./docs/adr/0017-own-node.md)
 
 ## Privacy
 
