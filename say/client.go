@@ -19,6 +19,8 @@ type (
 	Error       = client.Error
 	EventsQuery = client.EventsQuery
 	Device      = client.Device
+	Pairing     = client.Pairing
+	Token       = client.Token
 	Push        = client.Push
 	Realtime    = client.Realtime
 )

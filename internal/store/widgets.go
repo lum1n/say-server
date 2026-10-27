@@ -327,7 +327,7 @@ func (s *sqlStore) DeleteVisitor(ctx context.Context, principalID string) error 
 		// The rooms it was added to besides its thread.
 		steps = []func(context.Context, string) error{
 			q.DeleteSenderBridgeMessages, q.DeleteSenderEvents, q.DeletePrincipalMemberships,
-			q.DeletePrincipalTokens, q.DeletePrincipal,
+			q.DeletePrincipalTokens, q.DeletePrincipalPairings, q.DeletePrincipal,
 		}
 		for _, step := range steps {
 			if err := step(ctx, principalID); err != nil {

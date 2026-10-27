@@ -16,6 +16,7 @@ export const keys = {
   members: (id: string) => ["members", id] as const,
   events: (id: string) => ["events", id] as const,
   deliveries: (id: string) => ["deliveries", id] as const,
+  tokens: (principalId: string) => ["tokens", principalId] as const,
 };
 
 /** Deliveries are how a room's messages went out to its bridges, by event id. */
@@ -94,6 +95,9 @@ export function RealtimeProvider({ queryClient, children }: { queryClient: Query
         queryClient.invalidateQueries({ queryKey: ["room"] });
         queryClient.invalidateQueries({ queryKey: ["members"] });
       },
+      // This browser was signed out from another device: back to sign-in,
+      // leaving nothing of the session in memory.
+      onSignedOut: () => location.assign("/login"),
     });
     setRt(r);
     return () => r.close();

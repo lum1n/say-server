@@ -207,7 +207,11 @@ func exeDeploy(ctx context.Context, c *exe.Client, args []string) error {
 		return err
 	}
 	password := rand.Text()
-	token, err := deploy.Claim(ctx, nil, d.URL, d.SetupCode, *username, password)
+	device := "say exe"
+	if h, err := os.Hostname(); err == nil {
+		device += " on " + h
+	}
+	token, err := deploy.Claim(ctx, nil, d.URL, d.SetupCode, *username, password, device)
 	if err != nil {
 		return fmt.Errorf("%w (setup code %s)", err, d.SetupCode)
 	}

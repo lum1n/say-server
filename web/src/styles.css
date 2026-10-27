@@ -825,6 +825,7 @@ a {
   margin: 8px 0;
 }
 
+.devices .qr,
 .accounts .qr {
   width: 220px;
   max-width: 100%;
@@ -833,6 +834,7 @@ a {
   border-radius: 8px;
 }
 
+.devices .qr svg,
 .accounts .qr svg {
   display: block;
   width: 100%;
@@ -846,4 +848,17 @@ a {
 
 .hook code {
   overflow-wrap: anywhere;
+}
+
+.devices .directory li {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.code {
+  font-size: 22px;
+  letter-spacing: 0.08em;
 }

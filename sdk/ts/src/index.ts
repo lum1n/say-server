@@ -5,7 +5,7 @@ import { SayError } from "./error.ts";
 
 export { Bot, type BotContext, type BotMessage, type BotOptions, type BotStream } from "./bot.ts";
 export { SayError } from "./error.ts";
-export { Realtime, type RealtimeOptions, type RealtimeStatus } from "./realtime.ts";
+export { Realtime, type RealtimeOptions, type RealtimeStatus, SignedOutCode } from "./realtime.ts";
 
 type Schemas = components["schemas"];
 export type Health = Schemas["Health"];
@@ -14,6 +14,8 @@ export type Principal = Schemas["Principal"];
 export type SetupStatus = Schemas["SetupStatus"];
 export type Setup = Schemas["Setup"];
 export type Login = Schemas["Login"];
+export type Token = Schemas["Token"];
+export type Pairing = Schemas["Pairing"];
 export type CreatePrincipal = Schemas["CreatePrincipal"];
 export type CreatedPrincipal = Schemas["CreatedPrincipal"];
 export type RoomKind = Schemas["RoomKind"];
@@ -114,6 +116,28 @@ export async function login(body: Login, client = defaultClient): Promise<Princi
 export async function logout(client = defaultClient): Promise<void> {
   const { error, response } = await client.POST("/logout");
   if (!response.ok) fail(response, error);
+}
+
+/** listTokens lists a principal's sessions and devices: your own, or anyone's for an admin. */
+export async function listTokens(principalId: string, client = defaultClient): Promise<Token[]> {
+  const { data, error, response } = await client.GET("/principals/{id}/tokens", { params: { path: { id: principalId } } });
+  if (!data) fail(response, error);
+  return data.tokens;
+}
+
+/** revokeToken signs a session or device out. */
+export async function revokeToken(principalId: string, tokenId: string, client = defaultClient): Promise<void> {
+  const { error, response } = await client.DELETE("/principals/{id}/tokens/{token_id}", {
+    params: { path: { id: principalId, token_id: tokenId } },
+  });
+  if (!response.ok) fail(response, error);
+}
+
+/** createPairing makes a one-time code that adds another device for you, for 10 minutes. */
+export async function createPairing(client = defaultClient): Promise<Pairing> {
+  const { data, error, response } = await client.POST("/pairings");
+  if (!data) fail(response, error);
+  return data;
 }
 
 export async function getMe(client = defaultClient): Promise<Principal> {

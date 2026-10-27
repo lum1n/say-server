@@ -68,6 +68,26 @@ func (e *BudgetError) Error() string {
 	return fmt.Sprintf("store: %s budget of %d events per %s is spent", who, e.Budget.Max, e.Budget.Window)
 }
 
+// NewToken is a token to issue: whose, a name saying what it is for
+// (such as "session" or "device:Ada's phone"), the client that asked
+// for it, and when it expires (zero never).
+type NewToken struct {
+	PrincipalID string
+	Name        string
+	UserAgent   string
+	Expires     time.Time
+}
+
+// Token is what is kept of an access token, never its secret.
+type Token struct {
+	ID         string
+	Name       string
+	UserAgent  string
+	CreatedAt  time.Time
+	ExpiresAt  time.Time // zero never
+	LastUsedAt time.Time // zero unknown; it is recorded at most hourly
+}
+
 // Login is a username and password hash that signs a human principal in.
 type Login struct {
 	PrincipalID  string
@@ -104,6 +124,25 @@ type Store interface {
 	RevokeToken(ctx context.Context, secret string) error
 	// RevokeTokensNamed deletes principalID's tokens with that name.
 	RevokeTokensNamed(ctx context.Context, principalID, name string) error
+	// IssueToken is CreateToken with the client that asked for it, and
+	// returns the token's record too.
+	IssueToken(ctx context.Context, t NewToken) (secret string, _ Token, err error)
+	// Authenticate is PrincipalByToken with the token's id. It records
+	// when the token was last used, at most hourly.
+	Authenticate(ctx context.Context, secret string) (_ core.Principal, tokenID string, err error)
+	// Tokens lists principalID's tokens that haven't expired, newest
+	// first (docs/adr/0018-devices.md).
+	Tokens(ctx context.Context, principalID string) ([]Token, error)
+	// RevokeTokenID deletes principalID's token id, or returns
+	// ErrNotFound.
+	RevokeTokenID(ctx context.Context, principalID, id string) error
+
+	// CreatePairing makes a one-time code that signs in as principalID on
+	// another device until expires, and returns it. RedeemPairing uses it
+	// up and returns whose it was, or ErrNotFound for a wrong, used or
+	// expired code. Codes are case-insensitive and may carry dashes.
+	CreatePairing(ctx context.Context, principalID string, expires time.Time) (code string, err error)
+	RedeemPairing(ctx context.Context, code string) (principalID string, err error)
 
 	// CreateRoom writes the room and its owner's membership in one
 	// transaction.

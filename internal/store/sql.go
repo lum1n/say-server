@@ -143,33 +143,80 @@ func (s *sqlStore) SetupDone(ctx context.Context) (bool, error) {
 const tokenPrefix = "say_"
 
 func (s *sqlStore) CreateToken(ctx context.Context, principalID, name string, expires time.Time) (string, error) {
+	secret, _, err := s.IssueToken(ctx, NewToken{PrincipalID: principalID, Name: name, Expires: expires})
+	return secret, err
+}
+
+// maxUserAgent bounds the client description kept with a token.
+const maxUserAgent = 256
+
+func (s *sqlStore) IssueToken(ctx context.Context, t NewToken) (string, Token, error) {
 	secret := tokenPrefix + rand.Text()
-	var expiresAt int64
-	if !expires.IsZero() {
-		expiresAt = expires.UnixMilli()
+	ua := t.UserAgent
+	if len(ua) > maxUserAgent {
+		ua = ua[:maxUserAgent]
 	}
+	tok := Token{ID: "tok_" + core.NewID(), Name: t.Name, UserAgent: ua, CreatedAt: time.Now().Truncate(time.Millisecond), ExpiresAt: t.Expires}
 	err := s.q().CreateToken(ctx, db.CreateTokenParams{
 		Hash:        tokenHash(secret),
-		PrincipalID: principalID,
-		Name:        name,
-		ExpiresAt:   expiresAt,
-		CreatedAt:   millis(time.Time{}),
+		ID:          tok.ID,
+		PrincipalID: t.PrincipalID,
+		Name:        t.Name,
+		UserAgent:   ua,
+		ExpiresAt:   optMillis(t.Expires),
+		CreatedAt:   tok.CreatedAt.UnixMilli(),
 	})
 	if err != nil {
-		return "", err
+		return "", Token{}, err
 	}
-	return secret, nil
+	return secret, tok, nil
 }
 
 func (s *sqlStore) PrincipalByToken(ctx context.Context, secret string) (core.Principal, error) {
-	row, err := s.q().PrincipalByToken(ctx, db.PrincipalByTokenParams{
-		Hash:      tokenHash(secret),
-		ExpiresAt: time.Now().UnixMilli(),
-	})
+	p, _, err := s.Authenticate(ctx, secret)
+	return p, err
+}
+
+// touchEvery is how stale a token's last use may get before it is
+// recorded again, so that reads don't each write.
+const touchEvery = time.Hour
+
+func (s *sqlStore) Authenticate(ctx context.Context, secret string) (core.Principal, string, error) {
+	now := time.Now()
+	hash := tokenHash(secret)
+	row, err := s.q().PrincipalByToken(ctx, db.PrincipalByTokenParams{Hash: hash, ExpiresAt: now.UnixMilli()})
 	if err != nil {
-		return core.Principal{}, notFound(err)
+		return core.Principal{}, "", notFound(err)
 	}
-	return principal(row), nil
+	if now.Sub(time.UnixMilli(row.LastUsedAt)) > touchEvery {
+		s.q().TouchToken(ctx, db.TouchTokenParams{Hash: hash, LastUsedAt: now.UnixMilli()})
+	}
+	return principal(db.Principal{
+		ID: row.ID, Kind: row.Kind, DisplayName: row.DisplayName, CreatedAt: row.CreatedAt, Admin: row.Admin,
+	}), row.TokenID, nil
+}
+
+func (s *sqlStore) Tokens(ctx context.Context, principalID string) ([]Token, error) {
+	rows, err := s.q().TokensFor(ctx, db.TokensForParams{PrincipalID: principalID, ExpiresAt: time.Now().UnixMilli()})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Token, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, Token{
+			ID: r.ID, Name: r.Name, UserAgent: r.UserAgent,
+			CreatedAt: time.UnixMilli(r.CreatedAt), ExpiresAt: unmillis(r.ExpiresAt), LastUsedAt: unmillis(r.LastUsedAt),
+		})
+	}
+	return out, nil
+}
+
+func (s *sqlStore) RevokeTokenID(ctx context.Context, principalID, id string) error {
+	n, err := s.q().DeleteTokenID(ctx, db.DeleteTokenIDParams{PrincipalID: principalID, ID: id})
+	if err == nil && n == 0 {
+		err = ErrNotFound
+	}
+	return err
 }
 
 func (s *sqlStore) RevokeToken(ctx context.Context, secret string) error {
@@ -178,6 +225,62 @@ func (s *sqlStore) RevokeToken(ctx context.Context, secret string) error {
 
 func (s *sqlStore) RevokeTokensNamed(ctx context.Context, principalID, name string) error {
 	return s.q().DeleteTokensNamed(ctx, db.DeleteTokensNamedParams{PrincipalID: principalID, Name: name})
+}
+
+// Pairing codes are ten Crockford base32 characters: 50 bits, typed as
+// two groups of five, and good for one use within minutes.
+const (
+	pairingAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+	pairingLen      = 10
+)
+
+func (s *sqlStore) CreatePairing(ctx context.Context, principalID string, expires time.Time) (string, error) {
+	b := make([]byte, pairingLen)
+	rand.Read(b)
+	for i := range b {
+		b[i] = pairingAlphabet[int(b[i])%len(pairingAlphabet)]
+	}
+	code := string(b)
+	now := time.Now()
+	err := s.tx(ctx, func(q *db.Queries) error {
+		if err := q.DeleteExpiredPairings(ctx, now.UnixMilli()); err != nil {
+			return err
+		}
+		return q.CreatePairing(ctx, db.CreatePairingParams{
+			Hash: tokenHash(code), PrincipalID: principalID, ExpiresAt: expires.UnixMilli(), CreatedAt: now.UnixMilli(),
+		})
+	})
+	if err != nil {
+		return "", err
+	}
+	return code[:5] + "-" + code[5:], nil
+}
+
+func (s *sqlStore) RedeemPairing(ctx context.Context, code string) (string, error) {
+	id, err := s.q().RedeemPairing(ctx, db.RedeemPairingParams{Hash: tokenHash(normalizePairing(code)), ExpiresAt: time.Now().UnixMilli()})
+	return id, notFound(err)
+}
+
+// normalizePairing undoes what typing a code does to it: case, dashes and
+// spaces, and the letters Crockford base32 reads as digits.
+func normalizePairing(code string) string {
+	out := make([]byte, 0, len(code))
+	for _, c := range []byte(code) {
+		switch {
+		case c == '-' || c == ' ':
+			continue
+		case c >= 'a' && c <= 'z':
+			c -= 'a' - 'A'
+		}
+		switch c {
+		case 'O':
+			c = '0'
+		case 'I', 'L':
+			c = '1'
+		}
+		out = append(out, c)
+	}
+	return string(out)
 }
 
 func tokenHash(secret string) string {

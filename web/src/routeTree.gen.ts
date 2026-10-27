@@ -11,9 +11,11 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
+import { Route as PairRouteImport } from './routes/pair'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppAccountsRouteImport } from './routes/_app/accounts'
+import { Route as AppDevicesRouteImport } from './routes/_app/devices'
 import { Route as AppInboxRouteImport } from './routes/_app/inbox'
 import { Route as AppPeopleRouteImport } from './routes/_app/people'
 import { Route as AppWidgetsRouteImport } from './routes/_app/widgets'
@@ -29,6 +31,11 @@ const LoginRoute = LoginRouteImport.update({
   path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PairRoute = PairRouteImport.update({
+  id: '/pair',
+  path: '/pair',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SetupRoute = SetupRouteImport.update({
   id: '/setup',
   path: '/setup',
@@ -42,6 +49,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppAccountsRoute = AppAccountsRouteImport.update({
   id: '/accounts',
   path: '/accounts',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDevicesRoute = AppDevicesRouteImport.update({
+  id: '/devices',
+  path: '/devices',
   getParentRoute: () => AppRoute,
 } as any)
 const AppInboxRoute = AppInboxRouteImport.update({
@@ -73,8 +85,10 @@ const AppRoomsRoomIdRoute = AppRoomsRoomIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
+  '/pair': typeof PairRoute
   '/setup': typeof SetupRoute
   '/accounts': typeof AppAccountsRoute
+  '/devices': typeof AppDevicesRoute
   '/inbox': typeof AppInboxRoute
   '/people': typeof AppPeopleRoute
   '/widgets': typeof AppWidgetsRoute
@@ -83,8 +97,10 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/pair': typeof PairRoute
   '/setup': typeof SetupRoute
   '/accounts': typeof AppAccountsRoute
+  '/devices': typeof AppDevicesRoute
   '/inbox': typeof AppInboxRoute
   '/people': typeof AppPeopleRoute
   '/widgets': typeof AppWidgetsRoute
@@ -96,8 +112,10 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/pair': typeof PairRoute
   '/setup': typeof SetupRoute
   '/_app/accounts': typeof AppAccountsRoute
+  '/_app/devices': typeof AppDevicesRoute
   '/_app/inbox': typeof AppInboxRoute
   '/_app/people': typeof AppPeopleRoute
   '/_app/widgets': typeof AppWidgetsRoute
@@ -110,8 +128,10 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/login'
+    | '/pair'
     | '/setup'
     | '/accounts'
+    | '/devices'
     | '/inbox'
     | '/people'
     | '/widgets'
@@ -120,8 +140,10 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/login'
+    | '/pair'
     | '/setup'
     | '/accounts'
+    | '/devices'
     | '/inbox'
     | '/people'
     | '/widgets'
@@ -132,8 +154,10 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_app'
     | '/login'
+    | '/pair'
     | '/setup'
     | '/_app/accounts'
+    | '/_app/devices'
     | '/_app/inbox'
     | '/_app/people'
     | '/_app/widgets'
@@ -145,6 +169,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LoginRoute: typeof LoginRoute
+  PairRoute: typeof PairRoute
   SetupRoute: typeof SetupRoute
   EmbedWidgetIdRoute: typeof EmbedWidgetIdRoute
 }
@@ -163,6 +188,13 @@ declare module '@tanstack/react-router' {
       path: '/login'
       fullPath: '/login'
       preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pair': {
+      id: '/pair'
+      path: '/pair'
+      fullPath: '/pair'
+      preLoaderRoute: typeof PairRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/setup': {
@@ -184,6 +216,13 @@ declare module '@tanstack/react-router' {
       path: '/accounts'
       fullPath: '/accounts'
       preLoaderRoute: typeof AppAccountsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/devices': {
+      id: '/_app/devices'
+      path: '/devices'
+      fullPath: '/devices'
+      preLoaderRoute: typeof AppDevicesRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/inbox': {
@@ -226,6 +265,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAccountsRoute: typeof AppAccountsRoute
+  AppDevicesRoute: typeof AppDevicesRoute
   AppInboxRoute: typeof AppInboxRoute
   AppPeopleRoute: typeof AppPeopleRoute
   AppWidgetsRoute: typeof AppWidgetsRoute
@@ -235,6 +275,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccountsRoute: AppAccountsRoute,
+  AppDevicesRoute: AppDevicesRoute,
   AppInboxRoute: AppInboxRoute,
   AppPeopleRoute: AppPeopleRoute,
   AppWidgetsRoute: AppWidgetsRoute,
@@ -247,6 +288,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LoginRoute: LoginRoute,
+  PairRoute: PairRoute,
   SetupRoute: SetupRoute,
   EmbedWidgetIdRoute: EmbedWidgetIdRoute,
 }

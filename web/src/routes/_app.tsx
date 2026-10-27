@@ -79,6 +79,7 @@ function Sidebar({ admin, name }: { admin: boolean; name: string }) {
       <NewRoom />
       <footer>
         <Link to="/accounts">Accounts</Link>
+        <Link to="/devices">Devices</Link>
         {admin && <Link to="/people">People and agents</Link>}
         {admin && <Link to="/widgets">Widgets</Link>}
         <span>

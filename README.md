@@ -52,6 +52,11 @@ the wizard that long after start if nobody has used it. Once an admin
 exists the wizard is closed and people sign in at `/login`. Admins add people and agents on the web app's
 People page, or with `POST /api/v1/principals`.
 
+**Devices** lists everything signed in as you, with a Sign out for each,
+and makes a one-time code (and QR code) that signs another device in
+without your password. Apps pair through `POST /api/v1/devices`
+([ADR 0018](./docs/adr/0018-devices.md)).
+
 Behind a reverse proxy that every request comes through, `--trust-proxy`
 (`SAY_TRUST_PROXY=true`) takes the host from `X-Forwarded-Host`, so
 browsers' WebSockets pass say's origin check.
@@ -454,6 +459,7 @@ placeholder page instead of the app.
 - [ADR 0014: Bridges — your own accounts first](./docs/adr/0014-bridges.md)
 - [ADR 0015: Sync with a home say](./docs/adr/0015-sync.md)
 - [ADR 0017: Your own node, deployed to exe.dev from the app](./docs/adr/0017-own-node.md)
+- [ADR 0018: Devices, sessions and pairing](./docs/adr/0018-devices.md)
 
 ## Privacy
 

@@ -497,6 +497,27 @@ func (q *Queries) CreateLogin(ctx context.Context, arg CreateLoginParams) (int64
 	return result.RowsAffected()
 }
 
+const createPairing = `-- name: CreatePairing :exec
+INSERT INTO pairings (hash, principal_id, expires_at, created_at) VALUES ($1, $2, $3, $4)
+`
+
+type CreatePairingParams struct {
+	Hash        string
+	PrincipalID string
+	ExpiresAt   int64
+	CreatedAt   int64
+}
+
+func (q *Queries) CreatePairing(ctx context.Context, arg CreatePairingParams) error {
+	_, err := q.db.ExecContext(ctx, createPairing,
+		arg.Hash,
+		arg.PrincipalID,
+		arg.ExpiresAt,
+		arg.CreatedAt,
+	)
+	return err
+}
+
 const createPrincipal = `-- name: CreatePrincipal :exec
 
 INSERT INTO principals (id, kind, display_name, admin, created_at)
@@ -548,14 +569,16 @@ func (q *Queries) CreateRoom(ctx context.Context, arg CreateRoomParams) error {
 }
 
 const createToken = `-- name: CreateToken :exec
-INSERT INTO tokens (hash, principal_id, name, expires_at, created_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO tokens (hash, id, principal_id, name, user_agent, expires_at, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type CreateTokenParams struct {
 	Hash        string
+	ID          string
 	PrincipalID string
 	Name        string
+	UserAgent   string
 	ExpiresAt   int64
 	CreatedAt   int64
 }
@@ -563,8 +586,10 @@ type CreateTokenParams struct {
 func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) error {
 	_, err := q.db.ExecContext(ctx, createToken,
 		arg.Hash,
+		arg.ID,
 		arg.PrincipalID,
 		arg.Name,
+		arg.UserAgent,
 		arg.ExpiresAt,
 		arg.CreatedAt,
 	)
@@ -711,6 +736,15 @@ func (q *Queries) DeleteConnectorSession(ctx context.Context, id string) error {
 	return err
 }
 
+const deleteExpiredPairings = `-- name: DeleteExpiredPairings :exec
+DELETE FROM pairings WHERE expires_at <= $1
+`
+
+func (q *Queries) DeleteExpiredPairings(ctx context.Context, expiresAt int64) error {
+	_, err := q.db.ExecContext(ctx, deleteExpiredPairings, expiresAt)
+	return err
+}
+
 const deletePrincipal = `-- name: DeletePrincipal :exec
 DELETE FROM principals WHERE id = $1
 `
@@ -726,6 +760,15 @@ DELETE FROM memberships WHERE principal_id = $1
 
 func (q *Queries) DeletePrincipalMemberships(ctx context.Context, principalID string) error {
 	_, err := q.db.ExecContext(ctx, deletePrincipalMemberships, principalID)
+	return err
+}
+
+const deletePrincipalPairings = `-- name: DeletePrincipalPairings :exec
+DELETE FROM pairings WHERE principal_id = $1
+`
+
+func (q *Queries) DeletePrincipalPairings(ctx context.Context, principalID string) error {
+	_, err := q.db.ExecContext(ctx, deletePrincipalPairings, principalID)
 	return err
 }
 
@@ -819,6 +862,23 @@ DELETE FROM tokens WHERE hash = $1
 func (q *Queries) DeleteToken(ctx context.Context, hash string) error {
 	_, err := q.db.ExecContext(ctx, deleteToken, hash)
 	return err
+}
+
+const deleteTokenID = `-- name: DeleteTokenID :execrows
+DELETE FROM tokens WHERE principal_id = $1 AND id = $2
+`
+
+type DeleteTokenIDParams struct {
+	PrincipalID string
+	ID          string
+}
+
+func (q *Queries) DeleteTokenID(ctx context.Context, arg DeleteTokenIDParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, deleteTokenID, arg.PrincipalID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const deleteTokensNamed = `-- name: DeleteTokensNamed :exec
@@ -1617,7 +1677,7 @@ func (q *Queries) OutgoingBridgeMessages(ctx context.Context, arg OutgoingBridge
 }
 
 const principalByToken = `-- name: PrincipalByToken :one
-SELECT p.id, p.kind, p.display_name, p.created_at, p.admin FROM principals p JOIN tokens t ON t.principal_id = p.id
+SELECT p.id, p.kind, p.display_name, p.created_at, p.admin, t.id AS token_id, t.last_used_at FROM principals p JOIN tokens t ON t.principal_id = p.id
 WHERE t.hash = $1 AND (t.expires_at = 0 OR t.expires_at > $2)
 `
 
@@ -1626,15 +1686,27 @@ type PrincipalByTokenParams struct {
 	ExpiresAt int64
 }
 
-func (q *Queries) PrincipalByToken(ctx context.Context, arg PrincipalByTokenParams) (Principal, error) {
+type PrincipalByTokenRow struct {
+	ID          string
+	Kind        string
+	DisplayName string
+	CreatedAt   int64
+	Admin       int32
+	TokenID     string
+	LastUsedAt  int64
+}
+
+func (q *Queries) PrincipalByToken(ctx context.Context, arg PrincipalByTokenParams) (PrincipalByTokenRow, error) {
 	row := q.db.QueryRowContext(ctx, principalByToken, arg.Hash, arg.ExpiresAt)
-	var i Principal
+	var i PrincipalByTokenRow
 	err := row.Scan(
 		&i.ID,
 		&i.Kind,
 		&i.DisplayName,
 		&i.CreatedAt,
 		&i.Admin,
+		&i.TokenID,
+		&i.LastUsedAt,
 	)
 	return i, err
 }
@@ -1646,6 +1718,22 @@ DELETE FROM connector_sessions WHERE seen_at < $1
 func (q *Queries) PruneConnectorSessions(ctx context.Context, seenAt int64) error {
 	_, err := q.db.ExecContext(ctx, pruneConnectorSessions, seenAt)
 	return err
+}
+
+const redeemPairing = `-- name: RedeemPairing :one
+DELETE FROM pairings WHERE hash = $1 AND expires_at > $2 RETURNING principal_id
+`
+
+type RedeemPairingParams struct {
+	Hash      string
+	ExpiresAt int64
+}
+
+func (q *Queries) RedeemPairing(ctx context.Context, arg RedeemPairingParams) (string, error) {
+	row := q.db.QueryRowContext(ctx, redeemPairing, arg.Hash, arg.ExpiresAt)
+	var principal_id string
+	err := row.Scan(&principal_id)
+	return principal_id, err
 }
 
 const releaseLease = `-- name: ReleaseLease :exec
@@ -2057,6 +2145,70 @@ func (q *Queries) StreamingFrom(ctx context.Context, senderID string) ([]Event, 
 		return nil, err
 	}
 	return items, nil
+}
+
+const tokensFor = `-- name: TokensFor :many
+SELECT id, name, user_agent, expires_at, last_used_at, created_at FROM tokens
+WHERE principal_id = $1 AND (expires_at = 0 OR expires_at > $2)
+ORDER BY created_at DESC, id
+`
+
+type TokensForParams struct {
+	PrincipalID string
+	ExpiresAt   int64
+}
+
+type TokensForRow struct {
+	ID         string
+	Name       string
+	UserAgent  string
+	ExpiresAt  int64
+	LastUsedAt int64
+	CreatedAt  int64
+}
+
+func (q *Queries) TokensFor(ctx context.Context, arg TokensForParams) ([]TokensForRow, error) {
+	rows, err := q.db.QueryContext(ctx, tokensFor, arg.PrincipalID, arg.ExpiresAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TokensForRow
+	for rows.Next() {
+		var i TokensForRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.UserAgent,
+			&i.ExpiresAt,
+			&i.LastUsedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const touchToken = `-- name: TouchToken :exec
+UPDATE tokens SET last_used_at = $2 WHERE hash = $1
+`
+
+type TouchTokenParams struct {
+	Hash       string
+	LastUsedAt int64
+}
+
+func (q *Queries) TouchToken(ctx context.Context, arg TouchTokenParams) error {
+	_, err := q.db.ExecContext(ctx, touchToken, arg.Hash, arg.LastUsedAt)
+	return err
 }
 
 const unlinkVisitors = `-- name: UnlinkVisitors :exec

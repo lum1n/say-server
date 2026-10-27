@@ -21,7 +21,7 @@ import (
 //	let exe = SayNewExe(token)
 //	let node = try exe.create()             // off the main thread
 //	try exe.waitOpen(node.url)
-//	let session = try SayClaimNode(node.url, node.setupCode, "me", password)
+//	let token = try SayClaimNode(node.url, node.setupCode, "me", password, "Ada's iPhone")
 
 // ExeKey is the app's SSH key for exe.dev, in OpenSSH's formats. Keep it
 // in the Keychain or Keystore; it never leaves the device.
@@ -201,10 +201,11 @@ func (e *Exe) WaitOpen(url string) error {
 // Delete removes the VM and everything on it.
 func (e *Exe) Delete(name string) error { return e.c.Delete(e.context(), name) }
 
-// ClaimNode creates the node's admin with the deploy's setup code and
-// returns a session token.
-func ClaimNode(url, setupCode, username, password string) (string, error) {
+// ClaimNode creates the node's admin with the deploy's setup code, pairs
+// this device under deviceName and returns its token. The token doesn't
+// expire; the person can revoke it from another device.
+func ClaimNode(url, setupCode, username, password, deviceName string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	return deploy.Claim(ctx, http.DefaultClient, url, setupCode, username, password)
+	return deploy.Claim(ctx, http.DefaultClient, url, setupCode, username, password, deviceName)
 }

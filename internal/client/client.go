@@ -284,6 +284,54 @@ func (c *Client) Pair(ctx context.Context, username, password, name string) (Dev
 	return d, anon.do(ctx, "POST", "/devices", map[string]string{"username": username, "password": password, "name": name}, &d)
 }
 
+// PairWithCode is Pair with a pairing code from one of the person's
+// signed-in devices (CreatePairing) instead of their password.
+func (c *Client) PairWithCode(ctx context.Context, code, name string) (Device, error) {
+	var d Device
+	anon := *c
+	anon.Token = ""
+	return d, anon.do(ctx, "POST", "/devices", map[string]string{"pairing_code": code, "name": name}, &d)
+}
+
+// Pairing is a one-time code that adds another device for a person.
+type Pairing struct {
+	Code      string    `json:"code"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// CreatePairing makes a pairing code for the client's person, good for
+// one device within minutes (docs/adr/0018-devices.md).
+func (c *Client) CreatePairing(ctx context.Context) (Pairing, error) {
+	var p Pairing
+	return p, c.do(ctx, "POST", "/pairings", nil, &p)
+}
+
+// Token is one of a principal's access tokens: a browser session, a
+// device ("device:<name>"), or an agent's or script's.
+type Token struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	UserAgent  string     `json:"user_agent,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+	Current    bool       `json:"current"`
+}
+
+// Tokens lists principalID's tokens: the client's own principal's, or
+// anyone's for an instance admin.
+func (c *Client) Tokens(ctx context.Context, principalID string) ([]Token, error) {
+	var out struct {
+		Tokens []Token `json:"tokens"`
+	}
+	return out.Tokens, c.do(ctx, "GET", "/principals/"+url.PathEscape(principalID)+"/tokens", nil, &out)
+}
+
+// RevokeToken signs one of principalID's sessions or devices out.
+func (c *Client) RevokeToken(ctx context.Context, principalID, tokenID string) error {
+	return c.do(ctx, "DELETE", "/principals/"+url.PathEscape(principalID)+"/tokens/"+url.PathEscape(tokenID), nil, nil)
+}
+
 // Logout revokes the client's token.
 func (c *Client) Logout(ctx context.Context) error {
 	return c.do(ctx, "POST", "/logout", nil, nil)
