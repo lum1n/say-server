@@ -30,7 +30,7 @@ func init() {
 		Title:        "Webhooks",
 		Modes:        []string{store.ModeBot},
 		Fields:       fields,
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
 		Open:         open,
 		Hook:         hook,
 		HookSecret:   "token",
@@ -42,7 +42,8 @@ var fields = []bridge.Field{
 		Key: "token", Label: "Incoming secret", Kind: "secret", Required: true,
 		Help: "A long random string. Programs post JSON such as {\"chat\": \"alerts\", \"text\": \"…\", \"username\": \"Grafana\"} " +
 			"to the bridge's hook URL with the header Authorization: Bearer <secret>, or ?token=<secret> in the URL. " +
-			"Link a room to the chat name they use; without one, the chat is \"default\".",
+			"Link a room to the chat name they use; without one, the chat is \"default\". " +
+			"A reaction is {\"type\": \"reaction\", \"chat\": …, \"target\": \"<message id>\", \"key\": \"👍\", \"user_id\": …}, with \"removed\": true to take it back.",
 	},
 	{
 		Key: "url", Label: "Outgoing URL", Kind: "text", Placeholder: "https://…",
@@ -50,7 +51,7 @@ var fields = []bridge.Field{
 	},
 	{
 		Key: "format", Label: "Outgoing format", Kind: "text", Placeholder: "say",
-		Help: "say (JSON with chat, sender, text and event_id; edits too), slack (a Slack or Mattermost incoming webhook) " +
+		Help: "say (JSON with chat, sender, text and event_id; edits and reactions too), slack (a Slack or Mattermost incoming webhook) " +
 			"or discord (a Discord webhook).",
 	},
 	{
@@ -85,8 +86,10 @@ func parseConfig(raw json.RawMessage) (config, error) {
 }
 
 // incoming is a message posted to the hook. Text may also come as
-// content, as Discord webhooks name it.
+// content, as Discord webhooks name it. Type "reaction" makes it a
+// reaction to the message Target instead.
 type incoming struct {
+	Type     string `json:"type"`
 	Chat     string `json:"chat"`
 	ID       string `json:"id"`
 	Text     string `json:"text"`
@@ -96,6 +99,9 @@ type incoming struct {
 	ReplyTo  string `json:"reply_to"`
 	Edit     bool   `json:"edit"`
 	Time     string `json:"time"`
+	Target   string `json:"target"`
+	Key      string `json:"key"`
+	Removed  bool   `json:"removed"`
 }
 
 // hook reads a request to the hook URL.
@@ -115,6 +121,20 @@ func hook(b bridge.Info, r *http.Request) ([]bridge.Incoming, error) {
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		return nil, errors.New("the body is not a JSON object")
 	}
+	chat := in.Chat
+	if chat == "" {
+		chat = r.URL.Query().Get("chat")
+	}
+	if chat == "" {
+		chat = "default"
+	}
+	switch in.Type {
+	case "", "message":
+	case "reaction":
+		return reaction(chat, in)
+	default:
+		return nil, fmt.Errorf("unknown type %q", in.Type)
+	}
 	text := strings.TrimSpace(in.Text)
 	if text == "" {
 		text = strings.TrimSpace(in.Content)
@@ -125,17 +145,10 @@ func hook(b bridge.Info, r *http.Request) ([]bridge.Incoming, error) {
 	if len(text) > 64<<10 {
 		return nil, errors.New("text is longer than 64 KiB")
 	}
-	chat := in.Chat
-	if chat == "" {
-		chat = r.URL.Query().Get("chat")
-	}
-	if chat == "" {
-		chat = "default"
-	}
 	m := bridge.Incoming{
 		Chat:    bridge.RemoteChat{ID: chat, Name: chat},
 		ID:      in.ID,
-		Author:  bridge.Author{ID: in.UserID, Name: in.Username},
+		Author:  author(in),
 		Text:    text,
 		Edit:    in.Edit,
 		ReplyTo: in.ReplyTo,
@@ -147,20 +160,50 @@ func hook(b bridge.Info, r *http.Request) ([]bridge.Incoming, error) {
 		// Without an id, a repeat can't be told apart.
 		m.ID = core.NewID()
 	}
-	if m.Author.Name == "" {
-		m.Author.Name = "Webhook"
-	}
-	if m.Author.ID == "" {
-		m.Author.ID = m.Author.Name
-	}
-	if in.Time != "" {
-		t, err := time.Parse(time.RFC3339, in.Time)
-		if err != nil {
-			return nil, errors.New("time is not RFC 3339")
-		}
-		m.Time = t
+	if m.Time, err = sentAt(in); err != nil {
+		return nil, err
 	}
 	return []bridge.Incoming{m}, nil
+}
+
+// reaction reads a reaction posted to the hook.
+func reaction(chat string, in incoming) ([]bridge.Incoming, error) {
+	if in.Target == "" || in.Key == "" {
+		return nil, errors.New("a reaction needs a target and a key")
+	}
+	m := bridge.Incoming{
+		Chat:     bridge.RemoteChat{ID: chat, Name: chat},
+		ID:       in.ID,
+		Author:   author(in),
+		Reaction: &bridge.IncomingReaction{Target: in.Target, Key: in.Key, Removed: in.Removed},
+	}
+	var err error
+	if m.Time, err = sentAt(in); err != nil {
+		return nil, err
+	}
+	return []bridge.Incoming{m}, nil
+}
+
+func author(in incoming) bridge.Author {
+	a := bridge.Author{ID: in.UserID, Name: in.Username}
+	if a.Name == "" {
+		a.Name = "Webhook"
+	}
+	if a.ID == "" {
+		a.ID = a.Name
+	}
+	return a
+}
+
+func sentAt(in incoming) (time.Time, error) {
+	if in.Time == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, in.Time)
+	if err != nil {
+		return time.Time{}, errors.New("time is not RFC 3339")
+	}
+	return t, nil
 }
 
 func open(b bridge.Info, h bridge.Host) (bridge.Conn, error) {
@@ -213,6 +256,15 @@ func (c *conn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string) err
 	}
 	_, err := c.post(ctx, map[string]any{"type": "edit", "chat": m.Chat, "event_id": m.EventID, "remote_id": remoteID, "sender": m.Sender, "text": m.Text})
 	return err
+}
+
+// React sends a reaction in the say format; the others have none.
+func (c *conn) React(ctx context.Context, r bridge.Reaction) (string, error) {
+	if c.cfg.URL == "" || c.cfg.Format != "say" {
+		return "", nil
+	}
+	_, err := c.post(ctx, map[string]any{"type": "reaction", "chat": r.Chat, "event_id": r.EventID, "target": r.Target, "key": r.Key, "removed": r.Removed})
+	return "", err
 }
 
 // post sends body to the outgoing URL and returns the id the answer

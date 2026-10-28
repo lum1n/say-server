@@ -16,20 +16,23 @@ import (
 // from the goroutine that completes its Sends: it waits for a send in
 // progress on the same chat.
 func (i *instance) Receive(ctx context.Context, in Incoming) error {
-	if in.Chat.ID == "" || in.ID == "" {
+	if in.Chat.ID == "" || in.ID == "" && in.Reaction == nil {
 		return errors.New("bridge: an incoming message needs a chat and an id")
 	}
 	if in.Author.Self && i.b.Mode == store.ModeBot {
 		// The bot's own relays.
 		return nil
 	}
-	l, ok, err := i.link(ctx, in.Chat, !in.Edit)
+	l, ok, err := i.link(ctx, in.Chat, !in.Edit && in.Reaction == nil)
 	if err != nil || !ok {
 		return err
 	}
 	defer i.lock(l.ID)()
 	if in.Edit {
 		return i.receiveEdit(ctx, l, in)
+	}
+	if in.Reaction != nil {
+		return i.receiveReaction(ctx, l, in)
 	}
 	if in.Author.Self && i.net.Idempotent {
 		if err := i.checkPending(ctx, l, in.ID); err != nil {
@@ -99,6 +102,62 @@ func (i *instance) replyTarget(ctx context.Context, l store.BridgeLink, remoteID
 		return "", err
 	}
 	return e.ID, nil
+}
+
+// receiveReaction takes in a reaction from the network. It is recorded as
+// received on the link, so it is not sent back; a reaction to a message say
+// never saw is ignored.
+func (i *instance) receiveReaction(ctx context.Context, l store.BridgeLink, in Incoming) error {
+	r := in.Reaction
+	target, key := "", r.Key
+	var err error
+	switch {
+	case r.Target != "":
+		if target, err = i.replyTarget(ctx, l, r.Target); err != nil {
+			return err
+		}
+	case r.Removed && in.ID != "":
+		// Taken back by the reaction's own id.
+		row, err := i.c.Store.BridgeMessageByRemote(ctx, l.ID, in.ID)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		added, err := i.c.Store.GetEvent(ctx, row.EventID)
+		if errors.Is(err, store.ErrNotFound) || err == nil && added.Reaction == nil {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		target, key = added.Reacts, added.Reaction.Key
+	}
+	if target == "" || key == "" {
+		return nil
+	}
+	as, err := i.author(ctx, l, in.Author)
+	if err != nil {
+		return err
+	}
+	eventID := core.NewID()
+	remoteID := in.ID
+	if r.Removed {
+		remoteID = ""
+	}
+	ok, err := i.c.Store.StartBridgeMessage(ctx, store.BridgeMessage{
+		LinkID: l.ID, EventID: eventID, RemoteID: remoteID, Direction: store.BridgeIn, State: store.BridgeSent, CreatedAt: time.Now(),
+	})
+	if err != nil || !ok {
+		return err
+	}
+	at := in.Time
+	if at.IsZero() || at.After(time.Now()) {
+		at = time.Now()
+	}
+	_, err = i.c.Chat.ReactAs(ctx, as, l.RoomID, eventID, target, key, r.Removed, at)
+	return err
 }
 
 // checkPending returns ErrPending if the own message remoteID is new to

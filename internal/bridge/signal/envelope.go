@@ -41,7 +41,7 @@ type envelope struct {
 type dataMessage struct {
 	Timestamp    int64           `json:"timestamp"`
 	Message      string          `json:"message"`
-	Reaction     json.RawMessage `json:"reaction"`
+	Reaction     *reaction       `json:"reaction"`
 	RemoteDelete json.RawMessage `json:"remoteDelete"`
 	Sticker      json.RawMessage `json:"sticker"`
 	Quote        *quote          `json:"quote"`
@@ -69,6 +69,17 @@ type sentMessage struct {
 	dataMessage
 }
 
+// reaction is an emoji put on, or taken off, the message its target
+// author sent at TargetSentTimestamp.
+type reaction struct {
+	Emoji               string `json:"emoji"`
+	TargetAuthor        string `json:"targetAuthor"`
+	TargetAuthorNumber  string `json:"targetAuthorNumber"`
+	TargetAuthorUUID    string `json:"targetAuthorUuid"`
+	TargetSentTimestamp int64  `json:"targetSentTimestamp"`
+	IsRemove            bool   `json:"isRemove"`
+}
+
 type quote struct {
 	ID           int64  `json:"id"`
 	Author       string `json:"author"`
@@ -90,8 +101,8 @@ type attachment struct {
 	Filename    string `json:"filename"`
 }
 
-// incoming turns an envelope into a message for the core; false skips
-// it: receipts, typing, reactions, deletes, stories and group updates.
+// incoming turns an envelope into a message or a reaction for the core;
+// false skips it: receipts, typing, deletes, stories and group updates.
 func (c *conn) incoming(ctx context.Context, env *envelope) (bridge.Incoming, bool) {
 	var (
 		dm     *dataMessage
@@ -120,15 +131,27 @@ func (c *conn) incoming(ctx context.Context, env *envelope) (bridge.Incoming, bo
 	default:
 		return bridge.Incoming{}, false
 	}
-	if dm == nil || dm.Reaction != nil || dm.RemoteDelete != nil {
+	if dm == nil || dm.RemoteDelete != nil || dm.Reaction != nil && target != 0 {
 		return bridge.Incoming{}, false
 	}
 	if !self && c.isSelf(env.SourceUUID, env.SourceNumber) {
 		self = true
 	}
 
-	in := bridge.Incoming{Text: c.render(ctx, dm)}
-	if in.Text == "" {
+	var in bridge.Incoming
+	if r := dm.Reaction; r != nil {
+		// Signal gives a reaction no id of its own: it is named by its
+		// target and emoji.
+		author := c.authorKey(ctx, r.TargetAuthorUUID, first(r.TargetAuthorNumber, r.TargetAuthor))
+		if author == "" || r.TargetSentTimestamp == 0 || r.Emoji == "" {
+			return bridge.Incoming{}, false
+		}
+		in.Reaction = &bridge.IncomingReaction{
+			Target:  author + ":" + strconv.FormatInt(r.TargetSentTimestamp, 10),
+			Key:     r.Emoji,
+			Removed: r.IsRemove,
+		}
+	} else if in.Text = c.render(ctx, dm); in.Text == "" {
 		return bridge.Incoming{}, false
 	}
 	if self {
@@ -155,6 +178,9 @@ func (c *conn) incoming(ctx context.Context, env *envelope) (bridge.Incoming, bo
 		return bridge.Incoming{}, false
 	}
 	in.Time = time.UnixMilli(ts)
+	if in.Reaction != nil {
+		return in, true
+	}
 	if target != 0 {
 		in.Edit = true
 		in.ID = in.Author.ID + ":" + strconv.FormatInt(target, 10)

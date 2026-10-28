@@ -575,8 +575,10 @@ class RoomBridge(TypedDict):
     state: BridgeState
     capabilities: NotRequired[list[str]]
     """
-    What the network carries, such as `replies`. Clients offer
-    replies only in rooms whose bridges all carry them.
+    What the network carries, such as `replies` and `reactions`.
+    Clients offer each only in rooms whose bridges all carry it. A
+    relay bot (bot mode) leaves out `reactions`: it doesn't react
+    for each person.
 
     """
 
@@ -695,43 +697,30 @@ class ToolCallPartData(TypedDict):
     """
 
 
-class Event(TypedDict):
-    id: str
+class ReactionChange(TypedDict):
+    """
+    What a reaction event does to its message.
+    """
+
+    key: str
+    removed: NotRequired[bool]
+    """
+    The sender took the reaction back.
+    """
+
+
+class Reactions(TypedDict):
+    key: str
+    senders: list[str]
+    """
+    Who reacted with this key, oldest first.
+    """
+
+
+class WsReact(TypedDict):
     room_id: str
-    seq: int
-    """
-    Position in the room's log; the cursor to resume from.
-    """
-    type: EventType
-    sender_id: str
-    causation: Causation
-    parts: list[Part]
-    stream: NotRequired[StreamState]
-    edits: NotRequired[str]
-    """
-    On an edit event, the message it changed. A message in a page
-    of events already shows its latest parts, so clients may skip
-    edits of messages they loaded after the edit.
-
-    """
-    edited_at: NotRequired[str]
-    """
-    When a final message was last edited.
-    """
-    reply_to: NotRequired[str]
-    """
-    The message in this room this one answers, shown as a quote.
-    Unlike `causation.caused_by` it is only set when the sender
-    chose to reply.
-
-    """
-    client_key: NotRequired[str]
-    """
-    The idempotency key the sender sent the message with, so a
-    client can match its pending send to the event.
-
-    """
-    created_at: str
+    event_id: str
+    key: str
 
 
 class SendMessage(TypedDict):
@@ -997,6 +986,57 @@ class EmbedSession(TypedDict):
     """
     The visitor's access token. Send it as a bearer token and, on /ws, as a subprotocol.
     """
+
+
+class Event(TypedDict):
+    id: str
+    room_id: str
+    seq: int
+    """
+    Position in the room's log; the cursor to resume from.
+    """
+    type: EventType
+    sender_id: str
+    causation: Causation
+    parts: list[Part]
+    stream: NotRequired[StreamState]
+    edits: NotRequired[str]
+    """
+    On an edit event, the message it changed. A message in a page
+    of events already shows its latest parts, so clients may skip
+    edits of messages they loaded after the edit.
+
+    """
+    edited_at: NotRequired[str]
+    """
+    When a final message was last edited.
+    """
+    reply_to: NotRequired[str]
+    """
+    The message in this room this one answers, shown as a quote.
+    Unlike `causation.caused_by` it is only set when the sender
+    chose to reply.
+
+    """
+    client_key: NotRequired[str]
+    """
+    The idempotency key the sender sent the message with, so a
+    client can match its pending send to the event.
+
+    """
+    reacts: NotRequired[str]
+    """
+    On a reaction event, the message it changes.
+    """
+    reaction: NotRequired[ReactionChange]
+    reactions: NotRequired[list[Reactions]]
+    """
+    On a message in a page of events or the socket's backlog, its
+    reactions as they were when it was read; fold later reaction
+    events into them. Left out when it has none.
+
+    """
+    created_at: str
 
 
 class WsHelloReply(TypedDict):

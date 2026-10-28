@@ -111,6 +111,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/rooms/{id}/events/{event_id}", s.authed(s.getEvent))
 	mux.HandleFunc("POST /api/v1/rooms/{id}/messages", s.authed(s.postMessage))
 	mux.HandleFunc("PATCH /api/v1/rooms/{id}/messages/{event_id}", s.authed(s.patchMessage))
+	mux.HandleFunc("PUT /api/v1/rooms/{id}/messages/{event_id}/reactions/{key}", s.authed(s.putReaction))
+	mux.HandleFunc("DELETE /api/v1/rooms/{id}/messages/{event_id}/reactions/{key}", s.authed(s.deleteReaction))
 	mux.HandleFunc("GET /api/v1/ws", s.authed(s.ws))
 	mux.HandleFunc("GET /api/v1/builtin-agents", s.authed(s.listBuiltinAgents))
 	mux.HandleFunc("POST /api/v1/builtin-agents", s.authed(s.createBuiltinAgent))

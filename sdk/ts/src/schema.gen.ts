@@ -486,6 +486,42 @@ export interface paths {
         patch: operations["editMessage"];
         trace?: never;
     };
+    "/rooms/{id}/messages/{event_id}/reactions/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                event_id: string;
+                /**
+                 * @description One emoji (a single grapheme, modifiers and joins included) or a
+                 *     `:shortcode:` of lowercase letters, digits, `_`, `+` and `-`; at
+                 *     most 64 bytes. URL-escape it.
+                 */
+                key: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * React to a message
+         * @description Adds your reaction. Adding it again changes nothing and logs
+         *     nothing. A message takes at most 20 kinds of reaction; a new one
+         *     past that is 422 with code too_many. Automated senders count
+         *     against the room's agent limits.
+         */
+        put: operations["addReaction"];
+        post?: never;
+        /**
+         * Take a reaction back
+         * @description Removing a reaction you don't have changes nothing.
+         */
+        delete: operations["removeReaction"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ws": {
         parameters: {
             query?: never;
@@ -506,6 +542,8 @@ export interface paths {
          *     - `unsubscribe`: `WsUnsubscribe`.
          *     - `send`: `WsSend`; the reply payload is the `Event`.
          *     - `edit`: `WsEdit`; the reply payload is the message as it now is.
+         *     - `react`, `unreact`: `WsReact`; as PUT and DELETE
+         *       /rooms/{id}/messages/{event_id}/reactions/{key}.
          *     - `ping`: no payload.
          *     - `hello`: `WsHello`; opens a bot session (below). The reply
          *       payload is `WsHelloReply`.
@@ -1568,8 +1606,10 @@ export interface components {
             remote_name: string;
             state: components["schemas"]["BridgeState"];
             /**
-             * @description What the network carries, such as `replies`. Clients offer
-             *     replies only in rooms whose bridges all carry them.
+             * @description What the network carries, such as `replies` and `reactions`.
+             *     Clients offer each only in rooms whose bridges all carry it. A
+             *     relay bot (bot mode) leaves out `reactions`: it doesn't react
+             *     for each person.
              */
             capabilities?: string[];
         };
@@ -1697,8 +1737,33 @@ export interface components {
              *     client can match its pending send to the event.
              */
             client_key?: string;
+            /** @description On a reaction event, the message it changes. */
+            reacts?: string;
+            reaction?: components["schemas"]["ReactionChange"];
+            /**
+             * @description On a message in a page of events or the socket's backlog, its
+             *     reactions as they were when it was read; fold later reaction
+             *     events into them. Left out when it has none.
+             */
+            reactions?: components["schemas"]["Reactions"][];
             /** Format: date-time */
             created_at: string;
+        };
+        /** @description What a reaction event does to its message. */
+        ReactionChange: {
+            key: string;
+            /** @description The sender took the reaction back. */
+            removed?: boolean;
+        };
+        Reactions: {
+            key: string;
+            /** @description Who reacted with this key, oldest first. */
+            senders: string[];
+        };
+        WsReact: {
+            room_id: string;
+            event_id: string;
+            key: string;
         };
         SendMessage: {
             /** @description At least one part, unless the message starts streaming. */
@@ -2547,6 +2612,73 @@ export interface operations {
                     "application/json": components["schemas"]["Error"];
                 };
             };
+            422: components["responses"]["Error"];
+        };
+    };
+    addReaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                event_id: string;
+                /**
+                 * @description One emoji (a single grapheme, modifiers and joins included) or a
+                 *     `:shortcode:` of lowercase letters, digits, `_`, `+` and `-`; at
+                 *     most 64 bytes. URL-escape it.
+                 */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The message, with its reactions as they now are */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            429: components["responses"]["Error"];
+        };
+    };
+    removeReaction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                event_id: string;
+                /**
+                 * @description One emoji (a single grapheme, modifiers and joins included) or a
+                 *     `:shortcode:` of lowercase letters, digits, `_`, `+` and `-`; at
+                 *     most 64 bytes. URL-escape it.
+                 */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The message, with its reactions as they now are */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"];
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
             422: components["responses"]["Error"];
         };
     };

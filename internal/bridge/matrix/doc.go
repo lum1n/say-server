@@ -5,7 +5,9 @@
 // owner (or uses an access token they give), long-polls /sync, and sends
 // messages with transaction ids, so a send that is tried twice is still one
 // message. Each joined room becomes a say room; the room id is the chat id
-// and the event id is the message id.
+// and the event id is the message id. Reactions are m.reaction annotations
+// keyed by their own event id, so taking one back, a redaction on Matrix,
+// finds it again.
 //
 // Encrypted rooms are not readable yet: their messages arrive as a
 // placeholder.

@@ -762,3 +762,55 @@ func TestSQLitePlaceholders(t *testing.T) {
 		}
 	}
 }
+
+func TestReact(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		p, r := seed(t, s)
+		msg, err := s.AppendEvent(ctx, core.Event{RoomID: r.ID, Type: core.EventMessage, SenderID: p.ID, Parts: text("hi"), Stream: core.StreamFinal}, AppendOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		react := func(key string, removed bool) (core.Event, bool) {
+			t.Helper()
+			e, changed, err := s.React(ctx, core.Event{RoomID: r.ID, SenderID: p.ID, Reacts: msg.ID, Reaction: &core.ReactionChange{Key: key, Removed: removed}}, AppendOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return e, changed
+		}
+		e, changed := react("👍", false)
+		if !changed || e.Seq != msg.Seq+1 || e.Type != core.EventReaction {
+			t.Fatalf("first add = %+v, %v", e, changed)
+		}
+		if _, changed := react("👍", false); changed {
+			t.Fatal("a repeated add changed something")
+		}
+		if _, changed := react("👎", true); changed {
+			t.Fatal("removing a missing reaction changed something")
+		}
+		got, err := s.EventsAfter(ctx, r.ID, 0, 10)
+		if err != nil || len(got) != 2 {
+			t.Fatalf("log = %+v, %v", got, err)
+		}
+		if rs := got[0].Reactions; len(rs) != 1 || rs[0].Key != "👍" || rs[0].Senders[0] != p.ID {
+			t.Fatalf("aggregate = %+v", rs)
+		}
+		if got[1].Reacts != msg.ID || got[1].Reaction == nil || got[1].Reaction.Key != "👍" || got[1].Reaction.Removed {
+			t.Fatalf("reaction event = %+v", got[1])
+		}
+		if add, err := s.LastReactionAdd(ctx, msg.ID, p.ID, "👍"); err != nil || add.ID != e.ID {
+			t.Fatalf("last add = %+v, %v", add, err)
+		}
+		if _, changed := react("👍", true); !changed {
+			t.Fatal("removal changed nothing")
+		}
+		if m, err := s.GetEvent(ctx, msg.ID); err != nil || len(m.Reactions) != 0 {
+			t.Fatalf("after removal = %+v, %v", m.Reactions, err)
+		}
+		// Only messages take reactions.
+		if _, _, err := s.React(ctx, core.Event{RoomID: r.ID, SenderID: p.ID, Reacts: e.ID, Reaction: &core.ReactionChange{Key: "x"}}, AppendOptions{}); !errors.Is(err, ErrNotReactable) {
+			t.Fatalf("reaction to a reaction = %v", err)
+		}
+	})
+}

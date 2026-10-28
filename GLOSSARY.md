@@ -63,6 +63,12 @@
 : `caused_by` (the event that triggered this one) and `hop_count` (how many
   automated hops separate it from a human). Used to stop agent loops.
 
+**Reaction**
+: One emoji (or a network's `:shortcode:`) a sender puts on a message. A
+  message keeps its reactions as they now are; each change is also a
+  `reaction` event in the log. Adding one twice, or taking back one that
+  isn't there, changes nothing.
+
 **Reply**
 : A message that answers an earlier one in the same room, named in its
   `reply_to` and shown as a quote. Separate from the causation chain: an

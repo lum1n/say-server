@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -105,6 +106,9 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		id := f.nextID
 		f.mu.Unlock()
 		write(w, 200, map[string]any{"ok": true, "result": map[string]any{"message_id": id}})
+	case "setMessageReaction":
+		f.mu.Unlock()
+		write(w, 200, map[string]any{"ok": true, "result": true})
 	case "editMessageText":
 		f.mu.Unlock()
 		write(w, 200, map[string]any{"ok": true, "result": map[string]any{"message_id": params["message_id"]}})
@@ -305,7 +309,7 @@ func TestRun(t *testing.T) {
 		t.Errorf("channel post = %+v", got[3])
 	}
 	gu := f.callsOf("getUpdates")[0].params
-	if gu["timeout"] != float64(50) || len(gu["allowed_updates"].([]any)) != 4 {
+	if gu["timeout"] != float64(50) || len(gu["allowed_updates"].([]any)) != 5 {
 		t.Errorf("getUpdates params = %v", gu)
 	}
 }
@@ -506,6 +510,50 @@ func TestEdit(t *testing.T) {
 	p := f.callsOf("editMessageText")[1].params
 	if p["message_id"] != float64(55) || p["text"] != "<b>Ada</b>: fixed &amp; done" || p["parse_mode"] != "HTML" {
 		t.Errorf("params = %v", p)
+	}
+}
+
+func TestReactions(t *testing.T) {
+	f := newFakeAPI(t)
+	f.push(map[string]any{"update_id": 1, "message_reaction": map[string]any{
+		"chat": group, "message_id": 10, "user": ada(), "date": 1700000000,
+		"old_reaction": []any{map[string]any{"type": "emoji", "emoji": "👍"}, map[string]any{"type": "custom_emoji", "custom_emoji_id": "5"}},
+		"new_reaction": []any{map[string]any{"type": "emoji", "emoji": "🔥"}},
+	}})
+	h := &fakeHost{chats: []string{"-1001"}}
+	c := newConn(t, f, h, "")
+	run(t, c)
+	eventually(t, "the reactions", func() bool { return len(h.received()) == 2 })
+	author := bridge.Author{ID: "7", Name: "Ada Lovelace"}
+	at := time.Unix(1700000000, 0)
+	want := []bridge.Incoming{
+		{Chat: bridge.RemoteChat{ID: "-1001", Name: "Crew"}, Author: author, Time: at, Reaction: &bridge.IncomingReaction{Target: "10", Key: "👍", Removed: true}},
+		{Chat: bridge.RemoteChat{ID: "-1001", Name: "Crew"}, Author: author, Time: at, Reaction: &bridge.IncomingReaction{Target: "10", Key: "🔥"}},
+	}
+	if got := h.received(); !reflect.DeepEqual(got, want) {
+		t.Errorf("got %+v\nwant %+v", got, want)
+	}
+	if !slices.Contains(f.callsOf("getUpdates")[0].params["allowed_updates"].([]any), any("message_reaction")) {
+		t.Errorf("reactions are not asked for")
+	}
+
+	ctx := context.Background()
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "-1001/5", Target: "10", Key: "👍"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "-1001", Target: "10", Key: "👍", Removed: true}); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.callsOf("setMessageReaction")
+	if p := calls[0].params; p["chat_id"] != "-1001" || p["message_id"] != float64(10) || !reflect.DeepEqual(p["reaction"], []any{map[string]any{"type": "emoji", "emoji": "👍"}}) {
+		t.Errorf("add = %v", p)
+	}
+	if p := calls[1].params; !reflect.DeepEqual(p["reaction"], []any{}) {
+		t.Errorf("remove = %v", p)
+	}
+	f.can("setMessageReaction", fail(400, "Bad Request: REACTION_INVALID"))
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "-1001", Target: "10", Key: "🦜"}); !errors.Is(err, bridge.ErrRejected) {
+		t.Errorf("an emoji bots can't use: %v", err)
 	}
 }
 

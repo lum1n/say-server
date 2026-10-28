@@ -42,7 +42,7 @@ func init() {
 			{Key: "device", Label: "Device name", Kind: "text", Placeholder: "this computer's name",
 				Help: "How this device's token is named on home."},
 		},
-		Capabilities: []connector.Capability{connector.CapEdits},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReactions},
 		Idempotent:   true,
 		Open:         open,
 		LogOut:       logOut,
@@ -279,6 +279,17 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 	return e.ID, nil
 }
 
+// React adds or takes back the owner's reaction on home, where the
+// message's remote id is its event id.
+func (c *conn) React(ctx context.Context, r bridge.Reaction) (string, error) {
+	cl, err := c.connected()
+	if err != nil {
+		return "", err
+	}
+	_, err = cl.React(ctx, r.Chat, r.Target, r.Key, r.Removed)
+	return "", classify(err)
+}
+
 // Edit changes the owner's message on home.
 func (c *conn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string) error {
 	cl, err := c.connected()
@@ -483,9 +494,24 @@ func (s *session) stall(ctx context.Context, roomID string) {
 }
 
 // incoming converts a home event to a message for the bridge: a final
-// message, the end of a stream, or an edit. Typing, streaming frames and
-// the rest are not synced.
+// message, the end of a stream, an edit, or a reaction. Typing, streaming
+// frames and the rest are not synced.
 func (s *session) incoming(ctx context.Context, e client.Event) (bridge.Incoming, bool) {
+	author := func() bridge.Author {
+		return bridge.Author{ID: e.SenderID, Name: s.name(ctx, e.SenderID), Self: e.SenderID == s.me.ID}
+	}
+	if e.Type == string(core.EventReaction) {
+		if e.Reaction == nil || e.Reacts == "" {
+			return bridge.Incoming{}, false
+		}
+		// Reactions have no remote id of their own: their message names them.
+		return bridge.Incoming{
+			Chat:     s.chats[e.RoomID],
+			Author:   author(),
+			Time:     e.CreatedAt,
+			Reaction: &bridge.IncomingReaction{Target: e.Reacts, Key: e.Reaction.Key, Removed: e.Reaction.Removed},
+		}, true
+	}
 	parts := fromHome(e.Parts)
 	if len(parts) == 0 {
 		return bridge.Incoming{}, false
@@ -493,7 +519,7 @@ func (s *session) incoming(ctx context.Context, e client.Event) (bridge.Incoming
 	in := bridge.Incoming{
 		Chat:   s.chats[e.RoomID],
 		ID:     e.ID,
-		Author: bridge.Author{ID: e.SenderID, Name: s.name(ctx, e.SenderID), Self: e.SenderID == s.me.ID},
+		Author: author(),
 		Parts:  parts,
 		Time:   e.CreatedAt,
 		// Home's ids are the remote ids, so a reply's target is found.

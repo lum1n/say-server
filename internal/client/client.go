@@ -81,17 +81,27 @@ type Member struct {
 // the message an edit changes, and a message's Parts are its latest
 // content.
 type Event struct {
-	ID        string     `json:"id"`
-	RoomID    string     `json:"room_id"`
-	Seq       int64      `json:"seq"`
-	Type      string     `json:"type"`
-	SenderID  string     `json:"sender_id"`
-	Parts     []Part     `json:"parts"`
-	Stream    string     `json:"stream,omitempty"`
-	Edits     string     `json:"edits,omitempty"`
-	EditedAt  *time.Time `json:"edited_at,omitempty"`
-	ReplyTo   string     `json:"reply_to,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
+	ID       string     `json:"id"`
+	RoomID   string     `json:"room_id"`
+	Seq      int64      `json:"seq"`
+	Type     string     `json:"type"`
+	SenderID string     `json:"sender_id"`
+	Parts    []Part     `json:"parts"`
+	Stream   string     `json:"stream,omitempty"`
+	Edits    string     `json:"edits,omitempty"`
+	EditedAt *time.Time `json:"edited_at,omitempty"`
+	ReplyTo  string     `json:"reply_to,omitempty"`
+	// Reacts is the message a reaction event changes, and Reaction how.
+	Reacts    string    `json:"reacts,omitempty"`
+	Reaction  *Reaction `json:"reaction,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Reaction is what a reaction event does: add its sender's Key, or take it
+// back.
+type Reaction struct {
+	Key     string `json:"key"`
+	Removed bool   `json:"removed,omitempty"`
 }
 
 // Part is a typed piece of a message; Data is its kind's JSON body.
@@ -267,6 +277,17 @@ func (c *Client) Edit(ctx context.Context, roomID, eventID string, parts []Part)
 	var e Event
 	return e, c.do(ctx, "PATCH", "/rooms/"+url.PathEscape(roomID)+"/messages/"+url.PathEscape(eventID),
 		map[string]any{"parts": parts}, &e)
+}
+
+// React adds the client's reaction key to a message, or takes it back
+// when removed, and returns the message as it now is. Both are idempotent.
+func (c *Client) React(ctx context.Context, roomID, eventID, key string, removed bool) (Event, error) {
+	method := "PUT"
+	if removed {
+		method = "DELETE"
+	}
+	var e Event
+	return e, c.do(ctx, method, "/rooms/"+url.PathEscape(roomID)+"/messages/"+url.PathEscape(eventID)+"/reactions/"+url.PathEscape(key), nil, &e)
 }
 
 // Device is a token for one of a person's devices, from Pair.

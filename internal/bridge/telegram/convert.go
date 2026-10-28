@@ -22,6 +22,9 @@ import (
 type receiver struct {
 	st *saved
 	q  *queue
+
+	mu   sync.Mutex
+	seen map[string]reactionState // chat/message → its reactions, see reactions.go
 }
 
 // Handle implements telegram.UpdateHandler. The update manager hands it
@@ -50,8 +53,17 @@ func (r *receiver) Handle(_ context.Context, u tg.UpdatesClass) error {
 			msg, edit = upd.Message, true
 		case *tg.UpdateEditChannelMessage:
 			msg, edit = upd.Message, true
+		case *tg.UpdateMessageReactions:
+			r.reactions(upd.Peer, upd.MsgID, upd.Reactions)
+			continue
 		default:
 			continue
+		}
+		// In private chats a change of reactions comes as an edit.
+		if m, ok := msg.(*tg.Message); ok && edit && m.PeerID != nil {
+			if list, ok := m.GetReactions(); ok {
+				r.reactions(m.PeerID, m.ID, list)
+			}
 		}
 		if in, ok := incoming(r.st, msg); ok {
 			in.Edit = edit

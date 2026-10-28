@@ -327,9 +327,25 @@ func TestReceive(t *testing.T) {
 		t.Fatalf("got %+v\nwant %+v", m, want)
 	}
 
-	// Typing, receipts and reactions are skipped.
+	// Typing is skipped, and so is a reaction that names no author.
 	r.push(`{"sourceUuid":"u-bob","timestamp":1001,"typingMessage":{"action":"STARTED"}}`)
 	r.push(`{"sourceUuid":"u-bob","timestamp":1002,"dataMessage":{"timestamp":1002,"reaction":{"emoji":"👍","targetSentTimestamp":1000}}}`)
+
+	// Bob reacts to one of the account's messages, then takes it back.
+	for i, remove := range []bool{false, true} {
+		r.push(fmt.Sprintf(`{"sourceUuid":"u-bob","timestamp":%d,"dataMessage":{"timestamp":%d,
+			"reaction":{"emoji":"👍","targetAuthorUuid":"u-me","targetAuthorNumber":"+4700000001","targetSentTimestamp":900,"isRemove":%t}}}`, 1003+i, 1003+i, remove))
+		m = r.next()
+		want = bridge.Incoming{
+			Chat:     bridge.RemoteChat{ID: "user:u-bob", Name: "Bob", Direct: true},
+			Author:   bridge.Author{ID: "u-bob", Name: "Bob"},
+			Time:     time.UnixMilli(int64(1003 + i)),
+			Reaction: &bridge.IncomingReaction{Target: fakeNumber + ":900", Key: "👍", Removed: remove},
+		}
+		if !equal(m, want) || m.Reaction == nil || *m.Reaction != *want.Reaction {
+			t.Fatalf("reaction %d: got %+v\nwant %+v", i, m, want)
+		}
+	}
 
 	// A group message, quoting one of the account's own.
 	r.push(`{"sourceUuid":"u-bob","sourceNumber":"+4711111111","timestamp":2000,
@@ -419,6 +435,14 @@ func TestSend(t *testing.T) {
 	}
 	if s := sends[2]; s["editTimestamp"] != float64(1700000000001) || s["message"] != "hi!" {
 		t.Fatalf("edit %v", s)
+	}
+
+	if _, err := r.c.React(ctx, bridge.Reaction{Chat: "group:g1", Target: "u-bob:2000", Key: "❤️", Removed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if rs := r.requests("sendReaction"); len(rs) != 1 || rs[0]["groupId"] != "g1" || rs[0]["emoji"] != "❤️" ||
+		rs[0]["targetAuthor"] != "u-bob" || rs[0]["targetTimestamp"] != float64(2000) || rs[0]["remove"] != true || rs[0]["message"] != nil {
+		t.Fatalf("reactions %v", rs)
 	}
 
 	if _, err := r.c.Send(ctx, bridge.Outgoing{Chat: "user:u-gone", Text: "hi"}); !errors.Is(err, bridge.ErrRejected) {

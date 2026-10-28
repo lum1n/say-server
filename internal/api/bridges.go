@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -571,7 +572,13 @@ func (s *Server) roomBridges(ctx context.Context, roomID string) ([]wireRoomBrid
 			name = l.RemoteID
 		}
 		n, _ := bridge.Lookup(b.Network)
-		out = append(out, wireRoomBridge{BridgeID: b.ID, Network: b.Network, Name: b.Name, Mode: b.Mode, RemoteName: name, State: bridgeState(b, now), Capabilities: capNames(n.Capabilities)})
+		caps := n.Capabilities
+		if b.Mode == store.ModeBot {
+			// A relay bot reacts as itself, not for each person, so it
+			// doesn't send reactions out.
+			caps = slices.DeleteFunc(slices.Clone(caps), func(c connector.Capability) bool { return c == connector.CapReactions })
+		}
+		out = append(out, wireRoomBridge{BridgeID: b.ID, Network: b.Network, Name: b.Name, Mode: b.Mode, RemoteName: name, State: bridgeState(b, now), Capabilities: capNames(caps)})
 	}
 	return out, nil
 }
@@ -609,6 +616,18 @@ func (s *Server) deliveries(ctx context.Context, roomID string, from, to int64) 
 
 // SendAs is how bridges write: the same send path as every client, with
 // the event's id and time chosen by the bridge.
+// ReactAs is how bridges react: the same path as clients. A reaction say
+// does not take, such as a key it does not allow, is dropped and logged.
+func (s *Server) ReactAs(ctx context.Context, as core.Principal, roomID, id, target, key string, removed bool, at time.Time) (bool, error) {
+	_, changed, err := s.react(ctx, as, roomID, target, key, removed, id, at)
+	var ae *apiError
+	if errors.As(err, &ae) && ae.Status < 500 && ae.Status != http.StatusTooManyRequests {
+		slog.Info("bridged reaction dropped", "room", roomID, "key", key, "err", err)
+		return false, nil
+	}
+	return changed, err
+}
+
 func (s *Server) SendAs(ctx context.Context, as core.Principal, roomID, eventID string, parts []core.Part, replyTo, idempotencyKey string, at time.Time) (core.Event, error) {
 	e, _, err := s.sendAt(ctx, as, roomID, sendMessage{Parts: toWireParts(parts), ReplyTo: replyTo, Stream: core.StreamFinal}, idempotencyKey, eventID, at)
 	return e, err

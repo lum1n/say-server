@@ -1,6 +1,7 @@
 package matrix
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -30,6 +31,7 @@ type content struct {
 type relation struct {
 	RelType   string `json:"rel_type,omitempty"`
 	EventID   string `json:"event_id,omitempty"`
+	Key       string `json:"key,omitempty"` // of an m.annotation: the reaction
 	InReplyTo *struct {
 		EventID string `json:"event_id"`
 	} `json:"m.in_reply_to,omitempty"`
@@ -50,6 +52,8 @@ func (c *conn) incoming(ctx context.Context, roomID string, e event) (bridge.Inc
 		if err := json.Unmarshal(e.Content, &cn); err != nil {
 			return bridge.Incoming{}, false, nil
 		}
+	case "m.reaction", "m.room.redaction":
+		return c.reaction(ctx, roomID, e)
 	default:
 		return bridge.Incoming{}, false, nil
 	}
@@ -92,6 +96,48 @@ func (c *conn) incoming(ctx context.Context, roomID string, e event) (bridge.Inc
 	}
 	in.Text = render(e.Type, cn, name)
 	return in, in.Text != "", nil
+}
+
+// reaction turns an m.reaction annotation into a reaction for say, keyed
+// by its event id, and a redaction into taking back the reaction it
+// removes. A redaction may remove anything; say ignores ids it does not
+// know as reactions.
+func (c *conn) reaction(ctx context.Context, roomID string, e event) (bridge.Incoming, bool, error) {
+	r := &bridge.IncomingReaction{}
+	id := e.ID
+	if e.Type == "m.reaction" {
+		var cn content
+		if json.Unmarshal(e.Content, &cn) != nil || cn.RelatesTo == nil || cn.RelatesTo.RelType != "m.annotation" ||
+			cn.RelatesTo.EventID == "" || cn.RelatesTo.Key == "" {
+			return bridge.Incoming{}, false, nil
+		}
+		r.Target, r.Key = cn.RelatesTo.EventID, cn.RelatesTo.Key
+	} else {
+		var cn struct {
+			Redacts string `json:"redacts"`
+		}
+		json.Unmarshal(e.Content, &cn)
+		id = cmp.Or(e.Redacts, cn.Redacts)
+		if id == "" {
+			return bridge.Incoming{}, false, nil
+		}
+		r.Removed = true
+	}
+	ch, err := c.chat(ctx, roomID)
+	if err != nil {
+		return bridge.Incoming{}, false, err
+	}
+	name, err := c.memberName(ctx, roomID, e.Sender)
+	if err != nil {
+		return bridge.Incoming{}, false, err
+	}
+	return bridge.Incoming{
+		Chat:     ch,
+		ID:       id,
+		Author:   bridge.Author{ID: e.Sender, Name: name, Self: e.Sender == c.self()},
+		Time:     e.time(),
+		Reaction: r,
+	}, true, nil
 }
 
 // render makes plain text of a message: text as it is, and anything else
@@ -178,11 +224,34 @@ func (c *conn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string) err
 	return err
 }
 
+// React annotates a message with the owner's reaction, returning the
+// reaction's event id, or takes one back by redacting the reaction it
+// added. The transaction id is the reaction event's, so a retry is the
+// same reaction.
+func (c *conn) React(ctx context.Context, r bridge.Reaction) (string, error) {
+	if r.Removed {
+		if r.Added == "" {
+			return "", nil
+		}
+		err := c.do(ctx, http.MethodPut, path("rooms", r.Chat, "redact", r.Added, r.EventID), nil, map[string]any{}, nil)
+		if isRefusal(err) {
+			return "", bridge.Rejected(err)
+		}
+		return "", err
+	}
+	cn := map[string]any{"m.relates_to": map[string]string{"rel_type": "m.annotation", "event_id": r.Target, "key": r.Key}}
+	return c.sendEvent(ctx, r.Chat, "m.reaction", r.EventID, cn)
+}
+
 func (c *conn) send(ctx context.Context, roomID, txn string, cn any) (string, error) {
+	return c.sendEvent(ctx, roomID, "m.room.message", txn, cn)
+}
+
+func (c *conn) sendEvent(ctx context.Context, roomID, typ, txn string, cn any) (string, error) {
 	var resp struct {
 		EventID string `json:"event_id"`
 	}
-	err := c.do(ctx, http.MethodPut, path("rooms", roomID, "send", "m.room.message", txn), nil, cn, &resp)
+	err := c.do(ctx, http.MethodPut, path("rooms", roomID, "send", typ, txn), nil, cn, &resp)
 	if isRefusal(err) {
 		return "", bridge.Rejected(err)
 	}

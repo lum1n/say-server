@@ -78,6 +78,9 @@ type event struct {
 	TS       int64           `json:"origin_server_ts"`
 	StateKey *string         `json:"state_key"`
 	Content  json.RawMessage `json:"content"`
+	// Redacts is the event a redaction removes; rooms of version 11 and
+	// later put it in the content instead.
+	Redacts string `json:"redacts"`
 }
 
 func (e event) time() time.Time { return time.UnixMilli(e.TS) }

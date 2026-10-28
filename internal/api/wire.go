@@ -127,8 +127,24 @@ type wireEvent struct {
 	ReplyTo string `json:"reply_to,omitempty"`
 	// ClientKey is the idempotency key the sender sent the event with, so
 	// a client can match its own pending send to the event.
-	ClientKey string    `json:"client_key,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ClientKey string `json:"client_key,omitempty"`
+	// Reacts is the message a reaction event changes, and Reaction how.
+	Reacts   string        `json:"reacts,omitempty"`
+	Reaction *wireReaction `json:"reaction,omitempty"`
+	// Reactions are a message's reactions as they are now, on messages in
+	// pages and the socket's backlog.
+	Reactions []wireReactions `json:"reactions,omitempty"`
+	CreatedAt time.Time       `json:"created_at"`
+}
+
+type wireReaction struct {
+	Key     string `json:"key"`
+	Removed bool   `json:"removed,omitempty"`
+}
+
+type wireReactions struct {
+	Key     string   `json:"key"`
+	Senders []string `json:"senders"`
 }
 
 func toEvent(e core.Event) wireEvent {
@@ -145,8 +161,29 @@ func toEvent(e core.Event) wireEvent {
 		EditedAt:  optTime(e.EditedAt),
 		ReplyTo:   e.ReplyTo,
 		ClientKey: clientKey(e.IdempotencyKey),
+		Reacts:    e.Reacts,
+		Reaction:  toReaction(e.Reaction),
+		Reactions: toReactions(e.Reactions),
 		CreatedAt: e.CreatedAt.UTC(),
 	}
+}
+
+func toReaction(r *core.ReactionChange) *wireReaction {
+	if r == nil {
+		return nil
+	}
+	return &wireReaction{Key: r.Key, Removed: r.Removed}
+}
+
+func toReactions(rs []core.Reactions) []wireReactions {
+	if len(rs) == 0 {
+		return nil
+	}
+	out := make([]wireReactions, len(rs))
+	for i, r := range rs {
+		out[i] = wireReactions{Key: r.Key, Senders: r.Senders}
+	}
+	return out
 }
 
 // clientKey is the idempotency key a client chose. Bridges key their sends

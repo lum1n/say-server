@@ -9,7 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -652,5 +655,94 @@ func TestResyncWithoutNotification(t *testing.T) {
 	}
 	if env := wsRead(t, c); env.Type != "event" || partText(eventOf(t, env)) != "quiet" {
 		t.Fatalf("resync push = %+v", env)
+	}
+}
+
+func TestReactions(t *testing.T) {
+	e := newEnv(t)
+	bob, bobTok := e.user("Bob", core.PrincipalHuman)
+	obs, obsTok := e.user("Obs", core.PrincipalHuman)
+	_, ada := e.user("Ada", core.PrincipalHuman)
+	r := e.room(ada, "general")
+	e.join(ada, r.ID, bob.ID, core.RoleMember)
+	e.join(ada, r.ID, obs.ID, core.RoleObserver)
+	msg := e.say(ada, r.ID, "lunch?")
+	path := func(key string) string {
+		return "/rooms/" + r.ID + "/messages/" + msg.ID + "/reactions/" + url.PathEscape(key)
+	}
+	seq := func() int64 {
+		var page struct{ Events []wireEvent }
+		e.do("GET", "/rooms/"+r.ID+"/events", ada, nil, &page)
+		return page.Events[len(page.Events)-1].Seq
+	}
+
+	// Putting a reaction twice logs it once; so does taking it back.
+	var got wireEvent
+	for range 2 {
+		if code := e.do("PUT", path("👍🏽"), bobTok, nil, &got); code != 200 {
+			t.Fatalf("put = %d", code)
+		}
+	}
+	if len(got.Reactions) != 1 || got.Reactions[0].Key != "👍🏽" || !slices.Equal(got.Reactions[0].Senders, []string{bob.ID}) {
+		t.Fatalf("reactions = %+v", got.Reactions)
+	}
+	if s := seq(); s != msg.Seq+1 {
+		t.Fatalf("seq after two puts = %d, want %d", s, msg.Seq+1)
+	}
+	e.do("PUT", path(":party_parrot:"), ada, nil, nil)
+	e.do("PUT", path("👍🏽"), ada, nil, nil)
+
+	// Pages carry each message's reactions; the log has the changes.
+	var page struct{ Events []wireEvent }
+	e.do("GET", "/rooms/"+r.ID+"/events", ada, nil, &page)
+	if m := page.Events[0]; len(m.Reactions) != 2 || m.Reactions[0].Key != "👍🏽" || len(m.Reactions[0].Senders) != 2 || m.Reactions[1].Key != ":party_parrot:" {
+		t.Fatalf("listed reactions = %+v", m.Reactions)
+	}
+	if ev := page.Events[1]; ev.Type != core.EventReaction || ev.Reacts != msg.ID || ev.Reaction == nil || ev.Reaction.Key != "👍🏽" || ev.SenderID != bob.ID {
+		t.Fatalf("reaction event = %+v", ev)
+	}
+
+	before := seq()
+	for range 2 {
+		if code := e.do("DELETE", path("👍🏽"), bobTok, nil, &got); code != 200 {
+			t.Fatalf("delete = %d", code)
+		}
+	}
+	if s := seq(); s != before+1 {
+		t.Fatalf("seq after two deletes = %d, want %d", s, before+1)
+	}
+	if len(got.Reactions[0].Senders) != 1 {
+		t.Fatalf("after delete = %+v", got.Reactions)
+	}
+	e.do("GET", "/rooms/"+r.ID+"/events", ada, nil, &page)
+	if ev := page.Events[len(page.Events)-1]; ev.Reaction == nil || !ev.Reaction.Removed {
+		t.Fatalf("removal event = %+v", ev)
+	}
+
+	for _, key := range []string{"ab", "👍👍", " ", ":Nope:", strings.Repeat("x", 65)} {
+		if code := e.do("PUT", path(key), ada, nil, nil); code != 422 {
+			t.Errorf("put %q = %d, want 422", key, code)
+		}
+	}
+	if code := e.do("PUT", path("👍"), obsTok, nil, nil); code != 403 {
+		t.Fatalf("observer put = %d", code)
+	}
+	if code := e.do("PUT", "/rooms/"+r.ID+"/messages/nope/reactions/x", ada, nil, nil); code != 404 {
+		t.Fatalf("put on unknown message = %d", code)
+	}
+	// At most MaxReactionKeys kinds on one message.
+	other := e.say(ada, r.ID, "vote")
+	for i := range store.MaxReactionKeys {
+		key := ":k" + strconv.Itoa(i) + ":"
+		if code := e.do("PUT", "/rooms/"+r.ID+"/messages/"+other.ID+"/reactions/"+key, ada, nil, nil); code != 200 {
+			t.Fatalf("key %d = %d", i, code)
+		}
+	}
+	if code := e.do("PUT", "/rooms/"+r.ID+"/messages/"+other.ID+"/reactions/:one_more:", ada, nil, nil); code != 422 {
+		t.Fatalf("21st key = %d", code)
+	}
+	// An existing key is still fine.
+	if code := e.do("PUT", "/rooms/"+r.ID+"/messages/"+other.ID+"/reactions/:k0:", bobTok, nil, nil); code != 200 {
+		t.Fatalf("existing key past the limit = %d", code)
 	}
 }

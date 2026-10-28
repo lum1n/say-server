@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -39,6 +40,7 @@ type fakeSlack struct {
 	oldest    map[string]string    // last oldest asked per chat
 	posted    []url.Values
 	updated   []url.Values
+	reactions []string // "add C1 ts name", "remove …"
 	acks      []string
 	sockets   int
 	postErr   string
@@ -149,6 +151,15 @@ func (f *fakeSlack) api(w http.ResponseWriter, r *http.Request) {
 		// Slack sends the user's own message back as an event.
 		f.frames <- event("echo-"+ts, message{Type: "message", Channel: r.Form.Get("channel"), User: "UME", Text: r.Form.Get("text"), Ts: ts})
 		f.reply(w, map[string]any{"ok": true, "channel": r.Form.Get("channel"), "ts": ts})
+	case "reactions.add", "reactions.remove":
+		op := strings.TrimPrefix(method, "reactions.")
+		entry := op + " " + r.Form.Get("channel") + " " + r.Form.Get("timestamp") + " " + r.Form.Get("name")
+		if slices.Contains(f.reactions, entry) {
+			f.reply(w, map[string]any{"ok": false, "error": map[string]string{"add": "already_reacted", "remove": "no_reaction"}[op]})
+			return
+		}
+		f.reactions = append(f.reactions, entry)
+		f.reply(w, map[string]any{"ok": true})
 	case "chat.update":
 		f.updated = append(f.updated, r.Form)
 		f.reply(w, map[string]any{"ok": true})
@@ -663,4 +674,57 @@ func TestCatchUpSurvivesLiveMessages(t *testing.T) {
 		json.Unmarshal([]byte(h2.lastState()), &st)
 		return st.Last["C1"] == live
 	})
+}
+
+func TestReactions(t *testing.T) {
+	f := newFakeSlack(t)
+	f.convs = []channel{{ID: "C1", Name: "general", IsMember: yes()}}
+	h := &fakeHost{}
+	c := newConn(t, f, h, "")
+	run(t, c)
+	eventually(t, "connected", func() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.connected == 1 })
+
+	reaction := func(id, typ, user, name string) map[string]any {
+		return map[string]any{"envelope_id": id, "type": "events_api", "payload": map[string]any{"event": map[string]any{
+			"type": typ, "user": user, "reaction": name, "event_ts": "1700000000.000100",
+			"item": map[string]any{"type": "message", "channel": "C1", "ts": "1690000000.000200"},
+		}}}
+	}
+	f.frames <- reaction("e1", "reaction_added", "U2", "+1::skin-tone-3")
+	f.frames <- reaction("e2", "reaction_added", "UME", "partyparrot")
+	f.frames <- reaction("e3", "reaction_removed", "U2", "+1")
+	eventually(t, "three reactions", func() bool { return len(h.received()) == 3 })
+	got := h.received()
+	if r := got[0]; r.Chat.ID != "C1" || r.Author != (bridge.Author{ID: "U2", Name: "Bob"}) || r.Time.IsZero() ||
+		*r.Reaction != (bridge.IncomingReaction{Target: "1690000000.000200", Key: "👍"}) {
+		t.Errorf("add = %+v %+v", r, r.Reaction)
+	}
+	if r := got[1]; !r.Author.Self || r.Reaction.Key != ":partyparrot:" {
+		t.Errorf("own custom emoji = %+v %+v", r.Author, r.Reaction)
+	}
+	if r := got[2]; !r.Reaction.Removed || r.Reaction.Key != "👍" {
+		t.Errorf("remove = %+v", r.Reaction)
+	}
+
+	ctx := context.Background()
+	for _, r := range []bridge.Reaction{
+		{Chat: "C1", Target: "1.2", Key: "❤️"},
+		{Chat: "C1", Target: "1.2", Key: "❤️"}, // already there
+		{Chat: "C1", Target: "1.2", Key: ":partyparrot:"},
+		{Chat: "C1", Target: "1.2", Key: "❤️", Removed: true},
+		{Chat: "C1", Target: "1.2", Key: "❤️", Removed: true}, // already gone
+	} {
+		if _, err := c.React(ctx, r); err != nil {
+			t.Fatalf("react %+v: %v", r, err)
+		}
+	}
+	f.mu.Lock()
+	sent := f.reactions
+	f.mu.Unlock()
+	if want := []string{"add C1 1.2 heart", "add C1 1.2 partyparrot", "remove C1 1.2 heart"}; !slices.Equal(sent, want) {
+		t.Fatalf("reactions = %q, want %q", sent, want)
+	}
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "C1", Target: "1.2", Key: "🦩"}); !errors.Is(err, bridge.ErrRejected) {
+		t.Fatalf("unknown emoji = %v", err)
+	}
 }

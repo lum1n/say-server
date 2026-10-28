@@ -143,6 +143,16 @@ export class Bot {
     }) as Promise<Event>;
   }
 
+  /** react adds the bot's reaction to a message: one emoji, or a :shortcode:. */
+  react(roomId: string, eventId: string, key: string): Promise<Event> {
+    return this.request("react", { room_id: roomId, event_id: eventId, key }) as Promise<Event>;
+  }
+
+  /** unreact takes the bot's reaction back. */
+  unreact(roomId: string, eventId: string, key: string): Promise<Event> {
+    return this.request("unreact", { room_id: roomId, event_id: eventId, key }) as Promise<Event>;
+  }
+
   /** edit changes one of the bot's messages, or streams it. */
   edit(roomId: string, eventId: string, edit: { parts?: Part[]; stream?: "streaming" | "final" }): Promise<Event> {
     return this.request("edit", { room_id: roomId, event_id: eventId, ...edit }) as Promise<Event>;

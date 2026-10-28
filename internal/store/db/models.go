@@ -116,6 +116,9 @@ type Event struct {
 	Edits          string
 	EditedAt       int64
 	ReplyTo        string
+	Reacts         string
+	ReactionKey    string
+	Removed        int32
 }
 
 type Instance struct {
@@ -157,6 +160,15 @@ type Principal struct {
 	DisplayName string
 	CreatedAt   int64
 	Admin       int32
+}
+
+type Reaction struct {
+	RoomID    string
+	EventID   string
+	EventSeq  int64
+	SenderID  string
+	Key       string
+	CreatedAt int64
 }
 
 type Room struct {

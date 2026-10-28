@@ -19,6 +19,10 @@ type Chat interface {
 	// reply to the message replyTo if that is not empty. A repeated
 	// idempotencyKey returns the earlier message.
 	SendAs(ctx context.Context, as core.Principal, roomID, eventID string, parts []core.Part, replyTo, idempotencyKey string, at time.Time) (core.Event, error)
+	// ReactAs adds as's reaction key to message target, or takes it back,
+	// as event id made at at. changed is false when it changed nothing.
+	// A key or target say does not take is dropped, not an error.
+	ReactAs(ctx context.Context, as core.Principal, roomID, id, target, key string, removed bool, at time.Time) (changed bool, err error)
 	// EditAs changes as's final message eventID to parts and returns the
 	// edit event; an edit that changes nothing is store.ErrNotEditable.
 	EditAs(ctx context.Context, as core.Principal, roomID, eventID string, parts []core.Part) (core.Event, error)
