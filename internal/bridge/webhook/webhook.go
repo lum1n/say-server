@@ -1,6 +1,11 @@
 // Package webhook is a relay bot over plain HTTP: other programs post
 // messages to a room through the bridge's hook URL, and say posts the
 // room's messages to a URL of theirs.
+//
+// Files travel in the JSON both ways, as "attachments": [{"name":
+// "a.png", "mime": "image/png", "data": "<base64>"}]. say never fetches a
+// URL a hook names: that would let anyone with the secret make the server
+// reach into its own network.
 package webhook
 
 import (
@@ -9,6 +14,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -30,7 +36,7 @@ func init() {
 		Title:        "Webhooks",
 		Modes:        []string{store.ModeBot},
 		Fields:       fields,
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions, connector.CapAttachments},
 		Open:         open,
 		Hook:         hook,
 		HookSecret:   "token",
@@ -43,6 +49,7 @@ var fields = []bridge.Field{
 		Help: "A long random string. Programs post JSON such as {\"chat\": \"alerts\", \"text\": \"…\", \"username\": \"Grafana\"} " +
 			"to the bridge's hook URL with the header Authorization: Bearer <secret>, or ?token=<secret> in the URL. " +
 			"Link a room to the chat name they use; without one, the chat is \"default\". " +
+			"Files come as \"attachments\": [{\"name\": \"graph.png\", \"mime\": \"image/png\", \"data\": \"<base64>\"}], with or without text. " +
 			"A reaction is {\"type\": \"reaction\", \"chat\": …, \"target\": \"<message id>\", \"key\": \"👍\", \"user_id\": …}, with \"removed\": true to take it back.",
 	},
 	{
@@ -51,7 +58,7 @@ var fields = []bridge.Field{
 	},
 	{
 		Key: "format", Label: "Outgoing format", Kind: "text", Placeholder: "say",
-		Help: "say (JSON with chat, sender, text and event_id; edits and reactions too), slack (a Slack or Mattermost incoming webhook) " +
+		Help: "say (JSON with chat, sender, text, event_id and attachments as the hook takes them; edits and reactions too), slack (a Slack or Mattermost incoming webhook) " +
 			"or discord (a Discord webhook).",
 	},
 	{
@@ -102,7 +109,20 @@ type incoming struct {
 	Target   string `json:"target"`
 	Key      string `json:"key"`
 	Removed  bool   `json:"removed"`
+	// Attachments are files sent with the message.
+	Attachments []attachment `json:"attachments"`
 }
+
+// attachment is a file in a hook body or an outgoing request, its bytes
+// in base64.
+type attachment struct {
+	Name string `json:"name"`
+	Mime string `json:"mime,omitempty"`
+	Data string `json:"data"`
+}
+
+// maxAttachments bounds the files of one message, as say does.
+const maxAttachments = 10
 
 // hook reads a request to the hook URL.
 func hook(b bridge.Info, r *http.Request) ([]bridge.Incoming, error) {
@@ -139,7 +159,11 @@ func hook(b bridge.Info, r *http.Request) ([]bridge.Incoming, error) {
 	if text == "" {
 		text = strings.TrimSpace(in.Content)
 	}
-	if text == "" {
+	files, err := media(in.Attachments)
+	if err != nil {
+		return nil, err
+	}
+	if text == "" && (len(files) == 0 || in.Edit) {
 		return nil, errors.New("text is empty")
 	}
 	if len(text) > 64<<10 {
@@ -153,6 +177,10 @@ func hook(b bridge.Info, r *http.Request) ([]bridge.Incoming, error) {
 		Edit:    in.Edit,
 		ReplyTo: in.ReplyTo,
 	}
+	if !m.Edit {
+		// An edit changes the text only.
+		m.Media = files
+	}
 	if m.ID == "" {
 		if m.Edit {
 			return nil, errors.New("an edit needs the id of the message")
@@ -164,6 +192,28 @@ func hook(b bridge.Info, r *http.Request) ([]bridge.Incoming, error) {
 		return nil, err
 	}
 	return []bridge.Incoming{m}, nil
+}
+
+// media decodes the files of a hook body. say reads them from memory.
+func media(as []attachment) ([]bridge.Media, error) {
+	if len(as) > maxAttachments {
+		return nil, fmt.Errorf("a message has at most %d attachments", maxAttachments)
+	}
+	var out []bridge.Media
+	for i, a := range as {
+		data, err := base64.StdEncoding.DecodeString(a.Data)
+		if err != nil {
+			return nil, fmt.Errorf("attachment %d: data is not base64", i)
+		}
+		if len(data) == 0 {
+			return nil, fmt.Errorf("attachment %d is empty", i)
+		}
+		out = append(out, bridge.Media{
+			Mime: a.Mime, Name: a.Name, Size: int64(len(data)),
+			Open: func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(data)), nil },
+		})
+	}
+	return out, nil
 }
 
 // reaction reads a reaction posted to the hook.
@@ -236,17 +286,53 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 	var body any
 	switch c.cfg.Format {
 	case "slack":
-		body = map[string]any{"text": "*" + m.Sender + "*: " + m.Text, "username": m.Sender}
+		body = map[string]any{"text": "*" + m.Sender + "*: " + named(m), "username": m.Sender}
 	case "discord":
-		body = map[string]any{"content": m.Text, "username": m.Sender, "allowed_mentions": map[string]any{"parse": []string{}}}
+		body = map[string]any{"content": named(m), "username": m.Sender, "allowed_mentions": map[string]any{"parse": []string{}}}
 	default:
-		body = map[string]any{"type": "message", "chat": m.Chat, "event_id": m.EventID, "sender": m.Sender, "text": m.Text, "reply_to": m.ReplyTo}
+		files, err := attachments(ctx, m.Media)
+		if err != nil {
+			return "", err
+		}
+		msg := map[string]any{"type": "message", "chat": m.Chat, "event_id": m.EventID, "sender": m.Sender, "text": m.Text, "reply_to": m.ReplyTo}
+		if len(files) > 0 {
+			msg["attachments"] = files
+		}
+		body = msg
 	}
 	id, err := c.post(ctx, body)
 	if id == "" && err == nil {
 		id = m.EventID
 	}
 	return id, err
+}
+
+// named is the text of m with its files named, for the formats that
+// carry no files.
+func named(m bridge.Outgoing) string {
+	text := m.Text
+	for _, f := range m.Media {
+		text = strings.TrimSpace(text + "\n" + core.Attachment{Mime: f.Mime, Name: f.Name}.Placeholder())
+	}
+	return text
+}
+
+// attachments reads a message's files into the say format.
+func attachments(ctx context.Context, media []bridge.Media) ([]attachment, error) {
+	var out []attachment
+	for _, f := range media {
+		r, err := f.Open(ctx)
+		if err != nil {
+			return nil, err
+		}
+		data, err := io.ReadAll(r)
+		r.Close()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, attachment{Name: f.Name, Mime: f.Mime, Data: base64.StdEncoding.EncodeToString(data)})
+	}
+	return out, nil
 }
 
 // Edit sends an edit in the say format; the others can't edit.

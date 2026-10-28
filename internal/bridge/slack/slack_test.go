@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -50,6 +51,19 @@ type fakeSlack struct {
 	// failHistory makes conversations.history fail with HTTP 500.
 	failHistory bool
 	next        int64
+	// files are served at /files/{name}; uploads are what was posted to
+	// an upload URL, by file id, and completed the files.completeUploadExternal
+	// calls.
+	files     map[string][]byte
+	uploads   map[string]upload
+	completed []url.Values
+	shares    map[string]string // file id: ts of the message sharing it
+}
+
+// upload is a file posted to an upload URL.
+type upload struct {
+	name, mime string
+	data       []byte
 }
 
 func newFakeSlack(t *testing.T) *fakeSlack {
@@ -60,9 +74,36 @@ func newFakeSlack(t *testing.T) *fakeSlack {
 		history: map[string][]message{},
 		oldest:  map[string]string{},
 		next:    time.Now().Unix(),
+		files:   map[string][]byte{},
+		uploads: map[string]upload{},
+		shares:  map[string]string{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/{method}", f.api)
+	mux.HandleFunc("GET /files/{name}", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+userToken {
+			// Slack sends its sign-in page.
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte("<html>sign in</html>"))
+			return
+		}
+		f.mu.Lock()
+		data, ok := f.files[r.PathValue("name")]
+		f.mu.Unlock()
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(data)
+	})
+	mux.HandleFunc("POST /upload/{id}", func(w http.ResponseWriter, r *http.Request) {
+		data, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		u := f.uploads[r.PathValue("id")]
+		u.mime, u.data = r.Header.Get("Content-Type"), data
+		f.uploads[r.PathValue("id")] = u
+	})
 	mux.HandleFunc("/socket", f.socket)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
@@ -160,6 +201,36 @@ func (f *fakeSlack) api(w http.ResponseWriter, r *http.Request) {
 		}
 		f.reactions = append(f.reactions, entry)
 		f.reply(w, map[string]any{"ok": true})
+	case "files.getUploadURLExternal":
+		id := fmt.Sprintf("F%d", len(f.uploads)+1)
+		f.uploads[id] = upload{name: r.Form.Get("filename")}
+		f.reply(w, map[string]any{"ok": true, "upload_url": f.srv.URL + "/upload/" + id, "file_id": id})
+	case "files.completeUploadExternal":
+		f.completed = append(f.completed, r.Form)
+		var refs []struct{ ID, Title string }
+		json.Unmarshal([]byte(r.Form.Get("files")), &refs)
+		ts := f.ts()
+		var files []file
+		for _, ref := range refs {
+			if u := f.uploads[ref.ID]; u.data == nil {
+				f.t.Errorf("completed %s before its bytes", ref.ID)
+			}
+			f.shares[ref.ID] = ts
+			files = append(files, file{ID: ref.ID, Name: ref.Title})
+		}
+		// The message comes a moment later, and so does the share.
+		f.frames <- event("echo-"+ts, message{Type: "message", Subtype: "file_share", Channel: r.Form.Get("channel_id"), User: "UME",
+			Text: r.Form.Get("initial_comment"), Ts: ts, ThreadTs: r.Form.Get("thread_ts"), Files: files})
+		f.reply(w, map[string]any{"ok": true, "files": []map[string]any{{"id": refs[0].ID, "shares": map[string]any{}}}})
+	case "files.info":
+		id := r.Form.Get("file")
+		ts, ok := f.shares[id]
+		if !ok {
+			f.reply(w, map[string]any{"ok": false, "error": "file_not_found"})
+			return
+		}
+		f.reply(w, map[string]any{"ok": true, "file": map[string]any{"id": id, "shares": map[string]any{
+			"public": map[string]any{"C1": []map[string]any{{"ts": ts, "channel_name": "general"}}}}}})
 	case "chat.update":
 		f.updated = append(f.updated, r.Form)
 		f.reply(w, map[string]any{"ok": true})
@@ -291,7 +362,9 @@ func newConn(t *testing.T, f *fakeSlack, h bridge.Host, st string) *conn {
 	}
 	c := bc.(*conn)
 	c.api = f.srv.URL + "/api/"
+	c.files = f.srv.URL + "/files/"
 	c.saveEvery = 50 * time.Millisecond
+	c.sharePoll = 10 * time.Millisecond
 	return c
 }
 
@@ -459,6 +532,85 @@ func TestRun(t *testing.T) {
 		json.Unmarshal([]byte(h.lastState()), &st)
 		return st.Last["C1"] == id && st.Last["D1"] == t2 && st.Last["G1"] == live
 	})
+}
+
+func TestFiles(t *testing.T) {
+	f := newFakeSlack(t)
+	f.convs = []channel{{ID: "C1", Name: "general", IsMember: yes()}}
+	f.files["cat.png"] = []byte("\x89PNG the cat")
+	h := &fakeHost{}
+	c := newConn(t, f, h, "")
+	run(t, c)
+	eventually(t, "connected", func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return h.connected == 1
+	})
+
+	f.frames <- event("e1", message{Type: "message", Subtype: "file_share", Channel: "C1", User: "U2", Text: "look", Ts: f.ts(), Files: []file{
+		{ID: "F9", Name: "cat.png", Mimetype: "image/png", Size: 13, OriginalW: 640, OriginalH: 480, URLPrivateDownload: f.srv.URL + "/files/cat.png"},
+		{ID: "F8", Name: "Notes", Mode: "external", Permalink: "https://docs.test/notes"},
+		{ID: "F7", Name: "elsewhere.png", URLPrivateDownload: "https://evil.test/files/x"},
+	}})
+	eventually(t, "the message arrives", func() bool { return len(h.received()) == 1 })
+	in := h.received()[0]
+	if in.Text != "look\n[file: Notes] https://docs.test/notes" || len(in.Media) != 2 {
+		t.Fatalf("message = %+v", in)
+	}
+	m := in.Media[0]
+	if m.Name != "cat.png" || m.Mime != "image/png" || m.Size != 13 || m.Width != 640 || m.Height != 480 {
+		t.Errorf("media = %+v", m)
+	}
+	r, err := m.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(r)
+	r.Close()
+	if string(data) != "\x89PNG the cat" {
+		t.Errorf("file reads %q", data)
+	}
+	// The token goes to Slack's file host only.
+	if _, err := in.Media[1].Open(context.Background()); err == nil {
+		t.Error("fetched a file off Slack's file host")
+	}
+
+	file := func(mime, name, data string) bridge.Media {
+		return bridge.Media{Mime: mime, Name: name, Open: func(context.Context) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(data)), nil
+		}}
+	}
+	id, err := c.Send(context.Background(), bridge.Outgoing{Chat: "C1", Text: "a < b", ReplyTo: "1700000000.000100", Media: []bridge.Media{
+		file("image/png", "dog.png", "png bytes"), file("application/pdf", "plan.pdf", "pdf bytes"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.with(func(f *fakeSlack) {
+		if u := f.uploads["F1"]; u.name != "dog.png" || u.mime != "image/png" || string(u.data) != "png bytes" {
+			t.Errorf("first upload = %+v", u)
+		}
+		if u := f.uploads["F2"]; u.name != "plan.pdf" || string(u.data) != "pdf bytes" {
+			t.Errorf("second upload = %+v", u)
+		}
+		if len(f.completed) != 1 {
+			t.Fatalf("completed %d times", len(f.completed))
+		}
+		p := f.completed[0]
+		if p.Get("channel_id") != "C1" || p.Get("initial_comment") != "a &lt; b" || p.Get("thread_ts") != "1700000000.000100" ||
+			p.Get("files") != `[{"id":"F1","title":"dog.png"},{"id":"F2","title":"plan.pdf"}]` {
+			t.Errorf("complete = %v", p)
+		}
+		if id != f.shares["F1"] {
+			t.Errorf("id = %q, want the share's ts %q", id, f.shares["F1"])
+		}
+	})
+	// The echo is dropped: it shares files say uploaded.
+	f.frames <- event("e2", message{Type: "message", Channel: "C1", User: "U2", Text: "after", Ts: f.ts()})
+	eventually(t, "the next message arrives", func() bool { return len(h.received()) == 2 })
+	if got := h.received()[1]; got.Text != "after" {
+		t.Errorf("got %+v", got)
+	}
 }
 
 func TestResume(t *testing.T) {

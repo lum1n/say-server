@@ -2,6 +2,8 @@ package telegrambot
 
 import (
 	"cmp"
+	"context"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -69,20 +71,18 @@ type message struct {
 		MessageID int64 `json:"message_id"`
 	} `json:"reply_to_message"`
 
-	Photo     []struct{} `json:"photo"`
-	Animation *struct{}  `json:"animation"`
-	Video     *struct{}  `json:"video"`
-	VideoNote *struct{}  `json:"video_note"`
-	Voice     *struct{}  `json:"voice"`
-	Location  *struct{}  `json:"location"`
+	Photo     []file    `json:"photo"`
+	Animation *file     `json:"animation"`
+	Video     *file     `json:"video"`
+	VideoNote *file     `json:"video_note"`
+	Voice     *file     `json:"voice"`
+	Location  *struct{} `json:"location"`
 	Audio     *struct {
-		Title    string `json:"title"`
-		FileName string `json:"file_name"`
+		file
+		Title string `json:"title"`
 	} `json:"audio"`
-	Document *struct {
-		FileName string `json:"file_name"`
-	} `json:"document"`
-	Sticker *struct {
+	Document *file `json:"document"`
+	Sticker  *struct {
 		Emoji string `json:"emoji"`
 	} `json:"sticker"`
 	Venue *struct {
@@ -100,11 +100,34 @@ type message struct {
 	} `json:"dice"`
 }
 
+// file is a photo size, or a document, video or other file.
+type file struct {
+	FileID   string `json:"file_id"`
+	FileName string `json:"file_name"`
+	MimeType string `json:"mime_type"`
+	FileSize int64  `json:"file_size"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+}
+
+// maxDownload is the largest file the Bot API lets a bot download.
+const maxDownload = 20 << 20
+
 // incoming converts a message; false means it is not shown, such as a
-// member joining.
-func incoming(m *message, edit bool, botID int64) (bridge.Incoming, bool) {
-	text := cmp.Or(m.Text, m.Caption, placeholder(m))
-	if text == "" || m.MessageID == 0 {
+// member joining. Its file, if say takes it, is read with fetch; an edit
+// carries none.
+func incoming(m *message, edit bool, botID int64, fetch func(ctx context.Context, fileID string) (io.ReadCloser, error)) (bridge.Incoming, bool) {
+	text := cmp.Or(m.Text, m.Caption)
+	var files []bridge.Media
+	if id, f, ok := attachment(m); ok {
+		if !edit {
+			f.Open = func(ctx context.Context) (io.ReadCloser, error) { return fetch(ctx, id) }
+			files = append(files, f)
+		}
+	} else {
+		text = cmp.Or(text, placeholder(m))
+	}
+	if text == "" && len(files) == 0 || m.MessageID == 0 {
 		return bridge.Incoming{}, false
 	}
 	in := bridge.Incoming{
@@ -112,6 +135,7 @@ func incoming(m *message, edit bool, botID int64) (bridge.Incoming, bool) {
 		ID:     strconv.FormatInt(m.MessageID, 10),
 		Author: author(m, botID),
 		Text:   text,
+		Media:  files,
 		Edit:   edit,
 	}
 	if m.Date > 0 {
@@ -122,6 +146,45 @@ func incoming(m *message, edit bool, botID int64) (bridge.Incoming, bool) {
 		in.ReplyTo = strconv.FormatInt(r.MessageID, 10)
 	}
 	return in, true
+}
+
+// attachment is the file of a message that say takes in, and its id; false
+// for none, or one too big for a bot to download, which stays a
+// placeholder. Stickers stay placeholders too.
+func attachment(m *message) (string, bridge.Media, bool) {
+	var f file
+	mime, name := "", ""
+	switch {
+	case len(m.Photo) > 0:
+		// The sizes of a photo; the largest has it all.
+		for _, p := range m.Photo {
+			if p.Width*p.Height >= f.Width*f.Height {
+				f = p
+			}
+		}
+		mime, name = "image/jpeg", "photo.jpg"
+	case m.Animation != nil:
+		f, mime, name = *m.Animation, "video/mp4", "animation.mp4"
+	case m.Video != nil:
+		f, mime, name = *m.Video, "video/mp4", "video.mp4"
+	case m.VideoNote != nil:
+		f, mime, name = *m.VideoNote, "video/mp4", "video.mp4"
+	case m.Voice != nil:
+		f, mime, name = *m.Voice, "audio/ogg", "voice.ogg"
+	case m.Audio != nil:
+		f, name = m.Audio.file, "audio"
+	case m.Document != nil:
+		f, name = *m.Document, "document"
+	default:
+		return "", bridge.Media{}, false
+	}
+	if f.FileID == "" || f.FileSize > maxDownload {
+		return "", bridge.Media{}, false
+	}
+	return f.FileID, bridge.Media{
+		Mime: cmp.Or(f.MimeType, mime), Name: cmp.Or(f.FileName, name),
+		Size: f.FileSize, Width: f.Width, Height: f.Height,
+	}, true
 }
 
 // reactions converts a change of someone's reactions into the reactions
@@ -258,6 +321,9 @@ func named(kind, name string) string {
 // as shown (after HTML is parsed).
 const maxText = 4096
 
+// maxCaption is the most a file's caption may hold, as maxText.
+const maxCaption = 1024
+
 // maxSender caps a sender's name, in runes.
 const maxSender = 100
 
@@ -293,14 +359,32 @@ func parts(sender, text string) []string {
 	return out
 }
 
-// single formats a message as one Telegram message, cut short to fit.
-func single(sender, text string) string {
+// single formats a message as one Telegram message, or caption, of at
+// most limit, cut short to fit.
+func single(sender, text string, limit int) string {
 	sender = clip(sender)
-	limit := maxText - prefixLen(sender)
+	limit -= prefixLen(sender)
 	if utf16Len(text) > limit {
 		text = strings.TrimRight(split(text, limit-1)[0], " \n") + "…"
 	}
 	return render(sender, text)
+}
+
+// fits reports whether text and the sender's name fit in a caption.
+func fits(sender, text string) bool {
+	return prefixLen(clip(sender))+utf16Len(text) <= maxCaption
+}
+
+// caption formats the caption of a file: the text, cut short to fit, or
+// the sender's name alone for a file without text.
+func caption(sender, text string) string {
+	if text == "" {
+		if sender == "" {
+			return ""
+		}
+		return "<b>" + htmlEscaper.Replace(clip(sender)) + "</b>"
+	}
+	return single(sender, text, maxCaption)
 }
 
 func clip(sender string) string {

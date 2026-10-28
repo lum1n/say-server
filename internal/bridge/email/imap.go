@@ -7,6 +7,7 @@ import (
 	"net"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/emersion/go-imap/v2"
@@ -130,7 +131,16 @@ func (c *conn) sync(ctx context.Context, cl *imapclient.Client) (more bool, err 
 	}
 	// Mail from both folders interleaves into the same chats.
 	sort.SliceStable(all, func(i, j int) bool { return all[i].Date.Before(all[j].Date) })
+	selected := c.cfg.Folder
 	for _, m := range all {
+		if m.Cut && m.Size <= maxMail {
+			// Big mail is read whole one at a time, for its files.
+			whole, err := c.whole(cl, &selected, m)
+			if err != nil {
+				return false, err
+			}
+			m = whole
+		}
 		in, ok := c.incoming(m)
 		if !ok {
 			continue
@@ -139,6 +149,12 @@ func (c *conn) sync(ctx context.Context, cl *imapclient.Client) (more bool, err 
 			return false, err
 		}
 		c.noteThread(in.Chat.ID, thread{MessageID: m.ID, Subject: m.Subject, At: m.Date})
+	}
+	if selected != c.cfg.Folder {
+		// IDLE watches the selected folder.
+		if _, err := cl.Select(c.cfg.Folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
+			return false, fmt.Errorf("open %s: %w", c.cfg.Folder, err)
+		}
 	}
 	dirty := len(all) > 0
 	for f, p := range next {
@@ -214,7 +230,8 @@ func (c *conn) syncFolder(cl *imapclient.Client, folder string) ([]*message, pos
 		if len(b.BodySection) == 0 {
 			continue
 		}
-		m, err := parse(b.BodySection[0].Bytes)
+		cut := b.RFC822Size > maxBody
+		m, err := parse(b.BodySection[0].Bytes, !cut)
 		if err != nil {
 			// A message that cannot be read is skipped, not retried.
 			continue
@@ -223,12 +240,41 @@ func (c *conn) syncFolder(cl *imapclient.Client, folder string) ([]*message, pos
 			m.Date = b.InternalDate
 		}
 		m.Sent = folder == c.cfg.SentFolder
+		m.Cut, m.Size, m.UID, m.Folder = cut, b.RFC822Size, b.UID, folder
 		msgs = append(msgs, m)
 	}
 	if u := uint32(uids[len(uids)-1]); u > pos.UID {
 		pos.UID = u
 	}
 	return msgs, pos, more, nil
+}
+
+// whole reads all of a message that was cut short, with its files. One
+// that is gone, or changed under its UID, stays as it was.
+func (c *conn) whole(cl *imapclient.Client, selected *string, m *message) (*message, error) {
+	if *selected != m.Folder {
+		if _, err := cl.Select(m.Folder, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
+			return nil, fmt.Errorf("open %s: %w", m.Folder, err)
+		}
+		*selected = m.Folder
+	}
+	bufs, err := cl.Fetch(imap.UIDSetNum(m.UID), &imap.FetchOptions{
+		UID: true, BodySection: []*imap.FetchItemBodySection{{Peek: true}},
+	}).Collect()
+	if err != nil {
+		return nil, fmt.Errorf("fetch from %s: %w", m.Folder, err)
+	}
+	if len(bufs) == 0 || len(bufs[0].BodySection) == 0 {
+		return m, nil
+	}
+	w, err := parse(bufs[0].BodySection[0].Bytes, true)
+	// Without a Message-ID, the key was made from the part read first.
+	made := strings.HasSuffix(m.ID, "@say.invalid")
+	if err != nil || w.ID != m.ID && !made {
+		return m, nil
+	}
+	w.ID, w.Date, w.Sent, w.Folder = m.ID, m.Date, m.Sent, m.Folder
+	return w, nil
 }
 
 // fetchBodies reads messages, only the first maxBody bytes of big ones.
@@ -255,7 +301,7 @@ func fetchBodies(cl *imapclient.Client, uids []imap.UID) ([]*imapclient.FetchMes
 			continue
 		}
 		bufs, err := cl.Fetch(set.uids, &imap.FetchOptions{
-			UID: true, InternalDate: true,
+			UID: true, InternalDate: true, RFC822Size: true,
 			BodySection: []*imap.FetchItemBodySection{{Peek: true, Partial: set.partial}},
 		}).Collect()
 		if err != nil {

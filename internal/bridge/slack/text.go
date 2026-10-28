@@ -6,10 +6,17 @@ import (
 
 // file is an attachment of a message.
 type file struct {
-	Name       string `json:"name"`
-	Title      string `json:"title"`
-	Permalink  string `json:"permalink"`
-	URLPrivate string `json:"url_private"`
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Title              string `json:"title"`
+	Mimetype           string `json:"mimetype"`
+	Size               int64  `json:"size"`
+	OriginalW          int    `json:"original_w"`
+	OriginalH          int    `json:"original_h"`
+	Mode               string `json:"mode"` // hosted, external, tombstone, hidden_by_limit…
+	Permalink          string `json:"permalink"`
+	URLPrivate         string `json:"url_private"`
+	URLPrivateDownload string `json:"url_private_download"`
 }
 
 // plainText turns Slack's message markup into readable text: mentions

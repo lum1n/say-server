@@ -3,6 +3,10 @@ package signal
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -96,9 +100,15 @@ type mention struct {
 	Length int    `json:"length"`
 }
 
+// attachment is a file signal-cli has saved as ID in its attachments
+// directory; it has no ID if it could not be downloaded.
 type attachment struct {
+	ID          string `json:"id"`
 	ContentType string `json:"contentType"`
 	Filename    string `json:"filename"`
+	Size        int64  `json:"size"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
 }
 
 // incoming turns an envelope into a message or a reaction for the core;
@@ -151,8 +161,15 @@ func (c *conn) incoming(ctx context.Context, env *envelope) (bridge.Incoming, bo
 			Key:     r.Emoji,
 			Removed: r.IsRemove,
 		}
-	} else if in.Text = c.render(ctx, dm); in.Text == "" {
-		return bridge.Incoming{}, false
+	} else {
+		in.Text = c.render(ctx, dm)
+		if target == 0 {
+			// An edit keeps the files the message was sent with.
+			in.Media = c.files(dm)
+		}
+		if in.Text == "" && len(in.Media) == 0 {
+			return bridge.Incoming{}, false
+		}
 	}
 	if self {
 		in.Author = bridge.Author{ID: c.selfKey(), Self: true}
@@ -197,7 +214,7 @@ func (c *conn) incoming(ctx context.Context, env *envelope) (bridge.Incoming, bo
 }
 
 // render makes plain text of a message: mentions become @names, and
-// attachments and stickers short placeholders. A quote of a message
+// stickers and attachments signal-cli has no file of short placeholders. A quote of a message
 // Signal does not name leads as a "> " line; one it names is a reply,
 // which the core shows as a quote.
 func (c *conn) render(ctx context.Context, dm *dataMessage) string {
@@ -211,16 +228,50 @@ func (c *conn) render(ctx context.Context, dm *dataMessage) string {
 	if text := c.mentions(ctx, dm.Message, dm.Mentions); strings.TrimSpace(text) != "" {
 		lines = append(lines, text)
 	}
+	files := false
 	for _, a := range dm.Attachments {
+		if a.ID != "" {
+			files = true // handed over as media
+			continue
+		}
 		lines = append(lines, "[attachment: "+first(a.Filename, a.ContentType, "file")+"]")
 	}
 	if dm.Sticker != nil {
 		lines = append(lines, "[sticker]")
 	}
-	if len(lines) == 1 && quoted {
+	if len(lines) == 1 && quoted && !files {
 		return "" // a quote of nothing
 	}
 	return strings.Join(lines, "\n")
+}
+
+// files are a message's attachments that signal-cli saved, read from its
+// attachments directory.
+func (c *conn) files(dm *dataMessage) []bridge.Media {
+	var out []bridge.Media
+	for _, a := range dm.Attachments {
+		if a.ID == "" {
+			continue
+		}
+		id := a.ID
+		out = append(out, bridge.Media{
+			Mime: a.ContentType, Name: first(a.Filename, id), Size: a.Size, Width: a.Width, Height: a.Height,
+			Open: func(context.Context) (io.ReadCloser, error) { return c.attachment(id) },
+		})
+	}
+	return out
+}
+
+// attachment opens the file signal-cli saved as id.
+func (c *conn) attachment(id string) (io.ReadCloser, error) {
+	if !filepath.IsLocal(id) || filepath.Base(id) != id {
+		return nil, fmt.Errorf("bad attachment id %q", id)
+	}
+	dir, err := c.dataDir()
+	if err != nil {
+		return nil, err
+	}
+	return os.Open(filepath.Join(dir, "attachments", id))
 }
 
 // mentions replaces the placeholder of each mention in text with @name.

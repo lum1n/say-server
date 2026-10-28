@@ -3,8 +3,12 @@ package bridge
 import (
 	"context"
 	"errors"
+	"io"
+	"slices"
+	"strings"
 	"time"
 
+	"github.com/lum1n/say-server/internal/connector"
 	"github.com/lum1n/say-server/internal/core"
 	"github.com/lum1n/say-server/internal/store"
 )
@@ -84,8 +88,8 @@ func (i *instance) deliverEvent(ctx context.Context, l store.BridgeLink, e core.
 	if ok, err := i.sends(ctx, msg.SenderID); !ok || err != nil {
 		return err
 	}
-	text := msg.Prose()
-	if text == "" {
+	text, files := i.content(msg)
+	if text == "" && len(files) == 0 {
 		return nil
 	}
 	retry := i.net.Idempotent
@@ -112,8 +116,12 @@ func (i *instance) deliverEvent(ctx context.Context, l store.BridgeLink, e core.
 	if err != nil {
 		return err
 	}
-	sctx, cancel := context.WithTimeout(ctx, sendTimeout)
-	remoteID, err := i.conn.Send(sctx, Outgoing{Chat: l.RemoteID, EventID: msg.ID, Text: text, Parts: msg.Parts, Sender: i.name(ctx, msg.SenderID), ReplyTo: replyTo})
+	timeout := sendTimeout
+	if len(files) > 0 {
+		timeout = mediaTimeout
+	}
+	sctx, cancel := context.WithTimeout(ctx, timeout)
+	remoteID, err := i.conn.Send(sctx, Outgoing{Chat: l.RemoteID, EventID: msg.ID, Text: text, Parts: msg.Parts, Sender: i.name(ctx, msg.SenderID), ReplyTo: replyTo, Media: files})
 	cancel()
 	state, errMsg := store.BridgeSent, ""
 	switch {
@@ -135,6 +143,27 @@ func (i *instance) deliverEvent(ctx context.Context, l store.BridgeLink, e core.
 	}
 	i.c.Chat.DeliveryChanged(ctx, l.RoomID, msg.ID)
 	return nil
+}
+
+// content is what of msg goes to the network: its prose, and its files
+// where the network takes them. Elsewhere the text names them.
+func (i *instance) content(msg core.Event) (string, []Media) {
+	text := msg.Prose()
+	as := msg.Attachments()
+	if !slices.Contains(i.net.Capabilities, connector.CapAttachments) {
+		for _, a := range as {
+			text = strings.TrimSpace(text + "\n" + a.Placeholder())
+		}
+		return text, nil
+	}
+	files := make([]Media, len(as))
+	for k, a := range as {
+		files[k] = Media{
+			Mime: a.Mime, Name: a.Name, Size: a.Size, Width: a.Width, Height: a.Height,
+			Open: func(ctx context.Context) (io.ReadCloser, error) { return i.c.Chat.OpenMedia(ctx, a.Media) },
+		}
+	}
+	return text, files
 }
 
 // remoteReply returns the remote id on l of the message eventID, or ""

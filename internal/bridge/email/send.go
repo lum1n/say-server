@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/smtp"
@@ -44,8 +45,12 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 	if m.ReplyTo != "" {
 		parent = m.ReplyTo
 	}
+	files, err := readFiles(ctx, m.Media)
+	if err != nil {
+		return "", err
+	}
 	now := time.Now()
-	raw, err := c.compose(to, id, subject, parent, m.Text, now)
+	raw, err := c.compose(to, id, subject, parent, m.Text, files, now)
 	if err != nil {
 		return "", err
 	}
@@ -78,8 +83,27 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 // rePrefix matches the reply prefixes of a subject, to add just one.
 var rePrefix = regexp.MustCompile(`^(?i)((re|aw|sv|fwd?)\s*:\s*)+`)
 
-// compose builds an RFC 5322 message.
-func (c *conn) compose(to []*mail.Address, id, subject, parent, text string, at time.Time) ([]byte, error) {
+// readFiles reads a message's files to mail them.
+func readFiles(ctx context.Context, media []bridge.Media) ([]file, error) {
+	var out []file
+	for _, m := range media {
+		r, err := m.Open(ctx)
+		if err != nil {
+			return nil, err
+		}
+		b, err := io.ReadAll(r)
+		r.Close()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, file{Name: m.Name, Mime: m.Mime, Data: b})
+	}
+	return out, nil
+}
+
+// compose builds an RFC 5322 message: plain text, or with files a
+// multipart/mixed of the text and the files as attachments.
+func (c *conn) compose(to []*mail.Address, id, subject, parent, text string, files []file, at time.Time) ([]byte, error) {
 	var h mail.Header
 	h.SetAddressList("From", []*mail.Address{{Name: c.cfg.Name, Address: c.cfg.Address}})
 	h.SetAddressList("To", to)
@@ -90,18 +114,58 @@ func (c *conn) compose(to []*mail.Address, id, subject, parent, text string, at 
 		h.SetMsgIDList("In-Reply-To", []string{parent})
 		h.SetMsgIDList("References", []string{parent})
 	}
-	h.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
-	h.Set("Content-Transfer-Encoding", "quoted-printable")
 	var buf bytes.Buffer
-	w, err := mail.CreateSingleInlineWriter(&buf, h)
+	body := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\n", "\r\n")
+	if len(files) == 0 {
+		h.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
+		h.Set("Content-Transfer-Encoding", "quoted-printable")
+		w, err := mail.CreateSingleInlineWriter(&buf, h)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := w.Write([]byte(body + "\r\n")); err != nil {
+			return nil, err
+		}
+		if err := w.Close(); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+	}
+	mw, err := mail.CreateWriter(&buf, h)
 	if err != nil {
 		return nil, err
 	}
-	body := strings.ReplaceAll(strings.ReplaceAll(text, "\r\n", "\n"), "\n", "\r\n")
-	if _, err := w.Write([]byte(body + "\r\n")); err != nil {
-		return nil, err
+	if text != "" {
+		var th mail.InlineHeader
+		th.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
+		th.Set("Content-Transfer-Encoding", "quoted-printable")
+		w, err := mw.CreateSingleInline(th)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := w.Write([]byte(body + "\r\n")); err != nil {
+			return nil, err
+		}
+		if err := w.Close(); err != nil {
+			return nil, err
+		}
 	}
-	if err := w.Close(); err != nil {
+	for _, f := range files {
+		var ah mail.AttachmentHeader
+		ah.SetContentType(f.Mime, nil)
+		ah.SetFilename(f.Name)
+		w, err := mw.CreateAttachment(ah)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := w.Write(f.Data); err != nil {
+			return nil, err
+		}
+		if err := w.Close(); err != nil {
+			return nil, err
+		}
+	}
+	if err := mw.Close(); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

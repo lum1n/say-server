@@ -8,6 +8,8 @@
 // Slack's events. Reactions need the reactions:read and reactions:write
 // scopes and the reaction_added and reaction_removed events; Slack names
 // emoji, so common ones are translated and others keep their :name:.
+// Files need files:read and files:write; see files.go for how a message
+// with files is sent and its echo known.
 // Web-client tokens (xoxc- with the d cookie) are refused:
 // using them breaks Slack's terms.
 //

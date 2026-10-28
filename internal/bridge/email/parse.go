@@ -2,6 +2,7 @@ package email
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -11,12 +12,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emersion/go-imap/v2"
 	gomessage "github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset" // mail in other charsets than UTF-8
 	"github.com/emersion/go-message/mail"
 	"golang.org/x/net/html"
 
 	"github.com/lum1n/say-server/internal/bridge"
+	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/media"
 )
 
 // message is a mail as say sees it.
@@ -28,20 +32,36 @@ type message struct {
 	Subject   string
 	InReplyTo string
 	Date      time.Time
-	// Text is the readable body: quotes and signature cut, attachments
-	// named.
+	// Text is the readable body: quotes and signature cut, and the
+	// attachments not in Files named.
 	Text string
+	// Files are the attachments read whole.
+	Files []file
 	// Sent says it was read from the sent folder, the only place mail
 	// is trusted to be the owner's: anyone can put their address in a
 	// From.
 	Sent bool
+	// Cut says raw was cut short at maxBody, so Files are left out; Size
+	// and UID say where to read all of it.
+	Cut  bool
+	Size int64
+	UID  imap.UID
+	// Folder is where the message was read.
+	Folder string
+}
+
+// file is an attachment of a mail.
+type file struct {
+	Name, Mime string
+	Data       []byte
 }
 
 // maxPart is how much of one text part is read.
 const maxPart = 256 << 10
 
-// parse reads a raw message, which may be cut short at maxBody.
-func parse(raw []byte) (*message, error) {
+// parse reads a raw message. Its attachments are kept as Files when
+// files is set and raw is the whole message; otherwise they are named.
+func parse(raw []byte, files bool) (*message, error) {
 	r, err := mail.CreateReader(bytes.NewReader(raw))
 	if r == nil {
 		return nil, err
@@ -72,7 +92,22 @@ func parse(raw []byte) (*message, error) {
 	m.Date, _ = h.Date()
 
 	var plain, htm string
-	var files []string
+	var named []string
+	// keep reads an attachment, or names it when it is not wanted or
+	// can't be read whole.
+	keep := func(name, typ string, body io.Reader) {
+		if typ == "" {
+			typ = "application/octet-stream"
+		}
+		if files {
+			b, err := io.ReadAll(io.LimitReader(body, media.DefaultMax+1))
+			if err == nil && len(b) > 0 && len(b) <= media.DefaultMax {
+				m.Files = append(m.Files, file{Name: name, Mime: typ, Data: b})
+				return
+			}
+		}
+		named = append(named, core.Attachment{Name: name, Mime: typ}.Placeholder())
+	}
 	for {
 		p, err := r.NextPart()
 		if err != nil && !(p != nil && gomessage.IsUnknownCharset(err)) {
@@ -88,12 +123,12 @@ func parse(raw []byte) (*message, error) {
 			case t == "text/html" && htm == "":
 				htm = readPart(p.Body)
 			case !strings.HasPrefix(t, "text/"):
-				files = append(files, partName(params["name"], t))
+				keep(partName(params["name"], t), t, p.Body)
 			}
 		case *mail.AttachmentHeader:
 			name, _ := ph.Filename()
 			t, _, _ := ph.ContentType()
-			files = append(files, partName(name, t))
+			keep(partName(name, t), t, p.Body)
 		}
 	}
 	body := plain
@@ -107,11 +142,9 @@ func parse(raw []byte) (*message, error) {
 	if body = stripQuotes(body); body != "" {
 		lines = append(lines, body)
 	}
-	for _, f := range files {
-		lines = append(lines, "[attachment: "+f+"]")
-	}
+	lines = append(lines, named...)
 	m.Text = strings.Join(lines, "\n")
-	if m.Text == "" {
+	if m.Text == "" && len(m.Files) == 0 {
 		m.Text = "[empty message]"
 	}
 	return m, nil
@@ -168,9 +201,22 @@ func (c *conn) incoming(m *message) (bridge.Incoming, bool) {
 		ID:      m.ID,
 		Author:  c.author(m, from),
 		Text:    m.Text,
+		Media:   mediaOf(m.Files),
 		Time:    m.Date,
 		ReplyTo: m.InReplyTo,
 	}, true
+}
+
+// mediaOf hands a mail's files to say, which reads them from memory.
+func mediaOf(files []file) []bridge.Media {
+	var out []bridge.Media
+	for _, f := range files {
+		out = append(out, bridge.Media{
+			Mime: f.Mime, Name: f.Name, Size: int64(len(f.Data)),
+			Open: func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(f.Data)), nil },
+		})
+	}
+	return out
 }
 
 // author is who wrote a message. Mail from the owner's address outside

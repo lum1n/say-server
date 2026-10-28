@@ -199,6 +199,13 @@ type Store interface {
 	// LastReactionAdd returns the latest event in which senderID added key
 	// to message eventID; ErrNotFound if there is none.
 	LastReactionAdd(ctx context.Context, eventID, senderID, key string) (core.Event, error)
+	// CreateMedia records an uploaded file; GetMedia returns ErrNotFound
+	// for an unknown id.
+	CreateMedia(ctx context.Context, m Media) error
+	GetMedia(ctx context.Context, id string) (Media, error)
+	// InstanceKey returns the instance's random secret named name, made on
+	// first use. Every node gets the same one.
+	InstanceKey(ctx context.Context, name string) ([]byte, error)
 	// StreamingFrom returns senderID's messages that are still streaming,
 	// oldest first.
 	StreamingFrom(ctx context.Context, senderID string) ([]core.Event, error)

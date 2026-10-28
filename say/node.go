@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,7 @@ import (
 	_ "github.com/lum1n/say-server/internal/bridge/networks" // registers every network
 	"github.com/lum1n/say-server/internal/bus"
 	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/media"
 	"github.com/lum1n/say-server/internal/password"
 	"github.com/lum1n/say-server/internal/store"
 )
@@ -62,6 +64,11 @@ type Config struct {
 	// where `say update` reports and say asks it to run, for
 	// GET /api/v1/node.
 	UpdateDir string
+	// MediaDir holds the files people send; by default "media" beside a
+	// SQLite DB, or data/media. Nodes of a cluster need it shared.
+	// MediaMax is the largest file taken; zero is 25 MiB.
+	MediaDir string
+	MediaMax int64
 
 	// Peers are host:port cluster addresses of other nodes. Setting them
 	// runs the NATS cluster bus, which needs a postgres:// DB.
@@ -122,6 +129,15 @@ func Open(ctx context.Context, c Config) (*Node, error) {
 		b.Close()
 		return nil, err
 	}
+	if c.MediaDir == "" {
+		c.MediaDir = defaultMediaDir(c.DB)
+	}
+	files, err := media.NewDisk(c.MediaDir)
+	if err != nil {
+		st.Close()
+		b.Close()
+		return nil, err
+	}
 	code, err := setupCode(ctx, st, c.SetupCode)
 	if err != nil {
 		st.Close()
@@ -143,7 +159,7 @@ func Open(ctx context.Context, c Config) (*Node, error) {
 	if code != "" && c.SetupWindow > 0 {
 		setupUntil = time.Now().Add(c.SetupWindow)
 	}
-	n.api = api.New(api.Config{Version: c.Version, Store: st, Bus: b, SetupCode: code, SetupUntil: setupUntil, UpdateDir: c.UpdateDir})
+	n.api = api.New(api.Config{Version: c.Version, Store: st, Bus: b, SetupCode: code, SetupUntil: setupUntil, UpdateDir: c.UpdateDir, Media: files, MediaMax: c.MediaMax})
 	n.handler = n.api.Handler()
 	if c.TrustProxy {
 		n.handler = forwardedHost(n.handler)
@@ -165,6 +181,15 @@ func Open(ctx context.Context, c Config) (*Node, error) {
 		bridges.Run(nctx)
 	}()
 	return n, nil
+}
+
+// defaultMediaDir is "media" beside a SQLite file, or data/media for
+// Postgres.
+func defaultMediaDir(dsn string) string {
+	if store.IsPostgres(dsn) {
+		return filepath.Join("data", "media")
+	}
+	return filepath.Join(filepath.Dir(dsn), "media")
 }
 
 func openBus(c Config) (bus.Bus, error) {

@@ -3,6 +3,7 @@ package telegram
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -15,6 +16,10 @@ import (
 // maxPeers bounds the peer cache kept in the state. Peers seen longest
 // ago are dropped first; a dropped one is found again through the dialogs.
 const maxPeers = 2000
+
+// maxSent bounds the messages kept in the state that say sent after the
+// first of one of its messages.
+const maxSent = 500
 
 // state is what a connection keeps between runs, saved as the bridge
 // state. It holds the MTProto session, the update sequence positions
@@ -32,6 +37,11 @@ type state struct {
 	Channels map[int64]int  `json:"channels,omitempty"` // pts per channel
 	// Peers are users, chats and channels by chat id ("user:42").
 	Peers map[string]*peer `json:"peers,omitempty"`
+	// Sent are the messages after the first that say sent for one of its
+	// messages, such as its second file, as "<chat id>/<message id>",
+	// newest last: the core knows the first only, so their echoes are
+	// dropped here.
+	Sent []string `json:"sent,omitempty"`
 }
 
 // peer is a cached user, chat or channel.
@@ -371,6 +381,30 @@ func (st *saved) evict() {
 		}
 	}
 	delete(st.s.Peers, oldest)
+}
+
+// sentToo notes messages sent for a message after its first.
+func (st *saved) sentToo(chat string, ids []int) {
+	if len(ids) == 0 {
+		return
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, id := range ids {
+		st.s.Sent = append(st.s.Sent, chat+"/"+strconv.Itoa(id))
+	}
+	if n := len(st.s.Sent) - maxSent; n > 0 {
+		st.s.Sent = append([]string(nil), st.s.Sent[n:]...)
+	}
+	st.changed(true)
+}
+
+// wasSentToo reports whether a message was sent after the first of one of
+// say's.
+func (st *saved) wasSentToo(chat, id string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return slices.Contains(st.s.Sent, chat+"/"+id)
 }
 
 // chatID is a say chat id: "user:42", "chat:7", "channel:9".

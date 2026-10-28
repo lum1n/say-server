@@ -1,9 +1,13 @@
 package say_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -29,8 +33,9 @@ type node struct {
 	srv   *api.Server
 	http  *httptest.Server
 	// down answers every request 503; lose makes home take the next
-	// message it is sent and then answer 502, as if the answer was lost.
-	down, lose atomic.Bool
+	// message it is sent and then answer 502, as if the answer was lost;
+	// old has no media routes, as a home from before files.
+	down, lose, old atomic.Bool
 }
 
 func newNode(t *testing.T) *node {
@@ -46,6 +51,10 @@ func newNode(t *testing.T) *node {
 	n.http = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if n.down.Load() {
 			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		if n.old.Load() && strings.Contains(r.URL.Path, "/media") {
+			http.NotFound(w, r)
 			return
 		}
 		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/messages") && n.lose.CompareAndSwap(true, false) {
@@ -308,6 +317,67 @@ func TestSync(t *testing.T) {
 	if p := prose(laptop.log(l.RoomID)); !strings.HasSuffix(p, "from the web | offline one | offline two | lost answer") {
 		t.Fatalf("laptop log = %s", p)
 	}
+
+	// Files go both ways, the same bytes on both sides.
+	file := func(n *node, e core.Event) string {
+		as := e.Attachments()
+		if len(as) != 1 {
+			return ""
+		}
+		r, err := n.srv.OpenMedia(ctx, as[0].Media)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		b, _ := io.ReadAll(r)
+		return fmt.Sprintf("%s %s %dx%d %s", as[0].Name, as[0].Mime, as[0].Width, as[0].Height, b)
+	}
+	last := func(n *node, roomID string) core.Event { l := n.log(roomID); return l[len(l)-1] }
+	var img bytes.Buffer
+	png.Encode(&img, image.NewGray(image.Rect(0, 0, 3, 2)))
+	part, err := laptop.srv.Upload(ctx, me, l.RoomID, bytes.NewReader(img.Bytes()), "image/png", "dot.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	withFile, err := laptop.srv.SendAs(ctx, me, l.RoomID, core.NewID(), []core.Part{core.TextPart("a dot"), part}, "", "", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "dot.png image/png 3x2 " + img.String()
+	eventually(t, "home has the file", func() bool { return file(home, last(home, room.ID)) == want })
+	if p := last(home, room.ID).Prose(); p != "a dot" {
+		t.Fatalf("home prose = %q", p)
+	}
+	homeFile := last(home, room.ID)
+	// An edit of its text keeps home's file.
+	if _, err := laptop.srv.EditAs(ctx, me, l.RoomID, withFile.ID, []core.Part{core.TextPart("a dot, edited"), part}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the edit is on home", func() bool {
+		e, err := home.store.GetEvent(ctx, homeFile.ID)
+		return err == nil && e.Prose() == "a dot, edited" && file(home, e) == want
+	})
+	bobPart, err := home.srv.Upload(ctx, bob, room.ID, strings.NewReader("a,b\n1,2\n"), "text/csv", "data.csv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := home.srv.SendAs(ctx, bob, room.ID, core.NewID(), []core.Part{bobPart}, "", "", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the laptop has Bob's file", func() bool {
+		return file(laptop, last(laptop, l.RoomID)) == "data.csv text/csv 0x0 a,b\n1,2\n"
+	})
+	// A home from before files gets the file named instead.
+	home.old.Store(true)
+	part, err = laptop.srv.Upload(ctx, me, l.RoomID, bytes.NewReader(img.Bytes()), "image/png", "again.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := laptop.srv.SendAs(ctx, me, l.RoomID, core.NewID(), []core.Part{part}, "", "", time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "home has the file named", func() bool { return last(home, room.ID).Prose() == "[image: again.png]" })
+	home.old.Store(false)
 
 	// Deleting the bridge unpairs the laptop.
 	var st struct{ Token string }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -36,16 +38,25 @@ type fakeAPI struct {
 	// canned answers per method, used before the normal ones.
 	canned map[string][]reply
 	nextID int64
+	// files are served by getFile and the download URL, by file id.
+	files map[string][]byte
 }
 
 // call is a request the fake got.
 type call struct {
 	method string
 	params map[string]any
+	file   *upload
+}
+
+// upload is a file sent in a multipart request.
+type upload struct {
+	field, name, mime string
+	data              []byte
 }
 
 func newFakeAPI(t *testing.T) *fakeAPI {
-	f := &fakeAPI{t: t, canned: map[string][]reply{}, nextID: 100}
+	f := &fakeAPI{t: t, canned: map[string][]reply{}, nextID: 100, files: map[string][]byte{}}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(f.srv.Close)
 	return f
@@ -62,6 +73,17 @@ func fail(code int, desc string) reply {
 }
 
 func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
+	if path, ok := strings.CutPrefix(r.URL.Path, "/file/bot"+token+"/files/"); ok {
+		f.mu.Lock()
+		data, ok := f.files[path]
+		f.mu.Unlock()
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write(data)
+		return
+	}
 	rest, ok := strings.CutPrefix(r.URL.Path, "/bot")
 	tok, method, ok2 := strings.Cut(rest, "/")
 	if !ok || !ok2 || tok != token {
@@ -69,9 +91,25 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var params map[string]any
-	json.NewDecoder(r.Body).Decode(&params)
+	var file *upload
+	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt == "multipart/form-data" {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			f.t.Errorf("multipart: %v", err)
+		}
+		params = map[string]any{}
+		for k, v := range r.MultipartForm.Value {
+			params[k] = v[0]
+		}
+		for field, hs := range r.MultipartForm.File {
+			fh, _ := hs[0].Open()
+			data, _ := io.ReadAll(fh)
+			file = &upload{field, hs[0].Filename, hs[0].Header.Get("Content-Type"), data}
+		}
+	} else {
+		json.NewDecoder(r.Body).Decode(&params)
+	}
 	f.mu.Lock()
-	f.calls = append(f.calls, call{method, params})
+	f.calls = append(f.calls, call{method, params, file})
 	if c := f.canned[method]; len(c) > 0 {
 		f.canned[method] = c[1:]
 		f.mu.Unlock()
@@ -101,7 +139,16 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		write(w, 200, map[string]any{"ok": true, "result": out})
-	case "sendMessage":
+	case "getFile":
+		id := params["file_id"].(string)
+		_, ok := f.files[id]
+		f.mu.Unlock()
+		if !ok {
+			write(w, 400, map[string]any{"ok": false, "error_code": 400, "description": "Bad Request: invalid file_id"})
+			return
+		}
+		write(w, 200, map[string]any{"ok": true, "result": map[string]any{"file_id": id, "file_path": "files/" + id}})
+	case "sendMessage", "sendPhoto", "sendDocument":
 		f.nextID++
 		id := f.nextID
 		f.mu.Unlock()
@@ -109,7 +156,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 	case "setMessageReaction":
 		f.mu.Unlock()
 		write(w, 200, map[string]any{"ok": true, "result": true})
-	case "editMessageText":
+	case "editMessageText", "editMessageCaption":
 		f.mu.Unlock()
 		write(w, 200, map[string]any{"ok": true, "result": map[string]any{"message_id": params["message_id"]}})
 	default:
@@ -292,14 +339,19 @@ func TestRun(t *testing.T) {
 	if len(got) != 4 {
 		t.Fatalf("got %d messages: %+v", len(got), got)
 	}
+	photo := got[0]
+	if len(photo.Media) != 1 || photo.Media[0].Name != "photo.jpg" {
+		t.Errorf("photo's media = %+v", photo.Media)
+	}
+	photo.Media = nil
 	want := bridge.Incoming{
 		Chat: bridge.RemoteChat{ID: "-1001", Name: "Crew"}, ID: "10",
 		Author: bridge.Author{ID: "7", Name: "Ada Lovelace"}, Text: "look", ReplyTo: "9", Time: time.Unix(1700000000, 0),
 	}
-	if !reflect.DeepEqual(got[0], want) {
+	if !reflect.DeepEqual(photo, want) {
 		t.Errorf("photo message = %+v", got[0])
 	}
-	if got[1].Text != "[document: plan.pdf]" || got[1].Author != (bridge.Author{ID: "8", Name: "bob"}) || got[1].ReplyTo != "" {
+	if got[1].Text != "" || len(got[1].Media) != 1 || got[1].Media[0].Name != "plan.pdf" || got[1].Author != (bridge.Author{ID: "8", Name: "bob"}) || got[1].ReplyTo != "" {
 		t.Errorf("document = %+v", got[1])
 	}
 	if !got[2].Edit || got[2].ID != "10" || got[2].Text != "look again" {
@@ -311,6 +363,131 @@ func TestRun(t *testing.T) {
 	gu := f.callsOf("getUpdates")[0].params
 	if gu["timeout"] != float64(50) || len(gu["allowed_updates"].([]any)) != 5 {
 		t.Errorf("getUpdates params = %v", gu)
+	}
+}
+
+func TestIncomingFiles(t *testing.T) {
+	f := newFakeAPI(t)
+	f.files["big"] = []byte("\xff\xd8 the photo")
+	f.push(
+		map[string]any{"update_id": 1, "message": map[string]any{
+			"message_id": 10, "from": ada(), "chat": group, "date": 1, "photo": []any{
+				map[string]any{"file_id": "small", "width": 90, "height": 60, "file_size": 900},
+				map[string]any{"file_id": "big", "width": 1280, "height": 853, "file_size": 15},
+			},
+		}},
+		map[string]any{"update_id": 2, "message": map[string]any{
+			"message_id": 11, "from": ada(), "chat": group, "date": 1, "caption": "huge",
+			"document": map[string]any{"file_id": "huge", "file_name": "film.mkv", "mime_type": "video/x-matroska", "file_size": 30 << 20},
+		}},
+		map[string]any{"update_id": 3, "edited_message": map[string]any{
+			"message_id": 10, "from": ada(), "chat": group, "date": 1, "caption": "now captioned",
+			"photo": []any{map[string]any{"file_id": "big", "width": 1280, "height": 853}},
+		}},
+	)
+	h := &fakeHost{chats: []string{"-1001"}}
+	c := newConn(t, f, h, "")
+	run(t, c)
+	eventually(t, "the offset is saved", func() bool { return h.lastState() == `{"offset":4}` })
+	got := h.received()
+	if len(got) != 3 {
+		t.Fatalf("got %d messages: %+v", len(got), got)
+	}
+	if got[0].Text != "" || len(got[0].Media) != 1 {
+		t.Fatalf("photo = %+v", got[0])
+	}
+	m := got[0].Media[0]
+	if m.Mime != "image/jpeg" || m.Width != 1280 || m.Height != 853 || m.Size != 15 {
+		t.Errorf("photo's media = %+v", m)
+	}
+	for range 2 {
+		r, err := m.Open(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(r)
+		r.Close()
+		if string(data) != "\xff\xd8 the photo" {
+			t.Errorf("photo reads %q", data)
+		}
+	}
+	// Too big for a bot to download: the caption alone, as before files.
+	if got[1].Text != "huge" || len(got[1].Media) != 0 {
+		t.Errorf("big document = %+v", got[1])
+	}
+	if !got[2].Edit || got[2].Text != "now captioned" || len(got[2].Media) != 0 {
+		t.Errorf("caption edit = %+v", got[2])
+	}
+}
+
+func TestSendFiles(t *testing.T) {
+	f := newFakeAPI(t)
+	c := newConn(t, f, &fakeHost{}, "")
+	file := func(mime, name, data string) bridge.Media {
+		return bridge.Media{Mime: mime, Name: name, Open: func(context.Context) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(data)), nil
+		}}
+	}
+	id, err := c.Send(context.Background(), bridge.Outgoing{Chat: "-1001/42", Sender: "Ada", Text: "look & see", ReplyTo: "9", Media: []bridge.Media{
+		file("image/png", "cat.png", "png bytes"),
+		file("application/pdf", `plan "v2".pdf`, "pdf bytes"),
+	}})
+	if err != nil || id != "101" {
+		t.Fatalf("Send = %q, %v", id, err)
+	}
+	if n := len(f.callsOf("sendMessage")); n != 0 {
+		t.Errorf("sent %d text messages", n)
+	}
+	photo := f.callsOf("sendPhoto")
+	if len(photo) != 1 {
+		t.Fatalf("sent %d photos", len(photo))
+	}
+	p := photo[0]
+	if p.file.field != "photo" || p.file.name != "cat.png" || p.file.mime != "image/png" || string(p.file.data) != "png bytes" {
+		t.Errorf("photo = %+v", p.file)
+	}
+	if p.params["caption"] != "<b>Ada</b>: look &amp; see" || p.params["parse_mode"] != "HTML" || p.params["chat_id"] != "-1001" || p.params["message_thread_id"] != "42" ||
+		!strings.Contains(p.params["reply_parameters"].(string), `"message_id":9`) {
+		t.Errorf("photo params = %v", p.params)
+	}
+	doc := f.callsOf("sendDocument")
+	if len(doc) != 1 || doc[0].file.name != `plan "v2".pdf` || string(doc[0].file.data) != "pdf bytes" || doc[0].file.mime != "application/pdf" {
+		t.Fatalf("document = %+v", doc)
+	}
+	if p := doc[0].params; p["caption"] != "<b>Ada</b>" || p["reply_parameters"] != nil {
+		t.Errorf("document params = %v", p)
+	}
+
+	// A text too long for a caption goes first, with the reply.
+	long := strings.Repeat("word ", 300)
+	if _, err := c.Send(context.Background(), bridge.Outgoing{Chat: "-1001", Sender: "Ada", Text: long, ReplyTo: "9", Media: []bridge.Media{file("image/jpeg", "a.jpg", "jpg")}}); err != nil {
+		t.Fatal(err)
+	}
+	if sent := f.callsOf("sendMessage"); len(sent) != 1 || sent[0].params["reply_parameters"] == nil {
+		t.Errorf("text = %+v", sent)
+	}
+	if p := f.callsOf("sendPhoto")[1].params; p["caption"] != "<b>Ada</b>" || p["reply_parameters"] != nil {
+		t.Errorf("photo after the text = %v", p)
+	}
+
+	// A file sent with no name or sender.
+	if _, err := c.Send(context.Background(), bridge.Outgoing{Chat: "-1001", Media: []bridge.Media{file("text/plain", "", "x")}}); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.callsOf("sendDocument")[1]; p.params["caption"] != nil || p.file.name != "file" {
+		t.Errorf("bare document = %+v %+v", p.params, p.file)
+	}
+}
+
+func TestEditCaption(t *testing.T) {
+	f := newFakeAPI(t)
+	f.can("editMessageText", fail(400, "Bad Request: there is no text in the message to edit"))
+	c := newConn(t, f, &fakeHost{}, "")
+	if err := c.Edit(context.Background(), bridge.Outgoing{Chat: "-1001", Sender: "Ada", Text: "better"}, "55"); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.callsOf("editMessageCaption"); len(p) != 1 || p[0].params["caption"] != "<b>Ada</b>: better" || p[0].params["message_id"] != float64(55) {
+		t.Errorf("caption edit = %+v", p)
 	}
 }
 
@@ -608,7 +785,7 @@ func TestSplit(t *testing.T) {
 	if len(got) != 3 || got[2] != "xxxxx" {
 		t.Errorf("hard split = %q", got)
 	}
-	if s := single("Ada", strings.Repeat("y ", 3000)); utf16Len(s) > maxText+len("<b></b>") || !strings.HasSuffix(s, "…") {
+	if s := single("Ada", strings.Repeat("y ", 3000), maxText); utf16Len(s) > maxText+len("<b></b>") || !strings.HasSuffix(s, "…") {
 		t.Errorf("single is %d units", utf16Len(s))
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -26,6 +27,11 @@ type Chat interface {
 	// EditAs changes as's final message eventID to parts and returns the
 	// edit event; an edit that changes nothing is store.ErrNotEditable.
 	EditAs(ctx context.Context, as core.Principal, roomID, eventID string, parts []core.Part) (core.Event, error)
+	// Upload keeps a file from as for roomID and returns its attachment
+	// part.
+	Upload(ctx context.Context, as core.Principal, roomID string, r io.Reader, mime, name string) (core.Part, error)
+	// OpenMedia reads a file people sent.
+	OpenMedia(ctx context.Context, mediaID string) (io.ReadCloser, error)
 	// RoomsChanged tells principalID's clients to reread their rooms and
 	// bridges.
 	RoomsChanged(ctx context.Context, principalID string)
@@ -57,6 +63,9 @@ var (
 	// comes back; older ones expire.
 	MaxDeliveryAge = 10 * time.Minute
 	sendTimeout    = 30 * time.Second
+	// mediaTimeout bounds fetching one file from a network, and sending a
+	// message that has files.
+	mediaTimeout = 3 * time.Minute
 	// retryFirst and retryMax bound the pause before Run is called again.
 	retryFirst = 2 * time.Second
 	retryMax   = time.Minute

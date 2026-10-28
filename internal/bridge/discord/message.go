@@ -3,6 +3,9 @@ package discord
 import (
 	"cmp"
 	"context"
+	"fmt"
+	"io"
+	"net/http"
 	"regexp"
 	"slices"
 	"strconv"
@@ -18,17 +21,15 @@ type message struct {
 	ChannelID string `json:"channel_id"`
 	Type      int    `json:"type"`
 	// Content is nil in an update that left the text alone.
-	Content         *string `json:"content"`
-	Timestamp       string  `json:"timestamp"`
-	EditedTimestamp string  `json:"edited_timestamp"`
-	Author          *user   `json:"author"`
-	WebhookID       string  `json:"webhook_id"`
-	ApplicationID   string  `json:"application_id"`
-	Mentions        []user  `json:"mentions"`
-	Attachments     []struct {
-		Filename string `json:"filename"`
-	} `json:"attachments"`
-	Reference *struct {
+	Content         *string      `json:"content"`
+	Timestamp       string       `json:"timestamp"`
+	EditedTimestamp string       `json:"edited_timestamp"`
+	Author          *user        `json:"author"`
+	WebhookID       string       `json:"webhook_id"`
+	ApplicationID   string       `json:"application_id"`
+	Mentions        []user       `json:"mentions"`
+	Attachments     []attachment `json:"attachments"`
+	Reference       *struct {
 		MessageID string `json:"message_id"`
 	} `json:"message_reference"`
 
@@ -36,6 +37,17 @@ type message struct {
 	// reaction, when set, makes this a reaction to message ID rather
 	// than the message itself.
 	reaction *reaction
+}
+
+// attachment is a file on Discord's CDN; its url is signed, and needs
+// no token.
+type attachment struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+	Size        int64  `json:"size"`
+	URL         string `json:"url"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
 }
 
 // reaction is a MESSAGE_REACTION_ADD or _REMOVE event.
@@ -168,7 +180,12 @@ func (c *conn) incoming(m message) (bridge.Incoming, bool) {
 		return bridge.Incoming{}, false
 	}
 	text := c.text(m)
-	if text == "" {
+	var files []bridge.Media
+	if !m.update {
+		// An edit keeps the files the message was sent with.
+		files = c.files(m)
+	}
+	if text == "" && len(files) == 0 {
 		return bridge.Incoming{}, false
 	}
 	c.mu.Lock()
@@ -185,6 +202,7 @@ func (c *conn) incoming(m message) (bridge.Incoming, bool) {
 		ID:     m.ID,
 		Author: bridge.Author{ID: m.Author.ID, Name: m.Author.name(), Self: isSelf},
 		Text:   text,
+		Media:  files,
 		Edit:   m.update,
 	}
 	if !m.update {
@@ -213,7 +231,7 @@ func (c *conn) ownHook(id string) bool {
 var markup = regexp.MustCompile(`<(@!?|@&|#)(\d+)>|<a?:(\w+):\d+>`)
 
 // text renders a message as plain text: mentions by name, custom emoji
-// by name, and a line per attachment.
+// by name, and a line per attachment with no file to fetch.
 func (c *conn) text(m message) string {
 	var s string
 	if m.Content != nil {
@@ -243,12 +261,49 @@ func (c *conn) text(m message) string {
 	var b strings.Builder
 	b.WriteString(strings.TrimSpace(s))
 	for _, a := range m.Attachments {
+		if a.URL != "" {
+			continue // handed over as media
+		}
 		if b.Len() > 0 {
 			b.WriteByte('\n')
 		}
 		b.WriteString("[attachment: " + a.Filename + "]")
 	}
 	return b.String()
+}
+
+// files are a message's attachments, fetched from the CDN.
+func (c *conn) files(m message) []bridge.Media {
+	var out []bridge.Media
+	for _, a := range m.Attachments {
+		if a.URL == "" {
+			continue
+		}
+		u := a.URL
+		out = append(out, bridge.Media{
+			Mime: a.ContentType, Name: a.Filename, Size: a.Size, Width: a.Width, Height: a.Height,
+			Open: func(ctx context.Context) (io.ReadCloser, error) { return c.fetch(ctx, u) },
+		})
+	}
+	return out
+}
+
+// fetch downloads a file from Discord's CDN.
+func (c *conn) fetch(ctx context.Context, u string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", userAgent)
+	resp, err := c.long().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("discord: attachment: HTTP %d", resp.StatusCode)
+	}
+	return resp.Body, nil
 }
 
 // Snowflakes are ids that grow with time: milliseconds since 2015 in

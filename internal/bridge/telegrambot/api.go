@@ -52,8 +52,11 @@ const (
 	maxRetryAfter = 2 * time.Minute
 	// maxAttempts bounds the tries of a rate-limited call.
 	maxAttempts = 5
-	// callTimeout is how long one HTTP request may take, but getUpdates.
+	// callTimeout is how long one HTTP request may take, but getUpdates
+	// and uploads.
 	callTimeout = 30 * time.Second
+	// uploadTimeout is how long a request that carries a file may take.
+	uploadTimeout = 3 * time.Minute
 )
 
 // call posts a Bot API method with params as JSON and decodes the result
@@ -69,8 +72,13 @@ func (c *conn) call(ctx context.Context, method string, params, out any) error {
 	if method == "getUpdates" {
 		timeout = time.Duration(c.poll)*time.Second + 20*time.Second
 	}
+	return c.do(ctx, method, body, "application/json", timeout, out)
+}
+
+// do posts a request body of the given type, as call does.
+func (c *conn) do(ctx context.Context, method string, body []byte, contentType string, timeout time.Duration, out any) error {
 	for attempt := 1; ; attempt++ {
-		status, data, err := c.post(ctx, method, body, timeout)
+		status, data, err := c.post(ctx, method, body, contentType, timeout)
 		if err != nil {
 			return err
 		}
@@ -110,14 +118,14 @@ func (c *conn) call(ctx context.Context, method string, params, out any) error {
 }
 
 // post makes one request and returns the status and body.
-func (c *conn) post(ctx context.Context, method string, body []byte, timeout time.Duration) (int, []byte, error) {
+func (c *conn) post(ctx context.Context, method string, body []byte, contentType string, timeout time.Duration) (int, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.api+"bot"+c.cfg.Token+"/"+method, bytes.NewReader(body))
 	if err != nil {
 		return 0, nil, c.redact(err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, nil, c.redact(err)
@@ -128,6 +136,33 @@ func (c *conn) post(ctx context.Context, method string, body []byte, timeout tim
 		return 0, nil, c.redact(err)
 	}
 	return resp.StatusCode, data, nil
+}
+
+// download reads a file people sent, by its id. The Bot API serves files
+// of up to 20 MB.
+func (c *conn) download(ctx context.Context, fileID string) (io.ReadCloser, error) {
+	var f struct {
+		FilePath string `json:"file_path"`
+	}
+	if err := c.call(ctx, "getFile", map[string]any{"file_id": fileID}, &f); err != nil {
+		return nil, err
+	}
+	if f.FilePath == "" {
+		return nil, errors.New("telegram bot: getFile: no file path")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.api+"file/bot"+c.cfg.Token+"/"+f.FilePath, nil)
+	if err != nil {
+		return nil, c.redact(err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, c.redact(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("telegram bot: download: HTTP %d", resp.StatusCode)
+	}
+	return resp.Body, nil
 }
 
 // redact takes the token out of an error: it is in the URL's path, and

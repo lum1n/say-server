@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lum1n/say-server/internal/core"
 )
 
 // Client calls the say API as one principal, on an embedded node or a
@@ -145,6 +148,16 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("say: %d %s: %s", e.Status, e.Code, e.Message)
 }
 
+// Code is the API's error code of err, or "" for an error the API did
+// not describe, such as a route a server does not have.
+func Code(err error) string {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Code
+	}
+	return ""
+}
+
 // do sends a request with body as JSON and decodes the answer into out.
 func (c *Client) do(ctx context.Context, method, path string, body, out any, header ...string) error {
 	var rd io.Reader
@@ -154,13 +167,29 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, hea
 			return err
 		}
 		rd = bytes.NewReader(b)
+		header = append(header, "Content-Type", "application/json")
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+"/api/v1"+path, rd)
+	res, err := c.request(ctx, method, path, rd, header...)
 	if err != nil {
 		return err
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	defer res.Body.Close()
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		return err
+	}
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(data, out)
+}
+
+// request sends a request and returns a successful answer, whose body
+// the caller closes, or the API's error.
+func (c *Client) request(ctx context.Context, method, path string, body io.Reader, header ...string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+"/api/v1"+path, body)
+	if err != nil {
+		return nil, err
 	}
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)
@@ -170,24 +199,18 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any, hea
 	}
 	res, err := c.HTTP.Do(req)
 	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	data, err := io.ReadAll(res.Body)
-	if err != nil {
-		return err
+		return nil, err
 	}
 	if res.StatusCode >= 300 {
+		defer res.Body.Close()
+		data, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
 		var e struct {
 			Error struct{ Code, Message string }
 		}
 		json.Unmarshal(data, &e)
-		return &Error{Status: res.StatusCode, Code: e.Error.Code, Message: e.Error.Message}
+		return nil, &Error{Status: res.StatusCode, Code: e.Error.Code, Message: e.Error.Message}
 	}
-	if out == nil {
-		return nil
-	}
-	return json.Unmarshal(data, out)
+	return res, nil
 }
 
 func (c *Client) Me(ctx context.Context) (Principal, error) {
@@ -259,6 +282,13 @@ func (c *Client) Events(ctx context.Context, roomID string, q EventsQuery) ([]Ev
 	return out.Events, c.do(ctx, "GET", "/rooms/"+url.PathEscape(roomID)+"/events?"+v.Encode(), nil, &out)
 }
 
+// Event reads one event of a room; a message's Parts are its latest
+// content.
+func (c *Client) Event(ctx context.Context, roomID, eventID string) (Event, error) {
+	var e Event
+	return e, c.do(ctx, "GET", "/rooms/"+url.PathEscape(roomID)+"/events/"+url.PathEscape(eventID), nil, &e)
+}
+
 // Send posts a message. Retrying with the same idempotencyKey is safe:
 // the server returns the message the first attempt created. An empty key
 // gets a random one.
@@ -288,6 +318,32 @@ func (c *Client) React(ctx context.Context, roomID, eventID, key string, removed
 	}
 	var e Event
 	return e, c.do(ctx, method, "/rooms/"+url.PathEscape(roomID)+"/messages/"+url.PathEscape(eventID)+"/reactions/"+url.PathEscape(key), nil, &e)
+}
+
+// Upload sends a file to roomID, to attach to a message the client sends
+// there: its Part goes in the message's parts. The server reads its type
+// from the bytes when mime is empty.
+func (c *Client) Upload(ctx context.Context, roomID string, r io.Reader, mime, name string) (core.Attachment, error) {
+	var header []string
+	if mime != "" {
+		header = []string{"Content-Type", mime}
+	}
+	res, err := c.request(ctx, "POST", "/rooms/"+url.PathEscape(roomID)+"/media?"+url.Values{"name": {name}}.Encode(), r, header...)
+	if err != nil {
+		return core.Attachment{}, err
+	}
+	defer res.Body.Close()
+	var a core.Attachment
+	return a, json.NewDecoder(res.Body).Decode(&a)
+}
+
+// OpenMedia reads a file sent to roomID.
+func (c *Client) OpenMedia(ctx context.Context, roomID, mediaID string) (io.ReadCloser, error) {
+	res, err := c.request(ctx, "GET", "/rooms/"+url.PathEscape(roomID)+"/media/"+url.PathEscape(mediaID), nil)
+	if err != nil {
+		return nil, err
+	}
+	return res.Body, nil
 }
 
 // Device is a token for one of a person's devices, from Pair.

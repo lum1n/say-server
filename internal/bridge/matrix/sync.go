@@ -81,6 +81,10 @@ type event struct {
 	// Redacts is the event a redaction removes; rooms of version 11 and
 	// later put it in the content instead.
 	Redacts string `json:"redacts"`
+	// Unsigned.TransactionID is set on events this session sent.
+	Unsigned struct {
+		TransactionID string `json:"transaction_id"`
+	} `json:"unsigned"`
 }
 
 func (e event) time() time.Time { return time.UnixMilli(e.TS) }

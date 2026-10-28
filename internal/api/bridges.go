@@ -344,7 +344,7 @@ func (s *Server) hook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+	r.Body = http.MaxBytesReader(w, r.Body, s.hookBody())
 	msgs, err := n.Hook(bridge.Info{ID: b.ID, Mode: b.Mode, Config: b.Config, State: b.State}, r)
 	switch {
 	case errors.Is(err, bridge.ErrUnauthorized):
@@ -669,3 +669,7 @@ func (s *Server) DeliveryChanged(ctx context.Context, roomID, eventID string) {
 	}
 	s.publishData(ctx, bus.RoomDeliverySubject(roomID), data)
 }
+
+// hookBody bounds a hook request: files come as base64 in the body, so a
+// file at the media limit fits.
+func (s *Server) hookBody() int64 { return s.mediaMax*4/3 + maxBody }

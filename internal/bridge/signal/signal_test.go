@@ -2,9 +2,11 @@ package signal
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -399,6 +401,74 @@ func TestReceive(t *testing.T) {
 	m = r.next()
 	if m.ID != "u-carol:7000" || m.Author.Name != "Carol" || m.Chat.Name != "Carol" {
 		t.Fatalf("got %+v", m)
+	}
+}
+
+// Attachments signal-cli saved are handed over as files; one it could not
+// download is named in the text.
+func TestReceiveFiles(t *testing.T) {
+	r := start(t, true, &state{Account: fakeNumber})
+	r.waitConnected()
+	os.MkdirAll(filepath.Join(r.dir, "attachments"), 0o700)
+	os.WriteFile(filepath.Join(r.dir, "attachments", "a1.jpg"), []byte("jpeg bytes"), 0o600)
+
+	r.push(`{"sourceUuid":"u-bob","timestamp":1000,"dataMessage":{"timestamp":1000,"attachments":[
+		{"id":"a1.jpg","contentType":"image/jpeg","size":10,"width":4,"height":3},
+		{"contentType":"video/mp4","filename":"big.mp4"}]}}`)
+	m := r.next()
+	if m.Text != "[attachment: big.mp4]" || len(m.Media) != 1 {
+		t.Fatalf("got %+v", m)
+	}
+	f := m.Media[0]
+	if f.Mime != "image/jpeg" || f.Name != "a1.jpg" || f.Size != 10 || f.Width != 4 || f.Height != 3 {
+		t.Fatalf("media %+v", f)
+	}
+	rc, err := f.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(rc)
+	rc.Close()
+	if string(data) != "jpeg bytes" {
+		t.Fatalf("read %q", data)
+	}
+
+	// A file alone, and an edit, which keeps the files it was sent with.
+	r.push(`{"sourceUuid":"u-bob","timestamp":1100,"editMessage":{"targetSentTimestamp":1000,"dataMessage":{"timestamp":1100,"message":"cat",
+		"attachments":[{"id":"a1.jpg","contentType":"image/jpeg"}]}}}`)
+	if m = r.next(); !m.Edit || m.Text != "cat" || len(m.Media) != 0 {
+		t.Fatalf("edit %+v", m)
+	}
+	r.push(`{"sourceUuid":"u-bob","timestamp":1200,"dataMessage":{"timestamp":1200,"attachments":[{"id":"../x","contentType":"image/png"}]}}`)
+	m = r.next()
+	if _, err := m.Media[0].Open(context.Background()); err == nil {
+		t.Fatal("opened a file outside the attachments directory")
+	}
+}
+
+func TestSendFiles(t *testing.T) {
+	r := start(t, true, &state{Account: fakeNumber})
+	r.waitConnected()
+	file := func(data string) func(context.Context) (io.ReadCloser, error) {
+		return func(context.Context) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(data)), nil }
+	}
+	_, err := r.c.Send(context.Background(), bridge.Outgoing{Chat: "user:u-bob", ReplyTo: "u-bob:2000", Media: []bridge.Media{
+		{Mime: "image/png", Name: "my cat;1.png", Open: file("png bytes")},
+		{Mime: "application/pdf", Open: file("pdf")},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sends := r.requests("send")
+	if len(sends) != 1 || sends[0]["quoteTimestamp"] != float64(2000) {
+		t.Fatalf("sends %v", sends)
+	}
+	want := []any{
+		"data:image/png;filename=my+cat%3B1.png;base64," + base64.StdEncoding.EncodeToString([]byte("png bytes")),
+		"data:application/pdf;base64," + base64.StdEncoding.EncodeToString([]byte("pdf")),
+	}
+	if got := sends[0]["attachments"]; fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("attachments %v", got)
 	}
 }
 

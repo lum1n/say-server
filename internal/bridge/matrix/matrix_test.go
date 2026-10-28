@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -86,7 +87,7 @@ func TestLoginBackfillAndReceive(t *testing.T) {
 		{ID: ids["reply"], Author: bridge.Author{ID: "@bob:hs", Name: "Bob"}, Text: "how are you?", ReplyTo: ids["hey"]},
 		{ID: ids["hi"], Author: bridge.Author{ID: "@bob:hs", Name: "Bob"}, Text: "hi there", Edit: true},
 		{ID: ids["secret"], Author: bridge.Author{ID: "@bob:hs", Name: "Bob"}, Text: encryptedText},
-		{ID: ids["club"], Author: bridge.Author{ID: "@cy:hs", Name: "Cy"}, Text: "[image: cat.png] mxc://hs/cat"},
+		{ID: ids["club"], Author: bridge.Author{ID: "@cy:hs", Name: "Cy"}},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("backfill: got %d messages, want %d: %+v", len(got), len(want), got)
@@ -107,6 +108,9 @@ func TestLoginBackfillAndReceive(t *testing.T) {
 	}
 	if c := got[5].Chat; c.ID != "!club:hs" || c.Name != "Book club" || c.Direct {
 		t.Errorf("club chat: %+v", c)
+	}
+	if m := got[5].Media; len(m) != 1 || m[0].Name != "cat.png" {
+		t.Errorf("club image: %+v", m)
 	}
 
 	st := h.saved()
@@ -158,6 +162,97 @@ func TestSendAndEdit(t *testing.T) {
 	_, err = c.Send(ctx, bridge.Outgoing{Chat: "!nope:hs", EventID: "say2", Text: "x"})
 	if !errors.Is(err, bridge.ErrRejected) {
 		t.Errorf("send to a room not joined: %v, want a rejection", err)
+	}
+}
+
+// Files come in as media read from the media repository, and go out
+// uploaded, as events after the text; only the first event's echo comes
+// in, as the message say sent.
+func TestFiles(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		f := newFakeServer(t)
+		f.legacyMedia = legacy
+		dm, _ := seed(f)
+		f.media["pic"] = fakeMedia{mime: "image/png", data: "png bytes"}
+		h := newFakeHost()
+		_, done := start(t, map[string]any{"homeserver": f.URL, "user_id": "@ada:hs", "password": "secret"}, nil, h)
+		connected(t, h, done)
+		ctx := context.Background()
+
+		id := f.add(dm, "@bob:hs", time.Now(), map[string]any{"msgtype": "m.image", "body": "look", "filename": "pic.png", "url": "mxc://hs/pic",
+			"info": map[string]any{"mimetype": "image/png", "size": 9, "w": 4, "h": 3.0}})
+		in := h.waitFor(t, "the image", func(m bridge.Incoming) bool { return m.ID == id })
+		if in.Text != "look" || len(in.Media) != 1 {
+			t.Fatalf("image: %+v", in)
+		}
+		if m := in.Media[0]; m.Mime != "image/png" || m.Name != "pic.png" || m.Size != 9 || m.Width != 4 || m.Height != 3 {
+			t.Fatalf("media: %+v", m)
+		}
+		r, err := in.Media[0].Open(ctx)
+		if err != nil {
+			t.Fatalf("legacy %v: %v", legacy, err)
+		}
+		data, _ := io.ReadAll(r)
+		r.Close()
+		if string(data) != "png bytes" {
+			t.Fatalf("read %q", data)
+		}
+	}
+
+	f := newFakeServer(t)
+	dm, ids := seed(f)
+	h := newFakeHost()
+	c, done := start(t, map[string]any{"homeserver": f.URL, "user_id": "@ada:hs", "password": "secret"}, nil, h)
+	connected(t, h, done)
+	file := func(data string) func(context.Context) (io.ReadCloser, error) {
+		return func(context.Context) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(data)), nil }
+	}
+	out := bridge.Outgoing{Chat: dm, EventID: "say1", Text: "see", ReplyTo: ids["hi"], Media: []bridge.Media{
+		{Mime: "image/jpeg", Name: "cat.jpg", Width: 4, Height: 3, Open: file("jpeg bytes")},
+		{Mime: "application/pdf", Name: "a.pdf", Open: file("pdf")},
+	}}
+	id, err := c.Send(context.Background(), out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := f.add(dm, "@bob:hs", time.Now(), map[string]any{"msgtype": "m.text", "body": "after"})
+	h.waitFor(t, "the message after", func(m bridge.Incoming) bool { return m.ID == last })
+	var echoes []bridge.Incoming
+	for _, m := range h.messages() {
+		if m.Author.Self && m.Time.After(time.Now().Add(-time.Minute)) {
+			echoes = append(echoes, m)
+		}
+	}
+	if len(echoes) != 1 || echoes[0].ID != id || echoes[0].Text != "see" || echoes[0].ReplyTo != ids["hi"] {
+		t.Fatalf("echoes: %+v", echoes)
+	}
+
+	sent := f.sent("@ada:hs")
+	if len(sent) < 3 {
+		t.Fatalf("sent %+v", sent)
+	}
+	img, pdf := sent[len(sent)-2], sent[len(sent)-1]
+	info := img["info"].(map[string]any)
+	if img["msgtype"] != "m.image" || img["body"] != "cat.jpg" || info["mimetype"] != "image/jpeg" || info["size"] != 10.0 || info["w"] != 4.0 || img["m.relates_to"] != nil {
+		t.Errorf("image event: %+v", img)
+	}
+	if pdf["msgtype"] != "m.file" || pdf["filename"] != "a.pdf" {
+		t.Errorf("file event: %+v", pdf)
+	}
+	f.mu.Lock()
+	m := f.media[strings.TrimPrefix(img["url"].(string), "mxc://hs/")]
+	f.mu.Unlock()
+	if m.data != "jpeg bytes" || m.mime != "image/jpeg" || m.name != "cat.jpg" {
+		t.Errorf("upload: %+v", m)
+	}
+
+	// Files alone: the reply goes on the first.
+	if _, err := c.Send(context.Background(), bridge.Outgoing{Chat: dm, EventID: "say2", ReplyTo: ids["hi"], Media: out.Media[:1]}); err != nil {
+		t.Fatal(err)
+	}
+	sent = f.sent("@ada:hs")
+	if e := sent[len(sent)-1]; e["msgtype"] != "m.image" || e["m.relates_to"] == nil {
+		t.Errorf("file reply: %+v", e)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -33,6 +34,14 @@ type fakeServer struct {
 	direct    map[string][]string
 	lookups   []string // state paths looked up
 	lastSince string
+	media     map[string]fakeMedia // media id: file
+	// legacyMedia makes the homeserver one without the authenticated
+	// media API.
+	legacyMedia bool
+}
+
+type fakeMedia struct {
+	name, mime, data string
 }
 
 type fakeRoom struct {
@@ -53,6 +62,7 @@ func newFakeServer(t *testing.T) *fakeServer {
 		rooms:     map[string]*fakeRoom{},
 		txns:      map[string]string{},
 		direct:    map[string][]string{},
+		media:     map[string]fakeMedia{},
 	}
 	f.changed = sync.NewCond(&f.mu)
 	mux := http.NewServeMux()
@@ -68,6 +78,9 @@ func newFakeServer(t *testing.T) *fakeServer {
 	mux.HandleFunc("GET "+v3+"/rooms/{room}/event/{event}", f.auth(f.event))
 	mux.HandleFunc("GET "+v3+"/rooms/{room}/joined_members", f.auth(f.joinedMembers))
 	mux.HandleFunc("GET "+v3+"/user/{user}/account_data/{type}", f.auth(f.accountData))
+	mux.HandleFunc("POST /_matrix/media/v3/upload", f.auth(f.upload))
+	mux.HandleFunc("GET /_matrix/client/v1/media/download/{server}/{id}", f.auth(f.download))
+	mux.HandleFunc("GET /_matrix/media/v3/download/{server}/{id}", func(w http.ResponseWriter, r *http.Request) { f.download(w, r, "", "") })
 	f.Server = httptest.NewServer(mux)
 	t.Cleanup(func() {
 		f.mu.Lock()
@@ -246,6 +259,45 @@ func (f *fakeServer) send(w http.ResponseWriter, r *http.Request, user, token st
 	f.stream[len(f.stream)-1].ev["unsigned"] = map[string]string{"transaction_id": r.PathValue("txn")}
 	f.txns[key] = id
 	reply(w, 200, map[string]string{"event_id": id})
+}
+
+func (f *fakeServer) upload(w http.ResponseWriter, r *http.Request, user, token string) {
+	data, _ := io.ReadAll(r.Body)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id := fmt.Sprintf("m%d", len(f.media)+1)
+	f.media[id] = fakeMedia{name: r.URL.Query().Get("filename"), mime: r.Header.Get("Content-Type"), data: string(data)}
+	reply(w, 200, map[string]string{"content_uri": "mxc://hs/" + id})
+}
+
+func (f *fakeServer) download(w http.ResponseWriter, r *http.Request, user, token string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	legacy := strings.HasPrefix(r.URL.Path, "/_matrix/media/")
+	if f.legacyMedia != legacy {
+		fail(w, http.StatusNotFound, "M_UNRECOGNIZED")
+		return
+	}
+	m, ok := f.media[r.PathValue("id")]
+	if r.PathValue("server") != "hs" || !ok {
+		fail(w, http.StatusNotFound, "M_NOT_FOUND")
+		return
+	}
+	w.Header().Set("Content-Type", m.mime)
+	io.WriteString(w, m.data)
+}
+
+// sent returns the contents of the messages a user sent, in order.
+func (f *fakeServer) sent(user string) []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []map[string]any
+	for _, e := range f.stream {
+		if e.ev["sender"] == user && e.ev["type"] == "m.room.message" {
+			out = append(out, e.ev["content"].(map[string]any))
+		}
+	}
+	return out
 }
 
 // redact logs a redaction of an event, with redacts at the top level as

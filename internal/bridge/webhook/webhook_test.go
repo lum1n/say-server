@@ -1,9 +1,12 @@
 package webhook
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,6 +107,75 @@ func TestReactions(t *testing.T) {
 		default:
 			if sent != nil {
 				t.Errorf("%s got a reaction: %v", format, sent)
+			}
+		}
+	}
+}
+
+func TestAttachments(t *testing.T) {
+	info := bridge.Info{Config: json.RawMessage(`{"token":"t"}`)}
+	post := func(body string) ([]bridge.Incoming, error) {
+		r := httptest.NewRequest(http.MethodPost, "/hook?token=t", strings.NewReader(body))
+		return hook(info, r)
+	}
+	png := []byte("\x89PNG\r\n\x1a\n...")
+	got, err := post(`{"chat":"alerts","attachments":[{"name":"graph.png","mime":"image/png","data":"` + base64.StdEncoding.EncodeToString(png) + `"}]}`)
+	if err != nil || len(got) != 1 || len(got[0].Media) != 1 {
+		t.Fatalf("a file without text: %+v %v", got, err)
+	}
+	f := got[0].Media[0]
+	r, err := f.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(r)
+	if f.Name != "graph.png" || f.Mime != "image/png" || f.Size != int64(len(png)) || !bytes.Equal(b, png) || got[0].Text != "" {
+		t.Errorf("file = %+v %q", f, b)
+	}
+	for _, body := range []string{
+		`{"text":"x","attachments":[{"name":"a","data":"not base64!"}]}`,
+		`{"text":"x","attachments":[{"name":"a","data":""}]}`,
+		`{"attachments":[]}`,
+	} {
+		if _, err := post(body); err == nil {
+			t.Errorf("%s was taken", body)
+		}
+	}
+
+	var sent map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sent = nil
+		json.NewDecoder(r.Body).Decode(&sent)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	m := bridge.Outgoing{Chat: "c", EventID: "e1", Sender: "Ada", Media: []bridge.Media{{
+		Mime: "image/png", Name: "graph.png", Size: int64(len(png)),
+		Open: func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(png)), nil },
+	}}}
+	for _, format := range []string{"say", "slack"} {
+		c, err := open(bridge.Info{Config: json.RawMessage(`{"token":"t","url":"` + srv.URL + `","format":"` + format + `"}`)}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := c.Send(context.Background(), m); err != nil {
+			t.Fatal(err)
+		}
+		switch format {
+		case "say":
+			as, _ := sent["attachments"].([]any)
+			if len(as) != 1 {
+				t.Fatalf("say: %v", sent)
+			}
+			a := as[0].(map[string]any)
+			data, _ := base64.StdEncoding.DecodeString(a["data"].(string))
+			if a["name"] != "graph.png" || a["mime"] != "image/png" || !bytes.Equal(data, png) {
+				t.Errorf("say attachment: %v", a)
+			}
+		default:
+			// Slack's webhooks take no files: they are named.
+			if sent["text"] != "*Ada*: [image: graph.png]" {
+				t.Errorf("slack: %v", sent)
 			}
 		}
 	}
