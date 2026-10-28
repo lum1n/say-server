@@ -203,6 +203,10 @@ type Store interface {
 	// for an unknown id.
 	CreateMedia(ctx context.Context, m Media) error
 	GetMedia(ctx context.Context, id string) (Media, error)
+	// DeleteUnusedMedia deletes the records of files uploaded before the
+	// cutoff that no event's parts name, and returns their ids so the
+	// caller can delete the bytes.
+	DeleteUnusedMedia(ctx context.Context, before time.Time) ([]string, error)
 	// InstanceKey returns the instance's random secret named name, made on
 	// first use. Every node gets the same one.
 	InstanceKey(ctx context.Context, name string) ([]byte, error)

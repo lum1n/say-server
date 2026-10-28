@@ -275,3 +275,37 @@ func (s *Server) OpenMedia(ctx context.Context, id string) (io.ReadCloser, error
 	}
 	return f, err
 }
+
+// mediaGrace is how long an upload may wait for its message before it counts
+// as abandoned.
+const mediaGrace = 24 * time.Hour
+
+// SweepMedia deletes uploads that no message was ever sent with, once they
+// are older than a day, and their bytes. It returns how many it removed.
+func (s *Server) SweepMedia(ctx context.Context) (int, error) {
+	ids, err := s.store.DeleteUnusedMedia(ctx, time.Now().Add(-mediaGrace))
+	for _, id := range ids {
+		if derr := s.media.Delete(context.WithoutCancel(ctx), id); derr != nil {
+			slog.Warn("deleting an unused upload", "media", id, "err", derr)
+		}
+	}
+	return len(ids), err
+}
+
+// RunMediaSweep sweeps every hour until ctx ends.
+func (s *Server) RunMediaSweep(ctx context.Context) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		if n, err := s.SweepMedia(ctx); err != nil {
+			slog.Warn("sweeping uploads", "err", err)
+		} else if n > 0 {
+			slog.Info("removed unused uploads", "count", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}

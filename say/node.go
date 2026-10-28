@@ -170,6 +170,7 @@ func Open(ctx context.Context, c Config) (*Node, error) {
 		IdleConnTimeout:     time.Minute,
 	}}
 	n.serve(n.mem)
+	go n.api.RunMediaSweep(nctx)
 	runner := agents.New(agents.Config{Store: st, Bus: b, Chat: n.api, Holder: c.Holder, Version: c.Version})
 	go func() {
 		defer close(n.agents)
