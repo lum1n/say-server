@@ -15,6 +15,7 @@ import (
 
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/telegram/auth"
+	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/telegram/updates/hook"
 	"github.com/gotd/td/tg"
@@ -56,6 +57,13 @@ func (h *fakeHost) Ask(ctx context.Context, p bridge.Prompt) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.prompts = append(h.prompts, p)
+	if p.Kind == "qr" {
+		// A QR code is never answered; it shows until cancelled.
+		h.mu.Unlock()
+		<-ctx.Done()
+		h.mu.Lock()
+		return "", ctx.Err()
+	}
 	if len(h.answers) == 0 {
 		return "", errors.New("no answer")
 	}
@@ -225,7 +233,7 @@ func (a *fakeAuth) Password(_ context.Context, pw string) (*tg.AuthAuthorization
 func TestLoginAsksCodeAndPassword(t *testing.T) {
 	h := &fakeHost{answers: []string{"11111", "12 345", "wrong", "secret"}}
 	a := &fakeAuth{code: "12345", password: "secret"}
-	if err := login(context.Background(), a, "+4712345678", h); err != nil {
+	if err := login(context.Background(), a, nil, nil, "+4712345678", h); err != nil {
 		t.Fatal(err)
 	}
 	if !a.signedIn {
@@ -243,9 +251,76 @@ func TestLoginAsksCodeAndPassword(t *testing.T) {
 	}
 }
 
+// fakeQR plays the QR login: it shows a token, then ends with err.
+type fakeQR struct {
+	h   *fakeHost
+	err error
+}
+
+func (q *fakeQR) Auth(ctx context.Context, _ qrlogin.LoggedIn, show func(context.Context, qrlogin.Token) error, _ ...int64) (*tg.AuthAuthorization, error) {
+	if err := show(ctx, qrlogin.NewToken([]byte("tok"), 0)); err != nil {
+		return nil, err
+	}
+	// The prompt is asked for in the background.
+	for i := 0; i < 200; i++ {
+		q.h.mu.Lock()
+		n := len(q.h.prompts)
+		q.h.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if q.err != nil {
+		return nil, q.err
+	}
+	return &tg.AuthAuthorization{}, nil
+}
+
+func TestLoginByQR(t *testing.T) {
+	h := &fakeHost{}
+	a := &fakeAuth{code: "12345"}
+	if err := login(context.Background(), a, &fakeQR{h: h}, nil, "+4712345678", h); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.prompts) != 1 || h.prompts[0].Kind != "qr" || h.prompts[0].Data != "tg://login?token=dG9r" {
+		t.Errorf("prompts = %+v", h.prompts)
+	}
+}
+
+func TestLoginFallsBackToCode(t *testing.T) {
+	h := &fakeHost{answers: []string{"12345"}}
+	a := &fakeAuth{code: "12345"}
+	if err := login(context.Background(), a, &fakeQR{h: h, err: context.DeadlineExceeded}, nil, "+4712345678", h); err != nil {
+		t.Fatal(err)
+	}
+	if !a.signedIn {
+		t.Fatal("not signed in by code")
+	}
+	var kinds []string
+	for _, p := range h.prompts {
+		kinds = append(kinds, p.Kind)
+	}
+	if fmt.Sprint(kinds) != "[qr code]" {
+		t.Errorf("prompts = %v", kinds)
+	}
+}
+
+func TestLoginByQRAsksPassword(t *testing.T) {
+	h := &fakeHost{answers: []string{"secret"}}
+	a := &fakeAuth{password: "secret"}
+	q := &fakeQR{h: h, err: tgerr.New(401, "SESSION_PASSWORD_NEEDED")}
+	if err := login(context.Background(), a, q, nil, "+4712345678", h); err != nil {
+		t.Fatal(err)
+	}
+	if !a.signedIn {
+		t.Fatal("not signed in")
+	}
+}
+
 func TestLoginSkippedWhenAuthorized(t *testing.T) {
 	h := &fakeHost{}
-	if err := login(context.Background(), &fakeAuth{authorized: true}, "+4712345678", h); err != nil {
+	if err := login(context.Background(), &fakeAuth{authorized: true}, nil, nil, "+4712345678", h); err != nil {
 		t.Fatal(err)
 	}
 	if len(h.prompts) != 0 {
@@ -255,7 +330,7 @@ func TestLoginSkippedWhenAuthorized(t *testing.T) {
 
 func TestLoginGivesUpAfterWrongCodes(t *testing.T) {
 	h := &fakeHost{answers: []string{"1", "2", "3", "4"}}
-	err := login(context.Background(), &fakeAuth{code: "12345"}, "+4712345678", h)
+	err := login(context.Background(), &fakeAuth{code: "12345"}, nil, nil, "+4712345678", h)
 	if err == nil || len(h.prompts) != tries {
 		t.Fatalf("err = %v after %d prompts", err, len(h.prompts))
 	}

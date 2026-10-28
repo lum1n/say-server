@@ -20,6 +20,7 @@ import (
 
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/telegram/auth/qrlogin"
 	"github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/telegram/updates/hook"
@@ -224,16 +225,26 @@ func (c *conn) Run(ctx context.Context) error {
 		AccessHasher:     c.st,
 		UserAccessHasher: c.st,
 	})
+	// A QR login is told of the scan by an update, before the manager
+	// has anything to follow.
+	dispatcher := tg.NewUpdateDispatcher()
+	loggedIn := qrlogin.OnLoginToken(dispatcher)
 	client := telegram.NewClient(c.cfg.APIID, c.cfg.APIHash, telegram.Options{
 		SessionStorage: c.st,
-		UpdateHandler:  mgr,
+		UpdateHandler: telegram.UpdateHandlerFunc(func(ctx context.Context, u tg.UpdatesClass) error {
+			if err := dispatcher.Handle(ctx, u); err != nil {
+				return err
+			}
+			return mgr.Handle(ctx, u)
+		}),
 		// The hook passes the updates in API results, such as a sent
 		// message, to the manager, to keep its positions right.
 		Middlewares: []telegram.Middleware{floodWait{max: maxFloodWait}, hook.UpdateHook(mgr.Handle)},
 		Device:      device,
 	})
 	err := client.Run(ctx, func(ctx context.Context) error {
-		if err := login(ctx, client.Auth(), c.cfg.Phone, c.h); err != nil {
+		qr := qrlogin.NewQR(client.API(), c.cfg.APIID, c.cfg.APIHash, qrlogin.Options{Migrate: client.MigrateTo})
+		if err := login(ctx, client.Auth(), qr, loggedIn, c.cfg.Phone, c.h); err != nil {
 			return err
 		}
 		self, err := client.Self(ctx)
