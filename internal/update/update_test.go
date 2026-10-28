@@ -457,6 +457,36 @@ func TestJVMRollback(t *testing.T) {
 	}
 }
 
+// A directory that can't be moved aside is left in place: undoing the
+// failed swap must not remove it.
+func TestDirSwapUndoKeepsDirItCouldNotMove(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes anything")
+	}
+	root := t.TempDir()
+	d := stagedDir(filepath.Join(root, "java"))
+	for _, dir := range []string{d.path, d.new, filepath.Join(d.prev, "locked")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(d.path, "old"), []byte("old"), 0o644)
+	// A leftover prev that can't be removed, so path can't be renamed onto it.
+	os.WriteFile(filepath.Join(d.prev, "locked", "f"), nil, 0o644)
+	os.Chmod(filepath.Join(d.prev, "locked"), 0o500)
+	t.Cleanup(func() { os.Chmod(filepath.Join(d.prev, "locked"), 0o755) })
+
+	if err := d.apply(); err == nil {
+		t.Fatal("apply worked")
+	}
+	if err := d.undo(); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(d.path, "old")); err != nil || string(b) != "old" {
+		t.Fatalf("the old directory is gone: %q, %v", b, err)
+	}
+}
+
 // A bundle with anything else in it, or a link out of its directory, is
 // refused before say is touched.
 func TestBadBundle(t *testing.T) {
@@ -499,6 +529,28 @@ func TestBadBundle(t *testing.T) {
 			}
 			e.unchanged(t)
 		})
+	}
+}
+
+// The status file's directory is say's: a link say put where the updater,
+// running as root, writes its temporary file must not be followed.
+func TestStatusDoesNotFollowLinks(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim")
+	os.WriteFile(victim, []byte("keep"), 0o644)
+	u := &Updater{Status: filepath.Join(dir, StatusFile)}
+	if err := os.Symlink(victim, u.Status+".tmp"); err != nil {
+		t.Fatal(err)
+	}
+	u.write(Status{State: StateOK})
+	if b, _ := os.ReadFile(victim); string(b) != "keep" {
+		t.Fatalf("victim = %q", b)
+	}
+	if st, err := ReadStatus(u.Status); err != nil || st.State != StateOK {
+		t.Fatalf("%+v, %v", st, err)
+	}
+	if fi, err := os.Stat(u.Status); err != nil || fi.Mode().Perm() != 0o644 {
+		t.Fatalf("status file: %v, %v", fi, err)
 	}
 }
 

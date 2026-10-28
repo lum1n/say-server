@@ -207,11 +207,24 @@ func (e *rolledBack) Error() string {
 	return "the new version failed and was rolled back: " + e.err.Error()
 }
 
+// write replaces the status file. Its directory is say's, and this runs as
+// root, so the temporary file is a new one (O_EXCL) rather than a fixed
+// name that say could have made a link to some other file.
 func (u *Updater) write(st Status) {
 	b, _ := json.MarshalIndent(st, "", "  ")
-	tmp := u.Status + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err == nil {
-		os.Rename(tmp, u.Status)
+	dir, name := filepath.Split(u.Status)
+	f, err := os.CreateTemp(dir, "."+name+".*.tmp")
+	if err != nil {
+		return
+	}
+	tmp := f.Name()
+	_, err = f.Write(append(b, '\n'))
+	err = errors.Join(err, f.Chmod(0o644), f.Close())
+	if err == nil {
+		err = os.Rename(tmp, u.Status)
+	}
+	if err != nil {
+		os.Remove(tmp)
 	}
 }
 
@@ -381,10 +394,11 @@ func (r undoing) rollback(ctx context.Context, cause error) error {
 }
 
 // dirSwap is a directory to replace, like swap: new is staged next to path
-// and the old one, if there was one, kept as prev.
+// and the old one, if there was one, kept as prev. had and placed record
+// how far apply got, so that undo only takes back what it did.
 type dirSwap struct {
 	path, new, prev string
-	had             bool
+	had, placed     bool
 }
 
 func stagedDir(path string) *dirSwap {
@@ -400,10 +414,18 @@ func (d *dirSwap) apply() error {
 		}
 		d.had = true
 	}
-	return os.Rename(d.new, d.path)
+	if err := os.Rename(d.new, d.path); err != nil {
+		return err
+	}
+	d.placed = true
+	return nil
 }
 
 func (d *dirSwap) undo() error {
+	if !d.had && !d.placed {
+		// apply changed nothing: path, if there is one, is still the old.
+		return nil
+	}
 	if err := os.RemoveAll(d.path); err != nil {
 		return err
 	}

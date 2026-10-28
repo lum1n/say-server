@@ -124,10 +124,9 @@ func Start(ctx context.Context, h Host, o Options) (Deployment, error) {
 		"SAY_SETUP_CODE":    code,
 		"SAY_SETUP_MINUTES": strconv.Itoa(SetupMinutes),
 	}})
-	if err != nil {
-		return Deployment{}, err
-	}
-	return Deployment{Node: node, SetupCode: code}, nil
+	// A host may return a node it made before failing, such as one it
+	// couldn't share: it goes back too, for the caller to Delete.
+	return Deployment{Node: node, SetupCode: code}, err
 }
 
 func (o Options) http() *http.Client {
