@@ -3,8 +3,13 @@ package say
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -107,5 +112,37 @@ func TestExe(t *testing.T) {
 	}
 	if nodes, _ := e.Nodes(); nodes != "[]" {
 		t.Fatalf("nodes after delete = %s", nodes)
+	}
+}
+
+// A node exe.dev made but couldn't share is deleted, not left on the
+// account with no name for the app to delete.
+func TestExeCreateRemovesHalfMadeNode(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		line := strings.TrimSpace(string(b))
+		mu.Lock()
+		lines = append(lines, line)
+		mu.Unlock()
+		switch {
+		case strings.HasPrefix(line, "new "):
+			fmt.Fprint(w, `{"vm_name":"say-abc123","https_url":"https://say-abc123.exe.xyz","status":"running"}`)
+		case strings.HasPrefix(line, "share "):
+			http.Error(w, `{"error":"try again"}`, http.StatusBadGateway)
+		default:
+			fmt.Fprint(w, `{"status":"ok"}`)
+		}
+	}))
+	defer ts.Close()
+	e := newExe(&exe.Client{Base: ts.URL, Token: "t"})
+	if d, err := e.create(deploy.Options{Name: "say-abc123", Image: deploy.StableImage}); err == nil {
+		t.Fatalf("create = %+v", d)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if last := lines[len(lines)-1]; last != "rm say-abc123" {
+		t.Fatalf("commands %q", lines)
 	}
 }

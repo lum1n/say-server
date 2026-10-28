@@ -24,6 +24,24 @@ func TestNewSetupCodeAndName(t *testing.T) {
 	}
 }
 
+// halfHost makes a node and then fails, as exe.dev does when it can't
+// share the VM it made.
+type halfHost struct{}
+
+func (halfHost) Create(ctx context.Context, spec Spec) (Node, error) {
+	return Node{Name: spec.Name, URL: "https://" + spec.Name + ".example"}, errors.New("share failed")
+}
+
+func (halfHost) Delete(ctx context.Context, name string) error { return nil }
+
+// A node made before Create failed is returned, so the caller can delete it.
+func TestStartReturnsHalfMadeNode(t *testing.T) {
+	d, err := Run(context.Background(), halfHost{}, Options{Name: "say-abc123", Image: StableImage})
+	if err == nil || d.Name != "say-abc123" {
+		t.Fatalf("Run = %+v, %v", d, err)
+	}
+}
+
 func TestLatestImage(t *testing.T) {
 	ctx := context.Background()
 	for body, want := range map[string]string{

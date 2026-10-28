@@ -186,6 +186,11 @@ func (e *Exe) Create() (*ExeDeployment, error) {
 func (e *Exe) create(o deploy.Options) (*ExeDeployment, error) {
 	d, err := deploy.Start(e.context(), e.c, o)
 	if err != nil {
+		// The app gets no name to Delete, so a node made before the
+		// failure goes now rather than staying on the account.
+		if d.Name != "" {
+			e.c.Delete(context.Background(), d.Name)
+		}
 		return nil, err
 	}
 	return &ExeDeployment{Name: d.Name, URL: d.URL, SetupCode: d.SetupCode}, nil
