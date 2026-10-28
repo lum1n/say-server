@@ -224,6 +224,26 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, me core.Prin
 	writeJSON(w, http.StatusOK, map[string]any{"events": toEvents(events), "deliveries": deliveries})
 }
 
+// getEvent returns one event of the room, such as a quoted message the
+// client has not loaded.
+func (s *Server) getEvent(w http.ResponseWriter, r *http.Request, me core.Principal) {
+	id := r.PathValue("id")
+	if _, err := s.member(r.Context(), me, id); err != nil {
+		writeError(w, err)
+		return
+	}
+	e, err := s.store.GetEvent(r.Context(), r.PathValue("event_id"))
+	if errors.Is(err, store.ErrNotFound) || err == nil && e.RoomID != id {
+		writeError(w, errorf(http.StatusNotFound, "not_found", "no such event"))
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toEvent(e))
+}
+
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	var body sendMessage
 	if err := readJSON(w, r, &body); err != nil {
@@ -300,6 +320,15 @@ func (s *Server) sendAt(ctx context.Context, me core.Principal, roomID string, m
 		}
 		cause = &c
 	}
+	if msg.ReplyTo != "" {
+		t, err := s.store.GetEvent(ctx, msg.ReplyTo)
+		if errors.Is(err, store.ErrNotFound) || err == nil && (t.RoomID != roomID || t.Type != core.EventMessage) {
+			return core.Event{}, false, errorf(http.StatusUnprocessableEntity, "invalid", "reply_to is not a message in this room")
+		}
+		if err != nil {
+			return core.Event{}, false, err
+		}
+	}
 	causation, err := core.Next(cause, me.Kind, policy.MaxHops)
 	if errors.Is(err, core.ErrHopLimit) {
 		return core.Event{}, false, errorf(http.StatusUnprocessableEntity, "hop_limit", "the causation chain reached this room's limit of %d automated hops", policy.MaxHops)
@@ -318,6 +347,7 @@ func (s *Server) sendAt(ctx context.Context, me core.Principal, roomID string, m
 		Causation: causation,
 		Parts:     parts,
 		Stream:    stream,
+		ReplyTo:   msg.ReplyTo,
 		CreatedAt: at,
 	}, store.AppendOptions{
 		IdempotencyKey: idempotencyKey,

@@ -27,8 +27,10 @@ it must not weaken the hop limit of ADR 0005.
   adds no rules of its own.
 - Messages are flattened for models: sender name and kind, the text parts
   joined, other parts shown as `[kind]`, and `reply_to` / `hop_count`.
-- `send` takes `reply_to`, which becomes `caused_by`. The server
-  instructions and the tool description ask the model to set it.
+- `send` takes `reply_to`, which becomes `caused_by`, and since replies
+  came (0017) the message's `reply_to` too, so it shows as a quote. The
+  server instructions and the tool description ask the model to set it.
+  Messages report their `reply_to`, not their cause.
 - `wait_for_messages` holds up to 120 s and only ends early on a message
   from someone else; the caller's own messages are returned for context but
   do not wake it. On a timeout it returns no messages and a cursor moved

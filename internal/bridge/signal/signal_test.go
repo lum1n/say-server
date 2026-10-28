@@ -340,9 +340,10 @@ func TestReceive(t *testing.T) {
 		Chat:    bridge.RemoteChat{ID: "group:g1", Name: "Friends"},
 		ID:      "u-bob:2000",
 		Author:  bridge.Author{ID: "u-bob", Name: "Bob"},
-		Text:    "> lunch?\nyes",
+		Text:    "yes",
 		Time:    time.UnixMilli(2000),
 		ReplyTo: fakeNumber + ":1500",
+		Quote:   "lunch?",
 	}
 	if !equal(m, want) {
 		t.Fatalf("got %+v\nwant %+v", m, want)

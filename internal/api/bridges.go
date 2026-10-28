@@ -14,6 +14,7 @@ import (
 
 	"github.com/lum1n/say-server/internal/bridge"
 	"github.com/lum1n/say-server/internal/bus"
+	"github.com/lum1n/say-server/internal/connector"
 	"github.com/lum1n/say-server/internal/core"
 	"github.com/lum1n/say-server/internal/store"
 )
@@ -103,13 +104,17 @@ func toBridge(b store.Bridge) wireBridge {
 func (s *Server) listNetworks(w http.ResponseWriter, r *http.Request, me core.Principal) {
 	out := []wireNetwork{}
 	for _, n := range bridge.Networks() {
-		caps := make([]string, len(n.Capabilities))
-		for i, c := range n.Capabilities {
-			caps[i] = string(c)
-		}
-		out = append(out, wireNetwork{Name: n.Name, Title: n.Title, Modes: n.Modes, Fields: n.Fields, Capabilities: caps, Hook: n.Hook != nil, HookSecret: n.HookSecret})
+		out = append(out, wireNetwork{Name: n.Name, Title: n.Title, Modes: n.Modes, Fields: n.Fields, Capabilities: capNames(n.Capabilities), Hook: n.Hook != nil, HookSecret: n.HookSecret})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"networks": out})
+}
+
+func capNames(cs []connector.Capability) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = string(c)
+	}
+	return out
 }
 
 // manages reports whether me may see and change bridge b: its owner, or
@@ -543,6 +548,9 @@ type wireRoomBridge struct {
 	Mode       string `json:"mode"`
 	RemoteName string `json:"remote_name"`
 	State      string `json:"state"`
+	// Capabilities are what the network carries, so clients offer only
+	// what reaches it: replies, reactions, attachments.
+	Capabilities []string `json:"capabilities"`
 }
 
 // roomBridges returns the bridges linked to room.
@@ -562,7 +570,8 @@ func (s *Server) roomBridges(ctx context.Context, roomID string) ([]wireRoomBrid
 		if name == "" {
 			name = l.RemoteID
 		}
-		out = append(out, wireRoomBridge{BridgeID: b.ID, Network: b.Network, Name: b.Name, Mode: b.Mode, RemoteName: name, State: bridgeState(b, now)})
+		n, _ := bridge.Lookup(b.Network)
+		out = append(out, wireRoomBridge{BridgeID: b.ID, Network: b.Network, Name: b.Name, Mode: b.Mode, RemoteName: name, State: bridgeState(b, now), Capabilities: capNames(n.Capabilities)})
 	}
 	return out, nil
 }
@@ -600,8 +609,8 @@ func (s *Server) deliveries(ctx context.Context, roomID string, from, to int64) 
 
 // SendAs is how bridges write: the same send path as every client, with
 // the event's id and time chosen by the bridge.
-func (s *Server) SendAs(ctx context.Context, as core.Principal, roomID, eventID string, parts []core.Part, idempotencyKey string, at time.Time) (core.Event, error) {
-	e, _, err := s.sendAt(ctx, as, roomID, sendMessage{Parts: toWireParts(parts), Stream: core.StreamFinal}, idempotencyKey, eventID, at)
+func (s *Server) SendAs(ctx context.Context, as core.Principal, roomID, eventID string, parts []core.Part, replyTo, idempotencyKey string, at time.Time) (core.Event, error) {
+	e, _, err := s.sendAt(ctx, as, roomID, sendMessage{Parts: toWireParts(parts), ReplyTo: replyTo, Stream: core.StreamFinal}, idempotencyKey, eventID, at)
 	return e, err
 }
 

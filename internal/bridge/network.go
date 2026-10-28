@@ -146,6 +146,10 @@ type Incoming struct {
 	Edit bool
 	// ReplyTo is the remote id of the message this one answers.
 	ReplyTo string
+	// Quote is the first line of the message ReplyTo, if the network sends
+	// it along. It leads the text as a "> " line when say has not seen
+	// that message, so the reply still makes sense.
+	Quote string
 }
 
 // content returns the message's parts.

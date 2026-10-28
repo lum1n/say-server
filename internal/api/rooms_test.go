@@ -298,6 +298,54 @@ func TestSendAndPage(t *testing.T) {
 	}
 }
 
+func TestReplies(t *testing.T) {
+	e := newEnv(t)
+	bob, bobTok := e.user("Bob", core.PrincipalHuman)
+	_, ada := e.user("Ada", core.PrincipalHuman)
+	r := e.room(ada, "general")
+	e.join(ada, r.ID, bob.ID, core.RoleMember)
+	q := e.say(ada, r.ID, "lunch?")
+
+	body := textMsg("yes")
+	body["reply_to"] = q.ID
+	var reply wireEvent
+	if code := e.do("POST", "/rooms/"+r.ID+"/messages", bobTok, body, &reply, "Idempotency-Key", "k-reply"); code != 201 {
+		t.Fatalf("reply = %d", code)
+	}
+	// A reply is not a cause: only automated chains have those.
+	if reply.ReplyTo != q.ID || reply.Causation.CausedBy != "" || reply.ClientKey != "k-reply" {
+		t.Fatalf("reply = %+v", reply)
+	}
+	var page struct{ Events []wireEvent }
+	e.do("GET", "/rooms/"+r.ID+"/events", ada, nil, &page)
+	if got := page.Events[len(page.Events)-1]; got.ReplyTo != q.ID || got.ClientKey != "k-reply" {
+		t.Fatalf("listed reply = %+v", got)
+	}
+
+	// The quoted message can be fetched alone, by members only.
+	var got wireEvent
+	if code := e.do("GET", "/rooms/"+r.ID+"/events/"+q.ID, bobTok, nil, &got); code != 200 || got.ID != q.ID || partText(got) != "lunch?" {
+		t.Fatalf("get event = %d %+v", code, got)
+	}
+	_, eveTok := e.user("Eve", core.PrincipalHuman)
+	if code := e.do("GET", "/rooms/"+r.ID+"/events/"+q.ID, eveTok, nil, nil); code != 404 {
+		t.Fatalf("get event as outsider = %d", code)
+	}
+
+	// The target must be a message in the same room.
+	other := e.room(ada, "other")
+	elsewhere := e.say(ada, other.ID, "x")
+	if code := e.do("GET", "/rooms/"+r.ID+"/events/"+elsewhere.ID, ada, nil, nil); code != 404 {
+		t.Fatalf("get event of another room = %d", code)
+	}
+	for _, target := range []string{elsewhere.ID, "nope"} {
+		body["reply_to"] = target
+		if code := e.do("POST", "/rooms/"+r.ID+"/messages", ada, body, nil); code != 422 {
+			t.Fatalf("reply to %s = %d", target, code)
+		}
+	}
+}
+
 // Two agents replying to each other stop at MaxHops (2 in newEnv); a human
 // message resets the chain.
 func TestHopLimit(t *testing.T) {

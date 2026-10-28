@@ -993,7 +993,7 @@ func (q *Queries) DeleteWidgetVisitors(ctx context.Context, widgetID string) err
 }
 
 const eventByIdempotencyKey = `-- name: EventByIdempotencyKey :one
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to FROM events
 WHERE room_id = $1 AND sender_id = $2 AND idempotency_key = $3
 `
 
@@ -1021,12 +1021,13 @@ func (q *Queries) EventByIdempotencyKey(ctx context.Context, arg EventByIdempote
 		&i.Automated,
 		&i.Edits,
 		&i.EditedAt,
+		&i.ReplyTo,
 	)
 	return i, err
 }
 
 const eventsAfter = `-- name: EventsAfter :many
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to FROM events
 WHERE room_id = $1 AND seq > $2
 ORDER BY seq
 LIMIT $3
@@ -1062,6 +1063,7 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 			&i.Automated,
 			&i.Edits,
 			&i.EditedAt,
+			&i.ReplyTo,
 		); err != nil {
 			return nil, err
 		}
@@ -1077,7 +1079,7 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 }
 
 const eventsBefore = `-- name: EventsBefore :many
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to FROM events
 WHERE room_id = $1 AND seq < $2
 ORDER BY seq DESC
 LIMIT $3
@@ -1113,6 +1115,7 @@ func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]E
 			&i.Automated,
 			&i.Edits,
 			&i.EditedAt,
+			&i.ReplyTo,
 		); err != nil {
 			return nil, err
 		}
@@ -1280,7 +1283,7 @@ func (q *Queries) GetBuiltinAgent(ctx context.Context, principalID string) (Buil
 }
 
 const getEvent = `-- name: GetEvent :one
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events WHERE id = $1
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to FROM events WHERE id = $1
 `
 
 func (q *Queries) GetEvent(ctx context.Context, id string) (Event, error) {
@@ -1301,6 +1304,7 @@ func (q *Queries) GetEvent(ctx context.Context, id string) (Event, error) {
 		&i.Automated,
 		&i.Edits,
 		&i.EditedAt,
+		&i.ReplyTo,
 	)
 	return i, err
 }
@@ -1390,8 +1394,8 @@ func (q *Queries) GetWidget(ctx context.Context, id string) (Widget, error) {
 
 const insertEvent = `-- name: InsertEvent :exec
 INSERT INTO events (id, room_id, seq, type, sender_id, caused_by, hop_count,
-                    parts, stream, idempotency_key, automated, edits, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                    parts, stream, idempotency_key, automated, edits, reply_to, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 `
 
 type InsertEventParams struct {
@@ -1407,6 +1411,7 @@ type InsertEventParams struct {
 	IdempotencyKey string
 	Automated      int32
 	Edits          string
+	ReplyTo        string
 	CreatedAt      int64
 }
 
@@ -1424,6 +1429,7 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 		arg.IdempotencyKey,
 		arg.Automated,
 		arg.Edits,
+		arg.ReplyTo,
 		arg.CreatedAt,
 	)
 	return err
@@ -2160,7 +2166,7 @@ func (q *Queries) StartBridgeMessage(ctx context.Context, arg StartBridgeMessage
 }
 
 const streamingFrom = `-- name: StreamingFrom :many
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at FROM events WHERE sender_id = $1 AND stream = 'streaming'
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to FROM events WHERE sender_id = $1 AND stream = 'streaming'
 ORDER BY created_at, id
 `
 
@@ -2188,6 +2194,7 @@ func (q *Queries) StreamingFrom(ctx context.Context, senderID string) ([]Event, 
 			&i.Automated,
 			&i.Edits,
 			&i.EditedAt,
+			&i.ReplyTo,
 		); err != nil {
 			return nil, err
 		}

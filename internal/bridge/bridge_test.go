@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/lum1n/say-server/internal/api"
 	"github.com/lum1n/say-server/internal/bridge"
 	"github.com/lum1n/say-server/internal/bus"
+	"github.com/lum1n/say-server/internal/connector"
 	"github.com/lum1n/say-server/internal/core"
 	"github.com/lum1n/say-server/internal/store"
 )
@@ -24,9 +26,10 @@ import (
 func TestMain(m *testing.M) {
 	bridge.Fast()
 	bridge.Register(bridge.Network{
-		Name:  "fake",
-		Title: "Fake",
-		Modes: []string{store.ModeAccount, store.ModeBot},
+		Name:         "fake",
+		Title:        "Fake",
+		Modes:        []string{store.ModeAccount, store.ModeBot},
+		Capabilities: []connector.Capability{connector.CapReplies},
 		Fields: []bridge.Field{
 			{Key: "server", Label: "Server", Kind: "text", Required: true},
 			{Key: "password", Label: "Password", Kind: "secret"},
@@ -464,6 +467,52 @@ func TestAccountChatsBecomeRooms(t *testing.T) {
 	}
 }
 
+func TestReplies(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	b := e.addBridge(store.ModeAccount)
+	e.runner("n1")
+	c := fakes.conn(t, b.ID)
+	chat := bridge.RemoteChat{ID: "dm-bob", Name: "Bob", Direct: true}
+	bob := bridge.Author{ID: "bob", Name: "Bob"}
+	c.in <- bridge.Incoming{Chat: chat, ID: "m1", Author: bob, Text: "lunch?"}
+	l := e.portal(b.ID, "dm-bob")
+	eventually(t, "Bob's message is in", func() bool { return len(e.log(l.RoomID)) == 1 })
+	first := e.log(l.RoomID)[0]
+
+	// A reply from the network is a reply in say.
+	c.in <- bridge.Incoming{Chat: chat, ID: "m2", Author: bob, Text: "or dinner?", ReplyTo: "m1", Quote: "lunch?"}
+	// A reply to a message say never saw keeps its quote as text.
+	c.in <- bridge.Incoming{Chat: chat, ID: "m3", Author: bob, Text: "still?", ReplyTo: "m0", Quote: "coffee?"}
+	eventually(t, "the replies are in", func() bool { return len(e.log(l.RoomID)) == 3 })
+	log := e.log(l.RoomID)
+	if log[1].ReplyTo != first.ID || log[1].Prose() != "or dinner?" {
+		t.Fatalf("reply = %+v", log[1])
+	}
+	if log[2].ReplyTo != "" || log[2].Prose() != "> coffee?\nstill?" {
+		t.Fatalf("reply to an unknown message = %+v", log[2])
+	}
+
+	// A reply in say names the remote message it answers.
+	sent, err := e.srv.SendAs(ctx, e.ada, l.RoomID, "", []core.Part{core.TextPart("yes")}, log[1].ID, "", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the reply is sent", func() bool { return e.delivery(l.ID, sent.ID) == store.BridgeSent })
+	if s := c.sends(); len(s) != 1 || s[0].ReplyTo != "m2" {
+		t.Fatalf("sends = %+v", s)
+	}
+
+	// The room says what its bridges carry.
+	var r struct {
+		Bridges []struct{ Capabilities []string } `json:"bridges"`
+	}
+	e.call("GET", "/api/v1/rooms/"+l.RoomID, nil, &r)
+	if len(r.Bridges) != 1 || !slices.Equal(r.Bridges[0].Capabilities, []string{"replies"}) {
+		t.Fatalf("room bridges = %+v", r.Bridges)
+	}
+}
+
 func TestUnsureSendsAreNeverRetried(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
@@ -487,7 +536,7 @@ func TestUnsureSendsAreNeverRetried(t *testing.T) {
 		t.Fatalf("stopped bridge is %q", got)
 	}
 	recent, _, _ := e.srv.SendText(ctx, e.ada, l.RoomID, "while away", "", "", false)
-	stale, err := e.srv.SendAs(ctx, e.ada, l.RoomID, core.NewID(), []core.Part{core.TextPart("long ago")}, "", time.Now().Add(-time.Hour))
+	stale, err := e.srv.SendAs(ctx, e.ada, l.RoomID, core.NewID(), []core.Part{core.TextPart("long ago")}, "", "", time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +586,7 @@ func TestIdempotentSendsAreRetried(t *testing.T) {
 	if e.delivery(l.ID, a.ID) != store.BridgeSending {
 		t.Fatalf("the stopped send is %q", e.delivery(l.ID, a.ID))
 	}
-	stale, err := e.srv.SendAs(ctx, e.ada, l.RoomID, core.NewID(), []core.Part{core.TextPart("long ago")}, "", time.Now().Add(-time.Hour))
+	stale, err := e.srv.SendAs(ctx, e.ada, l.RoomID, core.NewID(), []core.Part{core.TextPart("long ago")}, "", "", time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}

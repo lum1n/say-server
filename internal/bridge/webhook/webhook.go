@@ -30,7 +30,7 @@ func init() {
 		Title:        "Webhooks",
 		Modes:        []string{store.ModeBot},
 		Fields:       fields,
-		Capabilities: []connector.Capability{connector.CapEdits},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies},
 		Open:         open,
 		Hook:         hook,
 		HookSecret:   "token",

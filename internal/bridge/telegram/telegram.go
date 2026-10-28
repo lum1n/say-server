@@ -33,7 +33,7 @@ func init() {
 		Title:        "Telegram",
 		Modes:        []string{store.ModeAccount},
 		Fields:       fields(hasDefaultApp()),
-		Capabilities: []connector.Capability{connector.CapEdits},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies},
 		Open:         open,
 		LogOut:       logOut,
 	})

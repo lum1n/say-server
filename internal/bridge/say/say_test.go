@@ -163,7 +163,7 @@ func TestSync(t *testing.T) {
 	if err := home.store.AddMember(ctx, core.Membership{RoomID: room.ID, PrincipalID: bob.ID, Role: core.RoleMember}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := home.srv.SendAs(ctx, bob, room.ID, core.NewID(), []core.Part{core.TextPart("long ago")}, "", time.Now().Add(-40*24*time.Hour)); err != nil {
+	if _, err := home.srv.SendAs(ctx, bob, room.ID, core.NewID(), []core.Part{core.TextPart("long ago")}, "", "", time.Now().Add(-40*24*time.Hour)); err != nil {
 		t.Fatal(err)
 	}
 	hi, _, err := home.srv.SendText(ctx, bob, room.ID, "hi Ada", "", "", false)
@@ -247,7 +247,7 @@ func TestSync(t *testing.T) {
 	// order when home is back.
 	home.down.Store(true)
 	a, _, _ := laptop.srv.SendText(ctx, me, l.RoomID, "offline one", "", "", false)
-	old, err := laptop.srv.SendAs(ctx, me, l.RoomID, core.NewID(), []core.Part{core.TextPart("offline two")}, "", time.Now().Add(-time.Hour))
+	old, err := laptop.srv.SendAs(ctx, me, l.RoomID, core.NewID(), []core.Part{core.TextPart("offline two")}, "", "", time.Now().Add(-time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}

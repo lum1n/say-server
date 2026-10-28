@@ -442,6 +442,7 @@ func (s *sqlStore) AppendEvent(ctx context.Context, e core.Event, opts AppendOpt
 		e.CreatedAt = time.Now()
 	}
 	e.CreatedAt = e.CreatedAt.Truncate(time.Millisecond)
+	e.IdempotencyKey = opts.IdempotencyKey
 	parts, err := encodeParts(e.Parts)
 	if err != nil {
 		return core.Event{}, err
@@ -507,6 +508,7 @@ func insertEvent(ctx context.Context, q *db.Queries, e core.Event, parts string,
 		IdempotencyKey: opts.IdempotencyKey,
 		Automated:      flag(opts.Automated),
 		Edits:          e.Edits,
+		ReplyTo:        e.ReplyTo,
 		CreatedAt:      millis(e.CreatedAt),
 	})
 }
@@ -676,17 +678,19 @@ func event(row db.Event) (core.Event, error) {
 		return core.Event{}, err
 	}
 	return core.Event{
-		ID:        row.ID,
-		RoomID:    row.RoomID,
-		Seq:       row.Seq,
-		Type:      core.EventType(row.Type),
-		SenderID:  row.SenderID,
-		Causation: core.Causation{CausedBy: row.CausedBy, HopCount: int(row.HopCount)},
-		Parts:     parts,
-		Stream:    core.StreamState(row.Stream),
-		Edits:     row.Edits,
-		EditedAt:  unmillis(row.EditedAt),
-		CreatedAt: time.UnixMilli(row.CreatedAt),
+		ID:             row.ID,
+		RoomID:         row.RoomID,
+		Seq:            row.Seq,
+		Type:           core.EventType(row.Type),
+		SenderID:       row.SenderID,
+		Causation:      core.Causation{CausedBy: row.CausedBy, HopCount: int(row.HopCount)},
+		Parts:          parts,
+		Stream:         core.StreamState(row.Stream),
+		Edits:          row.Edits,
+		EditedAt:       unmillis(row.EditedAt),
+		ReplyTo:        row.ReplyTo,
+		CreatedAt:      time.UnixMilli(row.CreatedAt),
+		IdempotencyKey: row.IdempotencyKey,
 	}, nil
 }
 

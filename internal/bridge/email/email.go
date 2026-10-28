@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/lum1n/say-server/internal/bridge"
+	"github.com/lum1n/say-server/internal/connector"
 	"github.com/lum1n/say-server/internal/store"
 )
 
@@ -28,6 +29,8 @@ func init() {
 		Name:  "email",
 		Title: "Email",
 		Modes: []string{store.ModeAccount},
+		// A reply is threaded with In-Reply-To.
+		Capabilities: []connector.Capability{connector.CapReplies},
 		Fields: []bridge.Field{
 			{Key: "address", Label: "Email address", Kind: "text", Required: true, Placeholder: "you@example.com"},
 			{Key: "name", Label: "Display name", Kind: "text", Help: "Shown as the sender of the mail you write in say."},

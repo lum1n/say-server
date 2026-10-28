@@ -106,8 +106,12 @@ func (i *instance) deliverEvent(ctx context.Context, l store.BridgeLink, e core.
 			return err
 		}
 	}
+	replyTo, err := i.remoteReply(ctx, l, msg.ReplyTo)
+	if err != nil {
+		return err
+	}
 	sctx, cancel := context.WithTimeout(ctx, sendTimeout)
-	remoteID, err := i.conn.Send(sctx, Outgoing{Chat: l.RemoteID, EventID: msg.ID, Text: text, Parts: msg.Parts, Sender: i.name(ctx, msg.SenderID)})
+	remoteID, err := i.conn.Send(sctx, Outgoing{Chat: l.RemoteID, EventID: msg.ID, Text: text, Parts: msg.Parts, Sender: i.name(ctx, msg.SenderID), ReplyTo: replyTo})
 	cancel()
 	state, errMsg := store.BridgeSent, ""
 	switch {
@@ -129,6 +133,19 @@ func (i *instance) deliverEvent(ctx context.Context, l store.BridgeLink, e core.
 	}
 	i.c.Chat.DeliveryChanged(ctx, l.RoomID, msg.ID)
 	return nil
+}
+
+// remoteReply returns the remote id on l of the message eventID, or ""
+// when it has none there, such as a message that never reached the network.
+func (i *instance) remoteReply(ctx context.Context, l store.BridgeLink, eventID string) (string, error) {
+	if eventID == "" {
+		return "", nil
+	}
+	row, err := i.c.Store.GetBridgeMessage(ctx, l.ID, eventID)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	return row.RemoteID, err
 }
 
 // unfinished reports whether an outgoing message's send may not have

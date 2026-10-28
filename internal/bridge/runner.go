@@ -15,9 +15,10 @@ import (
 
 // Chat is how bridges write to rooms: the same send path as every client.
 type Chat interface {
-	// SendAs appends a message from as with id eventID, made at at. A
-	// repeated idempotencyKey returns the earlier message.
-	SendAs(ctx context.Context, as core.Principal, roomID, eventID string, parts []core.Part, idempotencyKey string, at time.Time) (core.Event, error)
+	// SendAs appends a message from as with id eventID, made at at, in
+	// reply to the message replyTo if that is not empty. A repeated
+	// idempotencyKey returns the earlier message.
+	SendAs(ctx context.Context, as core.Principal, roomID, eventID string, parts []core.Part, replyTo, idempotencyKey string, at time.Time) (core.Event, error)
 	// EditAs changes as's final message eventID to parts and returns the
 	// edit event; an edit that changes nothing is store.ErrNotEditable.
 	EditAs(ctx context.Context, as core.Principal, roomID, eventID string, parts []core.Part) (core.Event, error)

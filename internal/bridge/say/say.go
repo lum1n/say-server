@@ -496,6 +496,8 @@ func (s *session) incoming(ctx context.Context, e client.Event) (bridge.Incoming
 		Author: bridge.Author{ID: e.SenderID, Name: s.name(ctx, e.SenderID), Self: e.SenderID == s.me.ID},
 		Parts:  parts,
 		Time:   e.CreatedAt,
+		// Home's ids are the remote ids, so a reply's target is found.
+		ReplyTo: e.ReplyTo,
 	}
 	switch {
 	case e.Type == string(core.EventMessage) && e.Stream != string(core.StreamStreaming):
