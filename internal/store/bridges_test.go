@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -219,6 +220,64 @@ func TestBridges(t *testing.T) {
 		}
 		if err := s.DeleteBridge(ctx, b.ID); !errors.Is(err, ErrNotFound) {
 			t.Fatalf("delete bridge twice: %v", err)
+		}
+	})
+}
+
+// A screen code is read any number of times until it runs out, is typed
+// like a pairing code, points at its own bridge, and goes with the bridge.
+func TestBridgeScreens(t *testing.T) {
+	eachEngine(t, func(t *testing.T, s Store) {
+		ctx := context.Background()
+		p, _ := seed(t, s)
+		now := time.Now().Truncate(time.Millisecond)
+		newBridge := func() Bridge {
+			b := Bridge{ID: core.NewID(), OwnerID: p.ID, Mode: ModeAccount, Network: "signal", Name: "Signal", Enabled: true, UpdatedAt: now, CreatedAt: now}
+			if err := s.CreateBridge(ctx, b); err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}
+		a, b := newBridge(), newBridge()
+		code, err := s.CreateBridgeScreen(ctx, a.ID, time.Now().Add(time.Minute))
+		if err != nil || len(code) != 11 || code[5] != '-' {
+			t.Fatalf("CreateBridgeScreen = %q, %v", code, err)
+		}
+		other, err := s.CreateBridgeScreen(ctx, b.ID, time.Now().Add(time.Minute))
+		if err != nil || other == code {
+			t.Fatalf("a second code = %q, %v", other, err)
+		}
+		// Not used up by reading, and typed by hand like a pairing code.
+		typed := strings.ToLower(strings.ReplaceAll(code, "-", " "))
+		typed = strings.NewReplacer("0", "o", "1", "l").Replace(typed)
+		for _, c := range []string{code, code, typed} {
+			if id, err := s.BridgeScreen(ctx, c); err != nil || id != a.ID {
+				t.Fatalf("BridgeScreen(%q) = %q, %v", c, id, err)
+			}
+		}
+		if id, err := s.BridgeScreen(ctx, other); err != nil || id != b.ID {
+			t.Fatalf("BridgeScreen(other) = %q, %v", id, err)
+		}
+		if _, err := s.BridgeScreen(ctx, "WRONG-CODE0"); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("a wrong code: %v", err)
+		}
+		old, err := s.CreateBridgeScreen(ctx, a.ID, time.Now().Add(-time.Second))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.BridgeScreen(ctx, old); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("an expired code: %v", err)
+		}
+
+		// Deleting a bridge takes its codes, and only its codes.
+		if err := s.DeleteBridge(ctx, a.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.BridgeScreen(ctx, code); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("a deleted bridge's code: %v", err)
+		}
+		if id, err := s.BridgeScreen(ctx, other); err != nil || id != b.ID {
+			t.Fatalf("another bridge's code after a delete = %q, %v", id, err)
 		}
 	})
 }
