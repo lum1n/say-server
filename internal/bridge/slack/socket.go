@@ -92,7 +92,8 @@ func (c *conn) read(ctx context.Context, ws *websocket.Conn, events chan<- messa
 			return errRefresh
 		case "events_api":
 			var m message
-			if err := json.Unmarshal(env.Payload.Event, &m); err != nil || m.Type != "message" {
+			if err := json.Unmarshal(env.Payload.Event, &m); err != nil ||
+				m.Type != "message" && m.Type != "reaction_added" && m.Type != "reaction_removed" {
 				continue
 			}
 			if id := env.Payload.APIAppID; id != "" {

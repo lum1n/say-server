@@ -5,7 +5,10 @@
 // scopes. The user token (xoxp-) reads and posts as them, so what they
 // write in say shows up in Slack as their own message; the app-level token
 // (xapp-) opens a Socket Mode connection, so say needs no public URL for
-// Slack's events. Web-client tokens (xoxc- with the d cookie) are refused:
+// Slack's events. Reactions need the reactions:read and reactions:write
+// scopes and the reaction_added and reaction_removed events; Slack names
+// emoji, so common ones are translated and others keep their :name:.
+// Web-client tokens (xoxc- with the d cookie) are refused:
 // using them breaks Slack's terms.
 //
 // The Web API is called over plain HTTP and Socket Mode over a websocket,

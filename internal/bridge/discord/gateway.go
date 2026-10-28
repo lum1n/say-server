@@ -26,9 +26,10 @@ const (
 	opHeartbeatACK   = 11
 )
 
-// intents are GUILDS, GUILD_MESSAGES and MESSAGE_CONTENT: channel names,
-// messages in server channels, and their text.
-const intents = 1<<0 | 1<<9 | 1<<15
+// intents are GUILDS, GUILD_MESSAGES, GUILD_MESSAGE_REACTIONS,
+// DIRECT_MESSAGE_REACTIONS and MESSAGE_CONTENT: channel names, messages in
+// server channels, reactions to them, and their text.
+const intents = 1<<0 | 1<<9 | 1<<10 | 1<<13 | 1<<15
 
 // frame is a Gateway payload.
 type frame struct {
@@ -226,6 +227,20 @@ func (s *session) read(ctx context.Context, ready chan<- struct{}, events chan<-
 					continue
 				}
 				m.update = f.T == "MESSAGE_UPDATE"
+				select {
+				case events <- m:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			case "MESSAGE_REACTION_ADD", "MESSAGE_REACTION_REMOVE":
+				var r reaction
+				if err := json.Unmarshal(f.D, &r); err != nil {
+					continue
+				}
+				r.removed = f.T == "MESSAGE_REACTION_REMOVE"
+				// Queued with the messages, so a reaction never overtakes
+				// the message it is to.
+				m := message{ID: r.MessageID, ChannelID: r.ChannelID, reaction: &r}
 				select {
 				case events <- m:
 				case <-ctx.Done():

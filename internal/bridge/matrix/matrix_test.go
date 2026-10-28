@@ -161,6 +161,46 @@ func TestSendAndEdit(t *testing.T) {
 	}
 }
 
+func TestReactions(t *testing.T) {
+	f := newFakeServer(t)
+	dm, ids := seed(f)
+	h := newFakeHost()
+	c, done := start(t, map[string]any{"homeserver": f.URL, "user_id": "@ada:hs", "password": "secret"}, nil, h)
+	connected(t, h, done)
+	ctx := context.Background()
+
+	// Bob reacts and takes it back; a redaction in a room v11 style names the event in its content.
+	rx := f.addType(dm, "m.reaction", "@bob:hs", time.Now(), map[string]any{
+		"m.relates_to": map[string]any{"rel_type": "m.annotation", "event_id": ids["hey"], "key": "👍"},
+	})
+	f.addType(dm, "m.room.redaction", "@bob:hs", time.Now(), map[string]any{"redacts": rx})
+	add := h.waitFor(t, "the reaction", func(m bridge.Incoming) bool { return m.Reaction != nil && !m.Reaction.Removed })
+	if add.ID != rx || add.Author != (bridge.Author{ID: "@bob:hs", Name: "Bob"}) || *add.Reaction != (bridge.IncomingReaction{Target: ids["hey"], Key: "👍"}) {
+		t.Errorf("add: %+v %+v", add, add.Reaction)
+	}
+	rm := h.waitFor(t, "the removal", func(m bridge.Incoming) bool { return m.Reaction != nil && m.Reaction.Removed })
+	if rm.ID != rx || rm.Reaction.Target != "" {
+		t.Errorf("removal: %+v %+v", rm, rm.Reaction)
+	}
+
+	// Ada reacts from say, and takes it back by the id the homeserver gave.
+	id, err := c.React(ctx, bridge.Reaction{Chat: dm, EventID: "say-r1", Target: ids["hi"], Key: "🎉"})
+	if err != nil || id == "" {
+		t.Fatalf("react: %q, %v", id, err)
+	}
+	echo := h.waitFor(t, "the reaction's echo", func(m bridge.Incoming) bool { return m.ID == id && m.Reaction != nil })
+	if !echo.Author.Self || echo.Reaction.Key != "🎉" || echo.Reaction.Target != ids["hi"] {
+		t.Errorf("echo: %+v %+v", echo, echo.Reaction)
+	}
+	if _, err := c.React(ctx, bridge.Reaction{Chat: dm, EventID: "say-r2", Target: ids["hi"], Key: "🎉", Removed: true, Added: id}); err != nil {
+		t.Fatal(err)
+	}
+	h.waitFor(t, "the redaction's echo", func(m bridge.Incoming) bool { return m.ID == id && m.Reaction != nil && m.Reaction.Removed })
+	if _, err := c.React(ctx, bridge.Reaction{Chat: dm, EventID: "say-r3", Removed: true}); err != nil {
+		t.Errorf("removal of a reaction never sent: %v", err)
+	}
+}
+
 func TestResume(t *testing.T) {
 	f := newFakeServer(t)
 	_, ids := seed(f)

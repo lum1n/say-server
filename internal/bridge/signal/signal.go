@@ -54,7 +54,7 @@ func init() {
 			{Key: "device_name", Label: "Device name", Kind: "text", Placeholder: "say",
 				Help: "How say shows in Signal's linked devices."},
 		},
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
 		Open:         open,
 		LogOut:       logOut,
 	})
@@ -585,6 +585,36 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 		params["quoteAuthor"] = author
 	}
 	return c.send(ctx, params)
+}
+
+// React puts the owner's emoji on a message, or takes it off. Signal
+// gives the reaction no id of its own.
+func (c *conn) React(ctx context.Context, r bridge.Reaction) (string, error) {
+	author, ts, ok := splitID(r.Target)
+	if !ok {
+		return "", bridge.Rejected(fmt.Errorf("not a Signal message id: %q", r.Target))
+	}
+	params, err := c.params(bridge.Outgoing{Chat: r.Chat})
+	if err != nil {
+		return "", err
+	}
+	delete(params, "message")
+	params["emoji"] = r.Key
+	params["targetAuthor"] = author
+	params["targetTimestamp"] = ts
+	params["remove"] = r.Removed
+	c.mu.Lock()
+	rp := c.rpc
+	c.mu.Unlock()
+	if rp == nil {
+		return "", errors.New("signal is not connected")
+	}
+	if err := rp.call(ctx, "sendReaction", params, nil); err != nil {
+		if _, err := sendError(err); err != nil {
+			return "", err
+		}
+	}
+	return "", nil
 }
 
 // Edit changes a message sent before; Signal edits name the original's

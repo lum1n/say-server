@@ -534,6 +534,20 @@ func (c *wsConn) handle(ctx context.Context, req envelope) (json.RawMessage, err
 			return nil, err
 		}
 		return json.Marshal(toEvent(e))
+	case "react", "unreact":
+		var p struct {
+			RoomID  string `json:"room_id"`
+			EventID string `json:"event_id"`
+			Key     string `json:"key"`
+		}
+		if err := decodePayload(req.Payload, &p); err != nil {
+			return nil, err
+		}
+		e, _, err := c.s.react(ctx, c.me, p.RoomID, p.EventID, p.Key, req.Type == "unreact", "", time.Time{})
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(toEvent(e))
 	case "hello":
 		return c.hello(ctx, req.Payload)
 	case "ack":

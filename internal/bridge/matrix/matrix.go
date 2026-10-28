@@ -32,7 +32,7 @@ func init() {
 			{Key: "device_name", Label: "Device name", Kind: "text", Placeholder: "say",
 				Help: "How say's session shows in your list of devices."},
 		},
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
 		Open:         open,
 		LogOut:       logOut,
 	})

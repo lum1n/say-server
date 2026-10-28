@@ -119,9 +119,16 @@ type Event struct {
 	ReplyTo string
 	// IdempotencyKey is the key the sender sent the event with, if any.
 	IdempotencyKey string
-	Settings       *AgentSettingsChange // for EventAgentSettings
-	Handoff        *Handoff             // for EventHandoff
-	CreatedAt      time.Time
+	// Reacts is the message an EventReaction changes, and Reaction what
+	// it does to it.
+	Reacts   string
+	Reaction *ReactionChange
+	// Reactions are a message's reactions as they now are, on messages
+	// read from a page of the log; nil on others and when it has none.
+	Reactions []Reactions
+	Settings  *AgentSettingsChange // for EventAgentSettings
+	Handoff   *Handoff             // for EventHandoff
+	CreatedAt time.Time
 }
 
 // StreamState says whether a message is complete. A streaming message's
@@ -149,4 +156,18 @@ const (
 type Part struct {
 	Kind PartKind
 	Data []byte
+}
+
+// ReactionChange is what a reaction event does: add its sender's Key to the
+// message, or take it back.
+type ReactionChange struct {
+	Key     string
+	Removed bool
+}
+
+// Reactions are the senders who reacted to a message with one key, oldest
+// first.
+type Reactions struct {
+	Key     string
+	Senders []string
 }

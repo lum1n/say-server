@@ -41,5 +41,10 @@
 // its catch-up is received, so a live line during the catch-up cannot
 // skip what was missed.
 //
+// Reactions. On servers with message-tags a reaction is a TAGMSG with the
+// client tags +draft/react (or +draft/unreact to take it back) holding the
+// emoji and +draft/reply the msgid of the message. Elsewhere, or for a
+// line with no msgid, React refuses and the reaction is dropped.
+//
 // IRC has no edits, so the bridge does not implement bridge.Editor.
 package irc

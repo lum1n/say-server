@@ -24,7 +24,7 @@ func init() {
 		Title:        "Telegram bot",
 		Modes:        []string{store.ModeBot},
 		Fields:       fields,
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
 		Open:         open,
 	})
 }
@@ -99,7 +99,7 @@ type conn struct {
 }
 
 // allowed are the update kinds asked for.
-var allowed = []string{"message", "edited_message", "channel_post", "edited_channel_post"}
+var allowed = []string{"message", "edited_message", "channel_post", "edited_channel_post", "message_reaction"}
 
 // Run checks the token, then long-polls updates until ctx ends.
 func (c *conn) Run(ctx context.Context) error {
@@ -194,8 +194,23 @@ func (c *conn) batch(ctx context.Context, ups []update) error {
 	return nil
 }
 
-// handle passes an update's message on, if its chat is linked.
+// handle passes an update's message or reactions on, if its chat is
+// linked.
 func (c *conn) handle(ctx context.Context, u update, linked map[string]bool) error {
+	if r := u.MessageReaction; r != nil {
+		// A reaction does not say which topic its message is in, so it
+		// reaches a room linked to the whole group only.
+		id := strconv.FormatInt(r.Chat.ID, 10)
+		if !linked[id] {
+			return nil
+		}
+		for _, in := range reactions(r, c.botID) {
+			if err := c.h.Receive(ctx, in); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	m, edit := u.Message, false
 	switch {
 	case u.ChannelPost != nil:
@@ -294,6 +309,23 @@ func (c *conn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string) err
 		return nil
 	}
 	return classify(err)
+}
+
+// React sets the bot's reaction on a message: the key, or none when it is
+// taken back. Bots may use only Telegram's standard reaction emoji; others
+// are refused.
+func (c *conn) React(ctx context.Context, r bridge.Reaction) (string, error) {
+	id, err := strconv.ParseInt(r.Target, 10, 64)
+	if err != nil {
+		return "", bridge.Rejected(fmt.Errorf("telegram bot: bad message id %q", r.Target))
+	}
+	chat, _ := splitChat(r.Chat)
+	set := []map[string]string{}
+	if !r.Removed {
+		set = append(set, map[string]string{"type": "emoji", "emoji": r.Key})
+	}
+	err = c.call(ctx, "setMessageReaction", map[string]any{"chat_id": chat, "message_id": id, "reaction": set}, nil)
+	return "", classify(err)
 }
 
 // sendMessage posts HTML text to a chat or topic, answering reply if it

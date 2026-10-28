@@ -76,6 +76,8 @@ func (i *instance) deliverEvent(ctx context.Context, l store.BridgeLink, e core.
 		msg = m
 	case e.Type == core.EventEdit:
 		return i.deliverEdit(ctx, l, e)
+	case e.Type == core.EventReaction:
+		return i.deliverReaction(ctx, l, e)
 	default:
 		return nil
 	}
@@ -226,6 +228,52 @@ func (i *instance) deliverEdit(ctx context.Context, l store.BridgeLink, e core.E
 		i.warn(ctx, "edit", err)
 	}
 	return nil
+}
+
+// deliverReaction sends the owner's reaction to the network, in account
+// mode: a bot reacts as itself, so it cannot stand for the many people of a
+// room, and leaves reactions out for now.
+func (i *instance) deliverReaction(ctx context.Context, l store.BridgeLink, e core.Event) error {
+	reactor, ok := i.conn.(Reactor)
+	if !ok || i.b.Mode != store.ModeAccount || e.Reaction == nil || e.SenderID != i.b.OwnerID {
+		return nil
+	}
+	if !i.net.Idempotent && time.Since(e.CreatedAt) > MaxDeliveryAge {
+		return nil
+	}
+	target, err := i.remoteReply(ctx, l, e.Reacts)
+	if err != nil || target == "" {
+		return err
+	}
+	r := Reaction{Chat: l.RemoteID, EventID: e.ID, Target: target, Key: e.Reaction.Key, Removed: e.Reaction.Removed}
+	if r.Removed {
+		added, err := i.c.Store.LastReactionAdd(ctx, e.Reacts, e.SenderID, r.Key)
+		if err == nil {
+			r.Added, err = i.remoteReply(ctx, l, added.ID)
+		}
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	// Received from this link, or sent before: reactions are not retried.
+	ok, err = i.c.Store.StartBridgeMessage(ctx, store.BridgeMessage{
+		LinkID: l.ID, EventID: e.ID, Direction: store.BridgeOut, State: store.BridgeSending, CreatedAt: time.Now(),
+	})
+	if err != nil || !ok {
+		return err
+	}
+	sctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	remoteID, err := reactor.React(sctx, r)
+	cancel()
+	state, errMsg := store.BridgeSent, ""
+	switch {
+	case errors.Is(err, ErrRejected):
+		state, errMsg = store.BridgeFailed, err.Error()
+		i.warn(ctx, "reaction dropped", err)
+	case err != nil:
+		state, errMsg = store.BridgeUnknown, err.Error()
+	}
+	return i.c.Store.FinishBridgeMessage(context.WithoutCancel(ctx), l.ID, e.ID, state, remoteID, errMsg)
 }
 
 // sends reports whether messages from senderID go out on this bridge. In

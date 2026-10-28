@@ -102,6 +102,36 @@ type Editor interface {
 	Edit(ctx context.Context, m Outgoing, remoteID string) error
 }
 
+// Reactor is a Conn that can react to messages as the account. React
+// returns the reaction's own remote id on networks that give it one. A
+// key the network does not take, such as an emoji outside Telegram's set,
+// should be an error wrapping ErrRejected: it is dropped and logged.
+type Reactor interface {
+	React(ctx context.Context, r Reaction) (remoteID string, err error)
+}
+
+// Reaction is the owner reacting on the network.
+type Reaction struct {
+	Chat    string // remote chat id
+	EventID string // the reaction event
+	// Target is the remote id of the message reacted to.
+	Target string
+	Key    string
+	// Removed takes the reaction back. Added is then the remote id the
+	// network gave the reaction when it was added, if it gave one.
+	Removed bool
+	Added   string
+}
+
+// IncomingReaction is someone on the network reacting to a message.
+type IncomingReaction struct {
+	// Target is the remote id of the message. A removal may leave it out
+	// and name the reaction it takes back by the Incoming's ID instead.
+	Target  string
+	Key     string
+	Removed bool
+}
+
 // ErrRejected marks a send the network refused, so it surely did not
 // arrive.
 var ErrRejected = errors.New("rejected")
@@ -146,6 +176,9 @@ type Incoming struct {
 	Edit bool
 	// ReplyTo is the remote id of the message this one answers.
 	ReplyTo string
+	// Reaction, when set, makes this a reaction rather than a message.
+	// ID is then the reaction's own remote id, if it has one.
+	Reaction *IncomingReaction
 	// Quote is the first line of the message ReplyTo, if the network sends
 	// it along. It leads the text as a "> " line when say has not seen
 	// that message, so the reply still makes sense.

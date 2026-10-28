@@ -93,6 +93,36 @@ func (q *Queries) AddMember(ctx context.Context, arg AddMemberParams) error {
 	return err
 }
 
+const addReaction = `-- name: AddReaction :execrows
+INSERT INTO reactions (room_id, event_id, event_seq, sender_id, key, created_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT DO NOTHING
+`
+
+type AddReactionParams struct {
+	RoomID    string
+	EventID   string
+	EventSeq  int64
+	SenderID  string
+	Key       string
+	CreatedAt int64
+}
+
+func (q *Queries) AddReaction(ctx context.Context, arg AddReactionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, addReaction,
+		arg.RoomID,
+		arg.EventID,
+		arg.EventSeq,
+		arg.SenderID,
+		arg.Key,
+		arg.CreatedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const agentCursor = `-- name: AgentCursor :one
 SELECT seq FROM agent_cursors WHERE principal_id = $1 AND room_id = $2
 `
@@ -891,6 +921,15 @@ func (q *Queries) DeleteRoomMembers(ctx context.Context, roomID string) error {
 	return err
 }
 
+const deleteRoomReactions = `-- name: DeleteRoomReactions :exec
+DELETE FROM reactions WHERE room_id = $1
+`
+
+func (q *Queries) DeleteRoomReactions(ctx context.Context, roomID string) error {
+	_, err := q.db.ExecContext(ctx, deleteRoomReactions, roomID)
+	return err
+}
+
 const deleteSenderBridgeMessages = `-- name: DeleteSenderBridgeMessages :exec
 DELETE FROM bridge_messages
 WHERE event_id IN (SELECT id FROM events WHERE sender_id = $1)
@@ -907,6 +946,15 @@ DELETE FROM events WHERE sender_id = $1
 
 func (q *Queries) DeleteSenderEvents(ctx context.Context, senderID string) error {
 	_, err := q.db.ExecContext(ctx, deleteSenderEvents, senderID)
+	return err
+}
+
+const deleteSenderReactions = `-- name: DeleteSenderReactions :exec
+DELETE FROM reactions WHERE sender_id = $1
+`
+
+func (q *Queries) DeleteSenderReactions(ctx context.Context, senderID string) error {
+	_, err := q.db.ExecContext(ctx, deleteSenderReactions, senderID)
 	return err
 }
 
@@ -993,7 +1041,7 @@ func (q *Queries) DeleteWidgetVisitors(ctx context.Context, widgetID string) err
 }
 
 const eventByIdempotencyKey = `-- name: EventByIdempotencyKey :one
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to, reacts, reaction_key, removed FROM events
 WHERE room_id = $1 AND sender_id = $2 AND idempotency_key = $3
 `
 
@@ -1022,12 +1070,15 @@ func (q *Queries) EventByIdempotencyKey(ctx context.Context, arg EventByIdempote
 		&i.Edits,
 		&i.EditedAt,
 		&i.ReplyTo,
+		&i.Reacts,
+		&i.ReactionKey,
+		&i.Removed,
 	)
 	return i, err
 }
 
 const eventsAfter = `-- name: EventsAfter :many
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to, reacts, reaction_key, removed FROM events
 WHERE room_id = $1 AND seq > $2
 ORDER BY seq
 LIMIT $3
@@ -1064,6 +1115,9 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 			&i.Edits,
 			&i.EditedAt,
 			&i.ReplyTo,
+			&i.Reacts,
+			&i.ReactionKey,
+			&i.Removed,
 		); err != nil {
 			return nil, err
 		}
@@ -1079,7 +1133,7 @@ func (q *Queries) EventsAfter(ctx context.Context, arg EventsAfterParams) ([]Eve
 }
 
 const eventsBefore = `-- name: EventsBefore :many
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to FROM events
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to, reacts, reaction_key, removed FROM events
 WHERE room_id = $1 AND seq < $2
 ORDER BY seq DESC
 LIMIT $3
@@ -1116,6 +1170,9 @@ func (q *Queries) EventsBefore(ctx context.Context, arg EventsBeforeParams) ([]E
 			&i.Edits,
 			&i.EditedAt,
 			&i.ReplyTo,
+			&i.Reacts,
+			&i.ReactionKey,
+			&i.Removed,
 		); err != nil {
 			return nil, err
 		}
@@ -1283,7 +1340,7 @@ func (q *Queries) GetBuiltinAgent(ctx context.Context, principalID string) (Buil
 }
 
 const getEvent = `-- name: GetEvent :one
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to FROM events WHERE id = $1
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to, reacts, reaction_key, removed FROM events WHERE id = $1
 `
 
 func (q *Queries) GetEvent(ctx context.Context, id string) (Event, error) {
@@ -1305,6 +1362,9 @@ func (q *Queries) GetEvent(ctx context.Context, id string) (Event, error) {
 		&i.Edits,
 		&i.EditedAt,
 		&i.ReplyTo,
+		&i.Reacts,
+		&i.ReactionKey,
+		&i.Removed,
 	)
 	return i, err
 }
@@ -1392,10 +1452,27 @@ func (q *Queries) GetWidget(ctx context.Context, id string) (Widget, error) {
 	return i, err
 }
 
+const hasReactionKey = `-- name: HasReactionKey :one
+SELECT COUNT(*) FROM reactions WHERE event_id = $1 AND key = $2
+`
+
+type HasReactionKeyParams struct {
+	EventID string
+	Key     string
+}
+
+func (q *Queries) HasReactionKey(ctx context.Context, arg HasReactionKeyParams) (int64, error) {
+	row := q.db.QueryRowContext(ctx, hasReactionKey, arg.EventID, arg.Key)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const insertEvent = `-- name: InsertEvent :exec
 INSERT INTO events (id, room_id, seq, type, sender_id, caused_by, hop_count,
-                    parts, stream, idempotency_key, automated, edits, reply_to, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    parts, stream, idempotency_key, automated, edits, reply_to,
+                    reacts, reaction_key, removed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 `
 
 type InsertEventParams struct {
@@ -1412,6 +1489,9 @@ type InsertEventParams struct {
 	Automated      int32
 	Edits          string
 	ReplyTo        string
+	Reacts         string
+	ReactionKey    string
+	Removed        int32
 	CreatedAt      int64
 }
 
@@ -1430,9 +1510,52 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 		arg.Automated,
 		arg.Edits,
 		arg.ReplyTo,
+		arg.Reacts,
+		arg.ReactionKey,
+		arg.Removed,
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const lastReactionAdd = `-- name: LastReactionAdd :one
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to, reacts, reaction_key, removed FROM events
+WHERE reacts = $1 AND sender_id = $2 AND reaction_key = $3 AND removed = 0
+ORDER BY seq DESC
+LIMIT 1
+`
+
+type LastReactionAddParams struct {
+	Reacts      string
+	SenderID    string
+	ReactionKey string
+}
+
+// The latest event that added sender's key to a message.
+func (q *Queries) LastReactionAdd(ctx context.Context, arg LastReactionAddParams) (Event, error) {
+	row := q.db.QueryRowContext(ctx, lastReactionAdd, arg.Reacts, arg.SenderID, arg.ReactionKey)
+	var i Event
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.Seq,
+		&i.Type,
+		&i.SenderID,
+		&i.CausedBy,
+		&i.HopCount,
+		&i.Parts,
+		&i.Stream,
+		&i.IdempotencyKey,
+		&i.CreatedAt,
+		&i.Automated,
+		&i.Edits,
+		&i.EditedAt,
+		&i.ReplyTo,
+		&i.Reacts,
+		&i.ReactionKey,
+		&i.Removed,
+	)
+	return i, err
 }
 
 const linkVisitor = `-- name: LinkVisitor :execrows
@@ -1781,6 +1904,93 @@ func (q *Queries) PruneConnectorSessions(ctx context.Context, seenAt int64) erro
 	return err
 }
 
+const reactionKeys = `-- name: ReactionKeys :one
+SELECT COUNT(DISTINCT key) FROM reactions WHERE event_id = $1
+`
+
+func (q *Queries) ReactionKeys(ctx context.Context, eventID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, reactionKeys, eventID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const reactionsInRange = `-- name: ReactionsInRange :many
+SELECT room_id, event_id, event_seq, sender_id, key, created_at FROM reactions
+WHERE room_id = $1 AND event_seq >= $2 AND event_seq <= $3
+ORDER BY event_seq, created_at, sender_id, key
+`
+
+type ReactionsInRangeParams struct {
+	RoomID     string
+	EventSeq   int64
+	EventSeq_2 int64
+}
+
+func (q *Queries) ReactionsInRange(ctx context.Context, arg ReactionsInRangeParams) ([]Reaction, error) {
+	rows, err := q.db.QueryContext(ctx, reactionsInRange, arg.RoomID, arg.EventSeq, arg.EventSeq_2)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Reaction
+	for rows.Next() {
+		var i Reaction
+		if err := rows.Scan(
+			&i.RoomID,
+			&i.EventID,
+			&i.EventSeq,
+			&i.SenderID,
+			&i.Key,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const reactionsOf = `-- name: ReactionsOf :many
+SELECT room_id, event_id, event_seq, sender_id, key, created_at FROM reactions WHERE event_id = $1 ORDER BY created_at, sender_id, key
+`
+
+func (q *Queries) ReactionsOf(ctx context.Context, eventID string) ([]Reaction, error) {
+	rows, err := q.db.QueryContext(ctx, reactionsOf, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Reaction
+	for rows.Next() {
+		var i Reaction
+		if err := rows.Scan(
+			&i.RoomID,
+			&i.EventID,
+			&i.EventSeq,
+			&i.SenderID,
+			&i.Key,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const redeemPairing = `-- name: RedeemPairing :one
 DELETE FROM pairings WHERE hash = $1 AND expires_at > $2 RETURNING principal_id
 `
@@ -1809,6 +2019,24 @@ type ReleaseLeaseParams struct {
 func (q *Queries) ReleaseLease(ctx context.Context, arg ReleaseLeaseParams) error {
 	_, err := q.db.ExecContext(ctx, releaseLease, arg.Name, arg.Holder)
 	return err
+}
+
+const removeReaction = `-- name: RemoveReaction :execrows
+DELETE FROM reactions WHERE event_id = $1 AND sender_id = $2 AND key = $3
+`
+
+type RemoveReactionParams struct {
+	EventID  string
+	SenderID string
+	Key      string
+}
+
+func (q *Queries) RemoveReaction(ctx context.Context, arg RemoveReactionParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, removeReaction, arg.EventID, arg.SenderID, arg.Key)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const renamePrincipal = `-- name: RenamePrincipal :execrows
@@ -2166,7 +2394,7 @@ func (q *Queries) StartBridgeMessage(ctx context.Context, arg StartBridgeMessage
 }
 
 const streamingFrom = `-- name: StreamingFrom :many
-SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to FROM events WHERE sender_id = $1 AND stream = 'streaming'
+SELECT id, room_id, seq, type, sender_id, caused_by, hop_count, parts, stream, idempotency_key, created_at, automated, edits, edited_at, reply_to, reacts, reaction_key, removed FROM events WHERE sender_id = $1 AND stream = 'streaming'
 ORDER BY created_at, id
 `
 
@@ -2195,6 +2423,9 @@ func (q *Queries) StreamingFrom(ctx context.Context, senderID string) ([]Event, 
 			&i.Edits,
 			&i.EditedAt,
 			&i.ReplyTo,
+			&i.Reacts,
+			&i.ReactionKey,
+			&i.Removed,
 		); err != nil {
 			return nil, err
 		}

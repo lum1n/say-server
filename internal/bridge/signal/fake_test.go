@@ -204,6 +204,8 @@ func (f *fake) handle(req wire) {
 			f.mu.Unlock()
 			result = map[string]any{"timestamp": ts, "results": []map[string]string{{"type": "SUCCESS"}}}
 		}
+	case "sendReaction":
+		result = map[string]any{"timestamp": 1700000000500, "results": []map[string]string{{"type": "SUCCESS"}}}
 	default:
 		rerr = &rpcError{Code: -32601, Message: "Method not implemented"}
 	}

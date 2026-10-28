@@ -62,6 +62,7 @@ func newFakeServer(t *testing.T) *fakeServer {
 	mux.HandleFunc("GET "+v3+"/account/whoami", f.auth(f.whoami))
 	mux.HandleFunc("GET "+v3+"/sync", f.auth(f.sync))
 	mux.HandleFunc("PUT "+v3+"/rooms/{room}/send/{type}/{txn}", f.auth(f.send))
+	mux.HandleFunc("PUT "+v3+"/rooms/{room}/redact/{event}/{txn}", f.auth(f.redact))
 	mux.HandleFunc("GET "+v3+"/rooms/{room}/state/{type}", f.auth(f.state))
 	mux.HandleFunc("GET "+v3+"/rooms/{room}/state/{type}/{key}", f.auth(f.state))
 	mux.HandleFunc("GET "+v3+"/rooms/{room}/event/{event}", f.auth(f.event))
@@ -243,6 +244,22 @@ func (f *fakeServer) send(w http.ResponseWriter, r *http.Request, user, token st
 	}
 	id := f.addLocked(r.PathValue("room"), r.PathValue("type"), user, time.Now(), content)
 	f.stream[len(f.stream)-1].ev["unsigned"] = map[string]string{"transaction_id": r.PathValue("txn")}
+	f.txns[key] = id
+	reply(w, 200, map[string]string{"event_id": id})
+}
+
+// redact logs a redaction of an event, with redacts at the top level as
+// rooms before version 11 have it.
+func (f *fakeServer) redact(w http.ResponseWriter, r *http.Request, user, token string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := token + " redact " + r.PathValue("txn")
+	if id, ok := f.txns[key]; ok {
+		reply(w, 200, map[string]string{"event_id": id})
+		return
+	}
+	id := f.addLocked(r.PathValue("room"), "m.room.redaction", user, time.Now(), map[string]any{})
+	f.stream[len(f.stream)-1].ev["redacts"] = r.PathValue("event")
 	f.txns[key] = id
 	reply(w, 200, map[string]string{"event_id": id})
 }

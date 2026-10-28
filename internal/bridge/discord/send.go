@@ -3,7 +3,9 @@ package discord
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -89,6 +91,25 @@ func (c *conn) send(ctx context.Context, m bridge.Outgoing) (string, error) {
 	}
 	c.sent(r.ID, "bot")
 	return r.ID, nil
+}
+
+// React adds the bot's reaction to a message, or takes it back. A
+// server's own emoji needs its id, which say does not keep, so a :name:
+// key is refused.
+func (c *conn) React(ctx context.Context, r bridge.Reaction) (string, error) {
+	if strings.HasPrefix(r.Key, ":") {
+		return "", bridge.Rejected(fmt.Errorf("discord: custom emoji %s cannot be sent", r.Key))
+	}
+	method := http.MethodPut
+	if r.Removed {
+		method = http.MethodDelete
+	}
+	path := "/channels/" + r.Chat + "/messages/" + r.Target + "/reactions/" + url.PathEscape(r.Key) + "/@me"
+	err := c.do(ctx, method, path, nil, nil)
+	if _, ok := errors.AsType[*apiError](err); ok {
+		return "", bridge.Rejected(err)
+	}
+	return "", err
 }
 
 // Edit changes a message the bridge sent, through the webhook that sent

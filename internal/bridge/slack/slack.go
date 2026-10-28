@@ -26,7 +26,7 @@ func init() {
 		Title:        "Slack",
 		Modes:        []string{store.ModeAccount},
 		Fields:       fields,
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
 		Open:         open,
 	})
 }
@@ -35,13 +35,15 @@ var fields = []bridge.Field{
 	{
 		Key: "user_token", Label: "User token", Kind: "secret", Required: true, Placeholder: "xoxp-…",
 		Help: "Create a Slack app for your workspace at api.slack.com/apps. Under OAuth & Permissions add these User Token Scopes: " +
-			"channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, users:read, chat:write. " +
+			"channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, users:read, chat:write, " +
+			"reactions:read, reactions:write. " +
 			"Install the app to the workspace and paste the User OAuth Token (xoxp-…). Messages you write in say are posted as you.",
 	},
 	{
 		Key: "app_token", Label: "App-level token", Kind: "secret", Required: true, Placeholder: "xapp-…",
 		Help: "In the app's settings turn Socket Mode on, so say needs no public URL. Under Event Subscriptions turn events on and " +
-			"subscribe to these events on behalf of users: message.channels, message.groups, message.im, message.mpim. " +
+			"subscribe to these events on behalf of users: message.channels, message.groups, message.im, message.mpim, " +
+			"reaction_added, reaction_removed. " +
 			"Then under Basic Information make an App-Level Token with the connections:write scope and paste it (xapp-…). " +
 			"Reinstall the app if Slack asks you to.",
 	},
@@ -147,6 +149,15 @@ type message struct {
 	// Message and PreviousMessage are set on message_changed.
 	Message         *message `json:"message"`
 	PreviousMessage *message `json:"previous_message"`
+	// Reaction and Item are set on reaction_added and reaction_removed:
+	// the emoji's name and the message reacted to.
+	Reaction string `json:"reaction"`
+	Item     *struct {
+		Type    string `json:"type"`
+		Channel string `json:"channel"`
+		Ts      string `json:"ts"`
+	} `json:"item"`
+	EventTs string `json:"event_ts"`
 }
 
 // channel is a conversation as the Web API describes it.
@@ -260,6 +271,9 @@ func (c *conn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string) err
 
 // receive hands a message to the core, if it is one to show.
 func (c *conn) receive(ctx context.Context, m message) error {
+	if m.Type == "reaction_added" || m.Type == "reaction_removed" {
+		return c.receiveReaction(ctx, m)
+	}
 	in, ok := c.incoming(ctx, m)
 	if !ok {
 		return nil

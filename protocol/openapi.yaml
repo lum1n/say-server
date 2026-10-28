@@ -764,6 +764,67 @@ paths:
                 $ref: "#/components/schemas/Error"
         "422":
           $ref: "#/components/responses/Error"
+  /rooms/{id}/messages/{event_id}/reactions/{key}:
+    parameters:
+      - $ref: "#/components/parameters/RoomID"
+      - name: event_id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: key
+        in: path
+        required: true
+        description: |
+          One emoji (a single grapheme, modifiers and joins included) or a
+          `:shortcode:` of lowercase letters, digits, `_`, `+` and `-`; at
+          most 64 bytes. URL-escape it.
+        schema:
+          type: string
+    put:
+      operationId: addReaction
+      summary: React to a message
+      description: |
+        Adds your reaction. Adding it again changes nothing and logs
+        nothing. A message takes at most 20 kinds of reaction; a new one
+        past that is 422 with code too_many. Automated senders count
+        against the room's agent limits.
+      responses:
+        "200":
+          description: The message, with its reactions as they now are
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
+    delete:
+      operationId: removeReaction
+      summary: Take a reaction back
+      description: Removing a reaction you don't have changes nothing.
+      responses:
+        "200":
+          description: The message, with its reactions as they now are
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "401":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "422":
+          $ref: "#/components/responses/Error"
   /ws:
     get:
       operationId: openWebSocket
@@ -780,6 +841,8 @@ paths:
         - `unsubscribe`: `WsUnsubscribe`.
         - `send`: `WsSend`; the reply payload is the `Event`.
         - `edit`: `WsEdit`; the reply payload is the message as it now is.
+        - `react`, `unreact`: `WsReact`; as PUT and DELETE
+          /rooms/{id}/messages/{event_id}/reactions/{key}.
         - `ping`: no payload.
         - `hello`: `WsHello`; opens a bot session (below). The reply
           payload is `WsHelloReply`.
@@ -2474,8 +2537,10 @@ components:
         capabilities:
           type: array
           description: |
-            What the network carries, such as `replies`. Clients offer
-            replies only in rooms whose bridges all carry them.
+            What the network carries, such as `replies` and `reactions`.
+            Clients offer each only in rooms whose bridges all carry it. A
+            relay bot (bot mode) leaves out `reactions`: it doesn't react
+            for each person.
           items:
             type: string
     DeliveryState:
@@ -2649,9 +2714,53 @@ components:
           description: |
             The idempotency key the sender sent the message with, so a
             client can match its pending send to the event.
+        reacts:
+          type: string
+          description: On a reaction event, the message it changes.
+        reaction:
+          $ref: "#/components/schemas/ReactionChange"
+        reactions:
+          type: array
+          description: |
+            On a message in a page of events or the socket's backlog, its
+            reactions as they were when it was read; fold later reaction
+            events into them. Left out when it has none.
+          items:
+            $ref: "#/components/schemas/Reactions"
         created_at:
           type: string
           format: date-time
+    ReactionChange:
+      type: object
+      required: [key]
+      description: What a reaction event does to its message.
+      properties:
+        key:
+          type: string
+        removed:
+          type: boolean
+          description: The sender took the reaction back.
+    Reactions:
+      type: object
+      required: [key, senders]
+      properties:
+        key:
+          type: string
+        senders:
+          type: array
+          description: Who reacted with this key, oldest first.
+          items:
+            type: string
+    WsReact:
+      type: object
+      required: [room_id, event_id, key]
+      properties:
+        room_id:
+          type: string
+        event_id:
+          type: string
+        key:
+          type: string
     SendMessage:
       type: object
       required: [parts]

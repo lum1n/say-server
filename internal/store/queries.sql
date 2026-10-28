@@ -56,8 +56,38 @@ WHERE room_id = $1 AND sender_id = $2 AND idempotency_key = $3;
 
 -- name: InsertEvent :exec
 INSERT INTO events (id, room_id, seq, type, sender_id, caused_by, hop_count,
-                    parts, stream, idempotency_key, automated, edits, reply_to, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14);
+                    parts, stream, idempotency_key, automated, edits, reply_to,
+                    reacts, reaction_key, removed, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17);
+
+-- name: AddReaction :execrows
+INSERT INTO reactions (room_id, event_id, event_seq, sender_id, key, created_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT DO NOTHING;
+
+-- name: RemoveReaction :execrows
+DELETE FROM reactions WHERE event_id = $1 AND sender_id = $2 AND key = $3;
+
+-- name: HasReactionKey :one
+SELECT COUNT(*) FROM reactions WHERE event_id = $1 AND key = $2;
+
+-- name: ReactionKeys :one
+SELECT COUNT(DISTINCT key) FROM reactions WHERE event_id = $1;
+
+-- name: ReactionsInRange :many
+SELECT * FROM reactions
+WHERE room_id = $1 AND event_seq >= $2 AND event_seq <= $3
+ORDER BY event_seq, created_at, sender_id, key;
+
+-- name: ReactionsOf :many
+SELECT * FROM reactions WHERE event_id = $1 ORDER BY created_at, sender_id, key;
+
+-- The latest event that added sender's key to a message.
+-- name: LastReactionAdd :one
+SELECT * FROM events
+WHERE reacts = $1 AND sender_id = $2 AND reaction_key = $3 AND removed = 0
+ORDER BY seq DESC
+LIMIT 1;
 
 -- Only a message that is still streaming changes in place; the stream
 -- condition makes a late update after the final edit a no-op.
@@ -318,6 +348,9 @@ DELETE FROM bridge_links WHERE room_id = $1;
 -- name: DeleteRoomAgentCursors :exec
 DELETE FROM agent_cursors WHERE room_id = $1;
 
+-- name: DeleteRoomReactions :exec
+DELETE FROM reactions WHERE room_id = $1;
+
 -- name: DeleteRoomEvents :exec
 DELETE FROM events WHERE room_id = $1;
 
@@ -330,6 +363,9 @@ DELETE FROM rooms WHERE id = $1;
 -- name: DeleteSenderBridgeMessages :exec
 DELETE FROM bridge_messages
 WHERE event_id IN (SELECT id FROM events WHERE sender_id = $1);
+
+-- name: DeleteSenderReactions :exec
+DELETE FROM reactions WHERE sender_id = $1;
 
 -- name: DeleteSenderEvents :exec
 DELETE FROM events WHERE sender_id = $1;

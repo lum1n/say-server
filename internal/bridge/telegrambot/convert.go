@@ -12,11 +12,31 @@ import (
 
 // update is one entry of getUpdates, of the kinds asked for.
 type update struct {
-	UpdateID          int64    `json:"update_id"`
-	Message           *message `json:"message"`
-	EditedMessage     *message `json:"edited_message"`
-	ChannelPost       *message `json:"channel_post"`
-	EditedChannelPost *message `json:"edited_channel_post"`
+	UpdateID          int64           `json:"update_id"`
+	Message           *message        `json:"message"`
+	EditedMessage     *message        `json:"edited_message"`
+	ChannelPost       *message        `json:"channel_post"`
+	EditedChannelPost *message        `json:"edited_channel_post"`
+	MessageReaction   *reactionUpdate `json:"message_reaction"`
+}
+
+// reactionUpdate is a user changing their reactions to a message. Telegram
+// sends it only to bots that are admins of the chat.
+type reactionUpdate struct {
+	Chat        chat           `json:"chat"`
+	MessageID   int64          `json:"message_id"`
+	User        *user          `json:"user"`
+	ActorChat   *chat          `json:"actor_chat"`
+	Date        int64          `json:"date"`
+	OldReaction []reactionType `json:"old_reaction"`
+	NewReaction []reactionType `json:"new_reaction"`
+}
+
+// reactionType is an emoji, or a custom or paid reaction, which say leaves
+// out.
+type reactionType struct {
+	Type  string `json:"type"`
+	Emoji string `json:"emoji"`
 }
 
 type user struct {
@@ -102,6 +122,51 @@ func incoming(m *message, edit bool, botID int64) (bridge.Incoming, bool) {
 		in.ReplyTo = strconv.FormatInt(r.MessageID, 10)
 	}
 	return in, true
+}
+
+// reactions converts a change of someone's reactions into the reactions
+// taken back and those added.
+func reactions(r *reactionUpdate, botID int64) []bridge.Incoming {
+	a := bridge.Author{ID: strconv.FormatInt(r.Chat.ID, 10), Name: chatName(r.Chat)}
+	switch {
+	case r.ActorChat != nil:
+		a = bridge.Author{ID: strconv.FormatInt(r.ActorChat.ID, 10), Name: chatName(*r.ActorChat)}
+	case r.User != nil:
+		a = author(&message{From: r.User, Chat: r.Chat}, botID)
+	}
+	emojis := func(ts []reactionType) map[string]bool {
+		out := map[string]bool{}
+		for _, t := range ts {
+			if t.Type == "emoji" && t.Emoji != "" {
+				out[t.Emoji] = true
+			}
+		}
+		return out
+	}
+	old, now := emojis(r.OldReaction), emojis(r.NewReaction)
+	var out []bridge.Incoming
+	add := func(key string, removed bool) {
+		in := bridge.Incoming{
+			Chat:     remoteChat(r.Chat),
+			Author:   a,
+			Reaction: &bridge.IncomingReaction{Target: strconv.FormatInt(r.MessageID, 10), Key: key, Removed: removed},
+		}
+		if r.Date > 0 {
+			in.Time = time.Unix(r.Date, 0)
+		}
+		out = append(out, in)
+	}
+	for _, t := range r.OldReaction {
+		if old[t.Emoji] && !now[t.Emoji] {
+			add(t.Emoji, true)
+		}
+	}
+	for _, t := range r.NewReaction {
+		if now[t.Emoji] && !old[t.Emoji] {
+			add(t.Emoji, false)
+		}
+	}
+	return out
 }
 
 // author is who wrote a message: the channel or group it was sent as,

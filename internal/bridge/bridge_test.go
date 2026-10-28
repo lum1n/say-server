@@ -121,6 +121,7 @@ type fakeConn struct {
 	running bool
 	answer  string
 	sent    []bridge.Outgoing
+	reacted []bridge.Reaction
 	edits   []string // remote id: text
 	sendErr error
 	// echo makes every send come back as an incoming message, as
@@ -190,6 +191,22 @@ func (c *fakeConn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string)
 	defer c.mu.Unlock()
 	c.edits = append(c.edits, remoteID+": "+m.Text)
 	return nil
+}
+
+func (c *fakeConn) React(ctx context.Context, r bridge.Reaction) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.reacted = append(c.reacted, r)
+	if r.Removed {
+		return "", nil
+	}
+	return fmt.Sprintf("x%d", len(c.reacted)), nil
+}
+
+func (c *fakeConn) reactions() []bridge.Reaction {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]bridge.Reaction(nil), c.reacted...)
 }
 
 func (c *fakeConn) sends() []bridge.Outgoing {
@@ -510,6 +527,64 @@ func TestReplies(t *testing.T) {
 	e.call("GET", "/api/v1/rooms/"+l.RoomID, nil, &r)
 	if len(r.Bridges) != 1 || !slices.Equal(r.Bridges[0].Capabilities, []string{"replies"}) {
 		t.Fatalf("room bridges = %+v", r.Bridges)
+	}
+}
+
+func TestReactions(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	b := e.addBridge(store.ModeAccount)
+	e.runner("n1")
+	c := fakes.conn(t, b.ID)
+	chat := bridge.RemoteChat{ID: "dm-bob", Name: "Bob", Direct: true}
+	bob := bridge.Author{ID: "bob", Name: "Bob"}
+	c.in <- bridge.Incoming{Chat: chat, ID: "m1", Author: bob, Text: "lunch?"}
+	l := e.portal(b.ID, "dm-bob")
+	eventually(t, "Bob's message is in", func() bool { return len(e.log(l.RoomID)) == 1 })
+	msg := e.log(l.RoomID)[0]
+	reactions := func() []core.Reactions {
+		m, _ := e.store.GetEvent(ctx, msg.ID)
+		return m.Reactions
+	}
+
+	// Bob reacts on the network, with an id, and takes it back by that id.
+	c.in <- bridge.Incoming{Chat: chat, ID: "rx1", Author: bob, Reaction: &bridge.IncomingReaction{Target: "m1", Key: "👍"}}
+	eventually(t, "Bob's reaction is in", func() bool { return len(reactions()) == 1 })
+	c.in <- bridge.Incoming{Chat: chat, ID: "rx1", Author: bob, Reaction: &bridge.IncomingReaction{Removed: true}}
+	eventually(t, "Bob's reaction is gone", func() bool { return len(reactions()) == 0 })
+	// A reaction to a message say never saw, or with a key say doesn't take, is dropped.
+	c.in <- bridge.Incoming{Chat: chat, Author: bob, Reaction: &bridge.IncomingReaction{Target: "m0", Key: "👍"}}
+	c.in <- bridge.Incoming{Chat: chat, Author: bob, Reaction: &bridge.IncomingReaction{Target: "m1", Key: "not one"}}
+	// Ada reacting from her phone shows as Ada, and isn't sent back.
+	c.in <- bridge.Incoming{Chat: chat, Author: bridge.Author{ID: "me", Self: true}, Reaction: &bridge.IncomingReaction{Target: "m1", Key: "🎉"}}
+	eventually(t, "Ada's phone reaction is in", func() bool {
+		rs := reactions()
+		return len(rs) == 1 && rs[0].Key == "🎉" && rs[0].Senders[0] == e.ada.ID
+	})
+
+	// Ada reacts in say: it goes out, and taking it back names what the network gave it.
+	if _, err := e.srv.ReactAs(ctx, e.ada, l.RoomID, "", msg.ID, "❤️", false, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.srv.ReactAs(ctx, e.ada, l.RoomID, "", msg.ID, "❤️", true, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the reactions are sent", func() bool { return len(c.reactions()) == 2 })
+	rs := c.reactions()
+	if rs[0].Target != "m1" || rs[0].Key != "❤️" || rs[0].Removed || !rs[1].Removed || rs[1].Added != "x1" {
+		t.Fatalf("sent reactions = %+v", rs)
+	}
+
+	// Someone else's reaction in say doesn't go out as Ada.
+	cleo := core.Principal{ID: core.NewID(), Kind: core.PrincipalHuman, DisplayName: "Cleo"}
+	e.store.CreatePrincipal(ctx, cleo)
+	e.store.AddMember(ctx, core.Membership{RoomID: l.RoomID, PrincipalID: cleo.ID, Role: core.RoleMember})
+	if _, err := e.srv.ReactAs(ctx, cleo, l.RoomID, "", msg.ID, "😀", false, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if n := len(c.reactions()); n != 2 {
+		t.Fatalf("%d reactions sent", n)
 	}
 }
 

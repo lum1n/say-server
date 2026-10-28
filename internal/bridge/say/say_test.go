@@ -3,6 +3,7 @@ package say_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -242,6 +243,35 @@ func TestSync(t *testing.T) {
 		return prose(laptop.log(l.RoomID)) == "hi Ada! | from the laptop, edited | from the web" &&
 			prose(home.log(room.ID)) == "long ago | hi Ada! | from the laptop, edited | from the web"
 	})
+
+	// Reactions go both ways: Bob's on home shows on the laptop, and Ada's
+	// from the laptop, and taking it back, reach home.
+	reactions := func(n *node, roomID string) string {
+		var out []string
+		// "hi Ada!" is third from the end on both.
+		for _, r := range n.log(roomID)[len(n.log(roomID))-3].Reactions {
+			out = append(out, fmt.Sprintf("%s×%d", r.Key, len(r.Senders)))
+		}
+		return strings.Join(out, " ")
+	}
+	if _, err := home.srv.ReactAs(ctx, bob, room.ID, "", hi.ID, "👍", false, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "Bob's reaction is on the laptop", func() bool { return reactions(laptop, l.RoomID) == "👍×1" })
+	laptopHi := laptop.log(l.RoomID)[0]
+	if _, err := laptop.srv.ReactAs(ctx, me, l.RoomID, "", laptopHi.ID, "🎉", false, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "Ada's reaction is on home", func() bool { return reactions(home, room.ID) == "👍×1 🎉×1" })
+	if _, err := laptop.srv.ReactAs(ctx, me, l.RoomID, "", laptopHi.ID, "🎉", true, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "Ada's reaction is gone from home", func() bool { return reactions(home, room.ID) == "👍×1" })
+	// Its echo from home changes nothing on the laptop.
+	time.Sleep(100 * time.Millisecond)
+	if got := reactions(laptop, l.RoomID); got != "👍×1" {
+		t.Fatalf("laptop reactions = %s", got)
+	}
 
 	// Offline: what the laptop writes waits, however old, and goes out in
 	// order when home is back.

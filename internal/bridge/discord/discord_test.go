@@ -152,6 +152,8 @@ func (f *fakeDiscord) rest(w http.ResponseWriter, r *http.Request) {
 	case r.Method == "POST" && len(parts) == 3 && parts[0] == "channels" && parts[2] == "messages":
 		f.next++
 		reply(w, 200, map[string]any{"id": fmt.Sprintf("M%d", f.next)})
+	case (r.Method == "PUT" || r.Method == "DELETE") && len(parts) == 7 && parts[4] == "reactions":
+		w.WriteHeader(204)
 	case r.Method == "PATCH":
 		reply(w, 200, map[string]any{"id": parts[len(parts)-1]})
 	default:
@@ -251,7 +253,7 @@ type fakeHost struct {
 func (h *fakeHost) Receive(ctx context.Context, m bridge.Incoming) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if m.ID == h.failAt {
+	if h.failAt != "" && m.ID == h.failAt {
 		return errors.New("receive failed")
 	}
 	h.got = append(h.got, m)
@@ -370,7 +372,7 @@ func TestRunReceives(t *testing.T) {
 		t.Fatalf("identify op = %v", ident["op"])
 	}
 	d := ident["d"].(map[string]any)
-	if d["token"] != token || d["intents"] != float64(1|1<<9|1<<15) {
+	if d["token"] != token || d["intents"] != float64(1|1<<9|1<<10|1<<13|1<<15) {
 		t.Fatalf("identify = %v", d)
 	}
 
@@ -812,3 +814,51 @@ func TestBadToken(t *testing.T) {
 }
 
 func ptr(s string) *string { return &s }
+
+func TestReactions(t *testing.T) {
+	f := newFake(t)
+	h := &fakeHost{chats: []string{"C1"}}
+	c := newConn(t, f, h, "")
+	run(t, c)
+	eventually(t, "connected", func() bool { h.mu.Lock(); defer h.mu.Unlock(); return h.connected == 1 })
+
+	f.frames <- dispatch("MESSAGE_REACTION_ADD", map[string]any{
+		"user_id": "U2", "channel_id": "C1", "message_id": id(1), "emoji": map[string]any{"id": nil, "name": "👍"},
+		"member": map[string]any{"user": map[string]any{"id": "U2", "username": "u2", "global_name": "Una"}},
+	})
+	f.frames <- dispatch("MESSAGE_REACTION_ADD", map[string]any{
+		"user_id": "BOT", "channel_id": "C1", "message_id": id(1), "emoji": map[string]any{"id": "77", "name": "PartyParrot"},
+	})
+	f.frames <- dispatch("MESSAGE_REACTION_REMOVE", map[string]any{
+		"user_id": "U2", "channel_id": "C1", "message_id": id(1), "emoji": map[string]any{"id": nil, "name": "👍"},
+	})
+	f.frames <- dispatch("MESSAGE_REACTION_ADD", map[string]any{
+		"user_id": "U2", "channel_id": "C9", "message_id": id(2), "emoji": map[string]any{"name": "👍"},
+	})
+	eventually(t, "three reactions", func() bool { return len(h.received()) == 3 })
+	got := h.received()
+	if r := got[0]; r.Chat.ID != "C1" || r.Author != (bridge.Author{ID: "U2", Name: "Una"}) || r.ID != "" ||
+		*r.Reaction != (bridge.IncomingReaction{Target: id(1), Key: "👍"}) {
+		t.Errorf("add = %+v %+v", r, r.Reaction)
+	}
+	if r := got[1]; !r.Author.Self || r.Reaction.Key != ":partyparrot:" {
+		t.Errorf("own custom emoji = %+v %+v", r.Author, r.Reaction)
+	}
+	if r := got[2]; *r.Reaction != (bridge.IncomingReaction{Target: id(1), Key: "👍", Removed: true}) {
+		t.Errorf("remove = %+v", r.Reaction)
+	}
+
+	ctx := context.Background()
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "C1", Target: "M5", Key: "👍"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "C1", Target: "M5", Key: "👍", Removed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if put, del := f.called("PUT", "/channels/C1/messages/M5/reactions/"), f.called("DELETE", "/channels/C1/messages/M5/reactions/"); len(put) != 1 || len(del) != 1 || put[0].Path != "/channels/C1/messages/M5/reactions/👍/@me" {
+		t.Fatalf("reaction calls = %+v %+v", put, del)
+	}
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "C1", Target: "M5", Key: ":partyparrot:"}); !errors.Is(err, bridge.ErrRejected) {
+		t.Fatalf("custom emoji = %v", err)
+	}
+}

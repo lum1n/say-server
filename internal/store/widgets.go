@@ -307,7 +307,7 @@ func (s *sqlStore) DeleteVisitor(ctx context.Context, principalID string) error 
 		}
 		steps := []func(context.Context, string) error{
 			q.DeleteRoomBridgeMessages, q.DeleteRoomBridgeLinks, q.DeleteRoomAgentCursors,
-			q.DeleteRoomEvents, q.DeleteRoomMembers,
+			q.DeleteRoomReactions, q.DeleteRoomEvents, q.DeleteRoomMembers,
 		}
 		for _, step := range steps {
 			if err := step(ctx, room); err != nil {
@@ -326,7 +326,7 @@ func (s *sqlStore) DeleteVisitor(ctx context.Context, principalID string) error 
 		}
 		// The rooms it was added to besides its thread.
 		steps = []func(context.Context, string) error{
-			q.DeleteSenderBridgeMessages, q.DeleteSenderEvents, q.DeletePrincipalMemberships,
+			q.DeleteSenderBridgeMessages, q.DeleteSenderReactions, q.DeleteSenderEvents, q.DeletePrincipalMemberships,
 			q.DeletePrincipalTokens, q.DeletePrincipalPairings, q.DeletePrincipal,
 		}
 		for _, step := range steps {

@@ -31,6 +31,11 @@ var (
 	// ErrNotStreaming refuses a streaming update of a message that is
 	// final, someone else's or unknown.
 	ErrNotStreaming = errors.New("store: the message is not streaming")
+	// ErrTooManyReactions refuses a new key on a message that has
+	// MaxReactionKeys already.
+	ErrTooManyReactions = errors.New("store: the message has too many kinds of reaction")
+	// ErrNotReactable refuses a reaction to an event that is not a message.
+	ErrNotReactable = errors.New("store: only messages take reactions")
 )
 
 // AppendOptions are the conditions of an AppendEvent.
@@ -185,6 +190,15 @@ type Store interface {
 	// ErrNotEditable; an unknown message is ErrNotFound. It returns the
 	// edit as stored and the message as it now is.
 	AppendEdit(ctx context.Context, e core.Event) (edit, message core.Event, err error)
+	// React applies reaction event e: e.SenderID adds e.Reaction.Key to
+	// message e.Reacts in e.RoomID, or takes it back. The row and the event
+	// are written in one transaction; a change that changes nothing writes
+	// neither and returns changed false. A new key past MaxReactionKeys is
+	// ErrTooManyReactions; an unknown message ErrNotFound.
+	React(ctx context.Context, e core.Event, opts AppendOptions) (ev core.Event, changed bool, err error)
+	// LastReactionAdd returns the latest event in which senderID added key
+	// to message eventID; ErrNotFound if there is none.
+	LastReactionAdd(ctx context.Context, eventID, senderID, key string) (core.Event, error)
 	// StreamingFrom returns senderID's messages that are still streaming,
 	// oldest first.
 	StreamingFrom(ctx context.Context, senderID string) ([]core.Event, error)

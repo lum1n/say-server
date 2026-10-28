@@ -509,6 +509,9 @@ func insertEvent(ctx context.Context, q *db.Queries, e core.Event, parts string,
 		Automated:      flag(opts.Automated),
 		Edits:          e.Edits,
 		ReplyTo:        e.ReplyTo,
+		Reacts:         e.Reacts,
+		ReactionKey:    reactionKey(e),
+		Removed:        flag(e.Reaction != nil && e.Reaction.Removed),
 		CreatedAt:      millis(e.CreatedAt),
 	})
 }
@@ -641,7 +644,16 @@ func (s *sqlStore) GetEvent(ctx context.Context, id string) (core.Event, error) 
 	if err != nil {
 		return core.Event{}, notFound(err)
 	}
-	return event(row)
+	e, err := event(row)
+	if err != nil || e.Type != core.EventMessage {
+		return e, err
+	}
+	rs, err := s.q().ReactionsOf(ctx, id)
+	if err != nil {
+		return core.Event{}, err
+	}
+	e.Reactions = aggregate(rs)[id]
+	return e, nil
 }
 
 func (s *sqlStore) EventsAfter(ctx context.Context, roomID string, cursor int64, limit int) ([]core.Event, error) {
@@ -649,7 +661,7 @@ func (s *sqlStore) EventsAfter(ctx context.Context, roomID string, cursor int64,
 	if err != nil {
 		return nil, err
 	}
-	return events(rows)
+	return s.page(ctx, roomID, rows)
 }
 
 func (s *sqlStore) EventsBefore(ctx context.Context, roomID string, before int64, limit int) ([]core.Event, error) {
@@ -658,7 +670,135 @@ func (s *sqlStore) EventsBefore(ctx context.Context, roomID string, before int64
 		return nil, err
 	}
 	slices.Reverse(rows)
-	return events(rows)
+	return s.page(ctx, roomID, rows)
+}
+
+// page converts a page of rows in seq order, with its messages' reactions.
+func (s *sqlStore) page(ctx context.Context, roomID string, rows []db.Event) ([]core.Event, error) {
+	evs, err := events(rows)
+	if err != nil || len(evs) == 0 {
+		return evs, err
+	}
+	rs, err := s.q().ReactionsInRange(ctx, db.ReactionsInRangeParams{RoomID: roomID, EventSeq: evs[0].Seq, EventSeq_2: evs[len(evs)-1].Seq})
+	if err != nil {
+		return nil, err
+	}
+	byEvent := aggregate(rs)
+	for i := range evs {
+		evs[i].Reactions = byEvent[evs[i].ID]
+	}
+	return evs, nil
+}
+
+// aggregate groups reaction rows by message, then by key in the order each
+// key was first used.
+func aggregate(rows []db.Reaction) map[string][]core.Reactions {
+	out := map[string][]core.Reactions{}
+	for _, r := range rows {
+		rs := out[r.EventID]
+		i := slices.IndexFunc(rs, func(x core.Reactions) bool { return x.Key == r.Key })
+		if i < 0 {
+			rs = append(rs, core.Reactions{Key: r.Key})
+			i = len(rs) - 1
+		}
+		rs[i].Senders = append(rs[i].Senders, r.SenderID)
+		out[r.EventID] = rs
+	}
+	return out
+}
+
+// MaxReactionKeys bounds the kinds of reaction on one message.
+const MaxReactionKeys = 20
+
+func (s *sqlStore) React(ctx context.Context, e core.Event, opts AppendOptions) (core.Event, bool, error) {
+	if e.Reaction == nil || e.Reacts == "" {
+		return core.Event{}, false, errors.New("store: a reaction event needs a message and a change")
+	}
+	if e.ID == "" {
+		e.ID = core.NewID()
+	}
+	if e.CreatedAt.IsZero() {
+		e.CreatedAt = time.Now()
+	}
+	e.CreatedAt = e.CreatedAt.Truncate(time.Millisecond)
+	e.Type = core.EventReaction
+	e.IdempotencyKey = opts.IdempotencyKey
+	key := e.Reaction.Key
+	err := s.tx(ctx, func(q *db.Queries) error {
+		// Bumping the seq first locks the room, as in AppendEvent.
+		seq, err := q.BumpSeq(ctx, e.RoomID)
+		if err != nil {
+			return notFound(err)
+		}
+		msg, err := q.GetEvent(ctx, e.Reacts)
+		if err != nil {
+			return notFound(err)
+		}
+		if msg.RoomID != e.RoomID {
+			return ErrNotFound
+		}
+		if msg.Type != string(core.EventMessage) {
+			return ErrNotReactable
+		}
+		var n int64
+		if e.Reaction.Removed {
+			n, err = q.RemoveReaction(ctx, db.RemoveReactionParams{EventID: e.Reacts, SenderID: e.SenderID, Key: key})
+		} else {
+			used, err := q.HasReactionKey(ctx, db.HasReactionKeyParams{EventID: e.Reacts, Key: key})
+			if err != nil {
+				return err
+			}
+			if used == 0 {
+				keys, err := q.ReactionKeys(ctx, e.Reacts)
+				if err != nil {
+					return err
+				}
+				if keys >= MaxReactionKeys {
+					return ErrTooManyReactions
+				}
+			}
+			n, err = q.AddReaction(ctx, db.AddReactionParams{
+				RoomID: e.RoomID, EventID: e.Reacts, EventSeq: msg.Seq, SenderID: e.SenderID, Key: key, CreatedAt: millis(e.CreatedAt),
+			})
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			// Nothing changed, so nothing is logged and the seq stays.
+			return errRollback
+		}
+		if opts.Automated {
+			if err := checkBudgets(ctx, q, e, opts); err != nil {
+				return err
+			}
+		}
+		e.Seq = seq
+		return insertEvent(ctx, q, e, "[]", opts)
+	})
+	if errors.Is(err, errRollback) {
+		return core.Event{}, false, nil
+	}
+	if err != nil {
+		return core.Event{}, false, err
+	}
+	return e, true, nil
+}
+
+func (s *sqlStore) LastReactionAdd(ctx context.Context, eventID, senderID, key string) (core.Event, error) {
+	row, err := s.q().LastReactionAdd(ctx, db.LastReactionAddParams{Reacts: eventID, SenderID: senderID, ReactionKey: key})
+	if err != nil {
+		return core.Event{}, notFound(err)
+	}
+	return event(row)
+}
+
+// reactionKey is the key of a reaction event, or "" for others.
+func reactionKey(e core.Event) string {
+	if e.Reaction == nil {
+		return ""
+	}
+	return e.Reaction.Key
 }
 
 func events(rows []db.Event) ([]core.Event, error) {
@@ -691,7 +831,16 @@ func event(row db.Event) (core.Event, error) {
 		ReplyTo:        row.ReplyTo,
 		CreatedAt:      time.UnixMilli(row.CreatedAt),
 		IdempotencyKey: row.IdempotencyKey,
+		Reacts:         row.Reacts,
+		Reaction:       reactionChange(row),
 	}, nil
+}
+
+func reactionChange(row db.Event) *core.ReactionChange {
+	if row.Type != string(core.EventReaction) {
+		return nil
+	}
+	return &core.ReactionChange{Key: row.ReactionKey, Removed: row.Removed != 0}
 }
 
 type jsonPart struct {

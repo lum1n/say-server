@@ -13,9 +13,21 @@ import (
 	"github.com/lum1n/say-server/internal/bridge"
 )
 
-// incoming turns a PRIVMSG into a message for the host; false skips it.
+// Client tags of IRCv3 reactions: +draft/react (or +draft/unreact) holds
+// the emoji, and +draft/reply the msgid of the message reacted to.
+const (
+	tagReact   = "+draft/react"
+	tagUnreact = "+draft/unreact"
+	tagReply   = "+draft/reply"
+)
+
+// incoming turns a PRIVMSG, or a TAGMSG with a reaction, into a message
+// for the host; false skips it.
 func (s *session) incoming(it item) (bridge.Incoming, bool) {
 	m := it.msg
+	if m.Command == "TAGMSG" {
+		return s.reaction(m)
+	}
 	if m.Command != "PRIVMSG" || len(m.Params) < 2 {
 		return bridge.Incoming{}, false
 	}
@@ -33,18 +45,9 @@ func (s *session) incoming(it item) (bridge.Incoming, bool) {
 	if !ok {
 		return bridge.Incoming{}, false
 	}
-	target := strings.TrimLeft(m.Params[0], s.statusmsg)
-	var chat bridge.RemoteChat
-	switch {
-	case s.isChannel(target):
-		chat = bridge.RemoteChat{ID: fold(target), Name: target}
-	case self:
-		if s.isMe(target) {
-			return bridge.Incoming{}, false
-		}
-		chat = bridge.RemoteChat{ID: fold(target), Name: target, Direct: true}
-	default:
-		chat = bridge.RemoteChat{ID: fold(nick), Name: nick, Direct: true}
+	chat, ok := s.chat(m.Params[0], nick, self)
+	if !ok {
+		return bridge.Incoming{}, false
 	}
 	at := serverTime(m)
 	if it.backfill && !at.IsZero() && time.Since(at) > backfillAge {
@@ -64,6 +67,57 @@ func (s *session) incoming(it item) (bridge.Incoming, bool) {
 		}
 	}
 	return in, true
+}
+
+// reaction turns a TAGMSG reacting to a message into one for the host.
+func (s *session) reaction(m ircmsg.Message) (bridge.Incoming, bool) {
+	nick := m.Nick()
+	if nick == "" || len(m.Params) < 1 {
+		return bridge.Incoming{}, false
+	}
+	_, target := m.GetTag(tagReply)
+	r := &bridge.IncomingReaction{Target: target}
+	if ok, key := m.GetTag(tagReact); ok {
+		r.Key = key
+	} else if ok, key := m.GetTag(tagUnreact); ok {
+		r.Key, r.Removed = key, true
+	}
+	if r.Key == "" || r.Target == "" {
+		return bridge.Incoming{}, false
+	}
+	self := s.isSelf(m)
+	chat, ok := s.chat(m.Params[0], nick, self)
+	if !ok {
+		return bridge.Incoming{}, false
+	}
+	in := bridge.Incoming{
+		Chat:     chat,
+		Author:   bridge.Author{ID: fold(nick), Name: nick, Self: self},
+		Time:     serverTime(m),
+		Reaction: r,
+	}
+	if ok, id := m.GetTag("msgid"); ok && !r.Removed {
+		in.ID = id
+	}
+	return in, true
+}
+
+// chat is the conversation a line sent to target by nick is in: the
+// channel, or the private chat with the other person. false skips a line
+// the owner sent to themselves.
+func (s *session) chat(target, nick string, self bool) (bridge.RemoteChat, bool) {
+	target = strings.TrimLeft(target, s.statusmsg)
+	switch {
+	case s.isChannel(target):
+		return bridge.RemoteChat{ID: fold(target), Name: target}, true
+	case self:
+		if s.isMe(target) {
+			return bridge.RemoteChat{}, false
+		}
+		return bridge.RemoteChat{ID: fold(target), Name: target, Direct: true}, true
+	default:
+		return bridge.RemoteChat{ID: fold(nick), Name: nick, Direct: true}, true
+	}
 }
 
 // render makes a line plain text: formatting codes go, a /me becomes

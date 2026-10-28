@@ -787,3 +787,60 @@ func TestSelfByAccount(t *testing.T) {
 		}
 	}
 }
+
+func TestReactions(t *testing.T) {
+	s := newServer(t, allCaps)
+	h := newHost()
+	c, _ := start(t, s, h, map[string]any{}, nil)
+
+	s.write("@msgid=r1;+draft/react=👍;+draft/reply=x1 :bob!u@h TAGMSG #a")
+	s.write("@+draft/unreact=👍;+draft/reply=x1 :bob!u@h TAGMSG #a")
+	s.write("@+draft/react=👍 :bob!u@h TAGMSG #a") // names no message
+	s.write("@+typing=active :bob!u@h TAGMSG #a") // not a reaction
+	s.write("@+draft/react=🎉;+draft/reply=x2 :me!u@h TAGMSG Dave")
+	m := h.next(t)
+	if m.Chat.ID != "#a" || m.ID != "r1" || m.Author.ID != "bob" || m.Reaction == nil || *m.Reaction != (bridge.IncomingReaction{Target: "x1", Key: "👍"}) {
+		t.Errorf("reaction: %+v", m)
+	}
+	m = h.next(t)
+	if m.ID != "" || m.Reaction == nil || *m.Reaction != (bridge.IncomingReaction{Target: "x1", Key: "👍", Removed: true}) {
+		t.Errorf("unreaction: %+v", m)
+	}
+	m = h.next(t)
+	if m.Chat.ID != "dave" || !m.Author.Self || m.Reaction == nil || m.Reaction.Target != "x2" {
+		t.Errorf("own reaction: %+v", m)
+	}
+	h.none(t)
+
+	ctx := context.Background()
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "#a", Target: "x1", Key: "❤️"}); err != nil {
+		t.Fatal(err)
+	}
+	got := s.sent(t, "TAGMSG")
+	if _, k := got.GetTag("+draft/react"); k != "❤️" || got.Params[0] != "#a" {
+		t.Errorf("sent %+v", got)
+	}
+	if _, r := got.GetTag("+draft/reply"); r != "x1" {
+		t.Errorf("sent reply tag %q", r)
+	}
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "#a", Target: "x1", Key: "❤️", Removed: true}); err != nil {
+		t.Fatal(err)
+	}
+	un := s.sent(t, "TAGMSG")
+	if ok, _ := un.GetTag("+draft/unreact"); !ok {
+		t.Error("no unreact tag")
+	}
+	// A line without a msgid can't be reacted to.
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "#a", Target: "h:abc", Key: "❤️"}); !errors.Is(err, bridge.ErrRejected) {
+		t.Errorf("reaction to a hashed id: %v", err)
+	}
+}
+
+func TestReactionsNeedMessageTags(t *testing.T) {
+	s := newServer(t, nil)
+	h := newHost()
+	c, _ := start(t, s, h, map[string]any{}, nil)
+	if _, err := c.React(context.Background(), bridge.Reaction{Chat: "#a", Target: "x1", Key: "👍"}); !errors.Is(err, bridge.ErrRejected) {
+		t.Errorf("React without message-tags: %v", err)
+	}
+}

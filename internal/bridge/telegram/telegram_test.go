@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -768,5 +769,79 @@ func TestLogOutWithoutSession(t *testing.T) {
 	}
 	if err := logOut(context.Background(), bridge.Info{Config: json.RawMessage(`{}`)}); err != nil {
 		t.Errorf("bad config: %v", err)
+	}
+}
+
+func TestReactions(t *testing.T) {
+	api := &fakeAPI{answer: func(req bin.Encoder) (bin.Encoder, error) { return &tg.Updates{}, nil }}
+	c := newConn(t, &fakeHost{}, api)
+	q := newQueue()
+	r := &receiver{st: c.st, q: q}
+	thumbs := &tg.ReactionEmoji{Emoticon: "👍"}
+	list := func(count int, mine bool, recent ...tg.MessagePeerReaction) tg.MessageReactions {
+		rc := tg.ReactionCount{Reaction: thumbs, Count: count}
+		if mine {
+			rc.SetChosenOrder(0)
+		}
+		l := tg.MessageReactions{RecentReactions: recent}
+		if count > 0 {
+			l.Results = []tg.ReactionCount{rc}
+		}
+		return l
+	}
+	bob := tg.MessagePeerReaction{PeerID: &tg.PeerUser{UserID: 8}, Reaction: thumbs}
+	me := tg.MessagePeerReaction{PeerID: &tg.PeerUser{UserID: selfID}, Reaction: thumbs, My: true}
+	steps := []tg.MessageReactions{
+		list(1, false, bob),    // Bob reacts
+		list(2, true, bob, me), // so does the owner, from their phone
+		list(1, true, me),      // Bob takes his back
+		list(0, false),         // and the owner theirs
+		list(0, false),         // nothing new
+	}
+	want := []string{"user:8 👍 +", "self 👍 +", "user:8 👍 -", "self 👍 -"}
+	var got []string
+	for _, l := range steps {
+		u := &tg.Updates{
+			Users:   []tg.UserClass{&tg.User{ID: 8, AccessHash: 88, FirstName: "Bob"}},
+			Chats:   []tg.ChatClass{&tg.Chat{ID: 50, Title: "Family"}},
+			Updates: []tg.UpdateClass{&tg.UpdateMessageReactions{Peer: &tg.PeerChat{ChatID: 50}, MsgID: 3, Reactions: l}},
+		}
+		if err := r.Handle(context.Background(), u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, in := range q.items {
+		x := in.Reaction
+		if x == nil || in.Chat.ID != "chat:50" || x.Target != "3" {
+			t.Fatalf("not a reaction to message 3: %+v", in)
+		}
+		who := in.Author.ID
+		if in.Author.Self {
+			who = "self"
+		}
+		sign := "+"
+		if x.Removed {
+			sign = "-"
+		}
+		got = append(got, who+" "+x.Key+" "+sign)
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	// Sending sets the account's reaction, or clears it.
+	ctx := context.Background()
+	c.setAPI(tg.NewClient(api))
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "chat:50", Target: "3", Key: "🔥"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.React(ctx, bridge.Reaction{Chat: "chat:50", Target: "3", Key: "🔥", Removed: true}); err != nil {
+		t.Fatal(err)
+	}
+	calls := api.called()
+	add, ok1 := calls[0].(*tg.MessagesSendReactionRequest)
+	del, ok2 := calls[1].(*tg.MessagesSendReactionRequest)
+	if !ok1 || !ok2 || add.MsgID != 3 || len(add.Reaction) != 1 || add.Reaction[0].(*tg.ReactionEmoji).Emoticon != "🔥" || len(del.Reaction) != 0 {
+		t.Errorf("calls = %+v", calls)
 	}
 }

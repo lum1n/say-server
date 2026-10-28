@@ -33,6 +33,34 @@ type message struct {
 	} `json:"message_reference"`
 
 	update bool // came as MESSAGE_UPDATE
+	// reaction, when set, makes this a reaction to message ID rather
+	// than the message itself.
+	reaction *reaction
+}
+
+// reaction is a MESSAGE_REACTION_ADD or _REMOVE event.
+type reaction struct {
+	UserID    string `json:"user_id"`
+	ChannelID string `json:"channel_id"`
+	MessageID string `json:"message_id"`
+	Member    *struct {
+		User user `json:"user"`
+	} `json:"member"`
+	Emoji struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"emoji"`
+
+	removed bool
+}
+
+// key is the reaction as say keys it: the emoji itself, or a server's
+// own emoji by its name, as :name:.
+func (r reaction) key() string {
+	if r.Emoji.ID != "" {
+		return ":" + strings.ToLower(r.Emoji.Name) + ":"
+	}
+	return r.Emoji.Name
 }
 
 type user struct {
@@ -89,6 +117,9 @@ func (c *conn) receive(ctx context.Context, m message) error {
 	if m.ChannelID == "" || m.ID == "" || !c.isLinked(ctx, m.ChannelID) {
 		return nil
 	}
+	if m.reaction != nil {
+		return c.receiveReaction(ctx, *m.reaction)
+	}
 	if in, ok := c.incoming(m); ok {
 		if err := c.h.Receive(ctx, in); err != nil {
 			return err
@@ -98,6 +129,28 @@ func (c *conn) receive(ctx context.Context, m message) error {
 		c.seen(m.ChannelID, m.ID)
 	}
 	return nil
+}
+
+// receiveReaction hands a reaction to the core. Discord gives reactions no
+// id of their own; a removal names the message and the emoji.
+func (c *conn) receiveReaction(ctx context.Context, r reaction) error {
+	key := r.key()
+	if key == "" || r.UserID == "" {
+		return nil
+	}
+	c.mu.Lock()
+	self := r.UserID == c.self
+	chat := bridge.RemoteChat{ID: r.ChannelID, Name: cmp.Or(c.names[r.ChannelID], r.ChannelID)}
+	c.mu.Unlock()
+	name := r.UserID
+	if r.Member != nil {
+		name = r.Member.User.name()
+	}
+	return c.h.Receive(ctx, bridge.Incoming{
+		Chat:     chat,
+		Author:   bridge.Author{ID: r.UserID, Name: name, Self: self},
+		Reaction: &bridge.IncomingReaction{Target: r.MessageID, Key: key, Removed: r.removed},
+	})
 }
 
 // incoming converts a message; false means it is not shown.

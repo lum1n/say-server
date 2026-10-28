@@ -18,6 +18,7 @@ import (
 	"github.com/ergochat/irc-go/ircmsg"
 
 	"github.com/lum1n/say-server/internal/bridge"
+	"github.com/lum1n/say-server/internal/connector"
 	"github.com/lum1n/say-server/internal/store"
 )
 
@@ -26,6 +27,9 @@ func init() {
 		Name:  "irc",
 		Title: "IRC",
 		Modes: []string{store.ModeAccount},
+		// Reactions need a server with message-tags; elsewhere they are
+		// dropped.
+		Capabilities: []connector.Capability{connector.CapReactions},
 		Fields: []bridge.Field{
 			{Key: "server", Label: "Server", Kind: "text", Required: true, Placeholder: "irc.libera.chat:6697", Help: "Host and port."},
 			{Key: "tls", Label: "Use TLS", Kind: "bool"},
@@ -142,6 +146,7 @@ type session struct {
 	chantypes string // prefixes of channel names
 	statusmsg string // prefixes that address part of a channel
 	accounts  bool   // account-tag: lines say who is logged in as whom
+	tags      bool   // message-tags: client tags such as reactions pass
 
 	// nick is the configured nick, the owner's even while the server
 	// has them under another.
@@ -233,6 +238,7 @@ func (s *session) negotiated() {
 	s.echo = has("echo-message") && s.labels
 	s.history = (has("draft/chathistory") || has("chathistory")) && s.labels
 	s.accounts = has("account-tag")
+	s.tags = has("message-tags")
 	is := s.irc.ISupport()
 	if v, ok := is["CHANTYPES"]; ok {
 		s.chantypes = v
@@ -280,6 +286,7 @@ func (c *conn) Run(parent context.Context) error {
 	// Callbacks run on ircevent's read loop, which also completes Sends:
 	// they only queue, and a goroutine of their own passes lines on.
 	cl.AddCallback("PRIVMSG", func(m ircmsg.Message) { s.q.push(item{msg: m}) })
+	cl.AddCallback("TAGMSG", func(m ircmsg.Message) { s.q.push(item{msg: m}) })
 
 	stop := context.AfterFunc(ctx, closeSock)
 	err := cl.Connect()
@@ -622,6 +629,26 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 		}
 	}
 	return id, nil
+}
+
+// React sends a reaction as a TAGMSG, on servers with message-tags. Lines
+// have no ids without them, so there is nothing to react to.
+func (c *conn) React(ctx context.Context, r bridge.Reaction) (string, error) {
+	s := c.session()
+	if s == nil {
+		return "", bridge.Rejected(errNotConnected)
+	}
+	if !s.tags || strings.HasPrefix(r.Target, "h:") || strings.HasPrefix(r.Target, "say:") {
+		return "", bridge.Rejected(errors.New("irc: the server does not carry reactions"))
+	}
+	tag := tagReact
+	if r.Removed {
+		tag = tagUnreact
+	}
+	if err := s.irc.SendWithTags(map[string]string{tag: r.Key, tagReply: r.Target}, "TAGMSG", r.Chat); err != nil {
+		return "", bridge.Rejected(err)
+	}
+	return "", nil
 }
 
 // privmsg sends one line and returns its id and server-time, if the
