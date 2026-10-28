@@ -81,7 +81,7 @@ Requires Go and pnpm.
 
 ```sh
 make build   # builds web/ and widget/, then the Go binary into bin/say
-make test    # go vet, Go tests, TypeScript typecheck
+make test    # go vet, Go tests, TypeScript typecheck, Python SDK tests
 bin/say      # listens on :7290, stores data in data/say.db
 ```
 
@@ -354,7 +354,7 @@ you send from your phone or other apps show up as yours.
 | IRC | Server, nick, channels; SASL or server password if needed |
 | Email | IMAP and SMTP servers, address and password |
 | Telegram | `api_id` and `api_hash` from my.telegram.org, and your phone number; the code Telegram sends is asked on the page |
-| Signal | A current `signal-cli` (the Docker image has one, for amd64 and arm64; otherwise install it on the server, as Signal turns old versions away); scan the QR code on the page with Signal on your phone (Settings → Linked devices). In a cluster its keys move with the bridge, so every node needs `signal-cli` |
+| Signal | A current `signal-cli` (the Docker image has one, for amd64 and arm64; otherwise install its JVM build on the server, as Signal turns old versions away and the native build fails to link); scan the QR code on the page with Signal on your phone (Settings → Linked devices). In a cluster its keys move with the bridge, so every node needs `signal-cli` |
 
 Chats active in the last 30 days are brought in with their latest
 messages. A room shows its network in the header, and whether it is
@@ -362,6 +362,14 @@ connected. If a network is down, what you write is sent when it is back,
 if within ten minutes; otherwise the message says it was not sent. A send
 that was cut off says it "may not have reached" the network, and is never
 repeated by itself ([ADR 0014](./docs/adr/0014-bridges.md)).
+
+Signal's QR code must be scanned by your phone, which may be the device
+you use say on. The account's owner can make a screen code with `POST
+/api/v1/bridges/{id}/screen`, good for 10 minutes; type it on your say's
+`/link` page on a laptop, tablet or TV, which shows the QR code without
+signing in and follows it until the account is connected. If Signal turns
+the linked device away, or it is removed on the phone, the account says
+"link lost" and links again with a new code.
 
 **Delete** on the Accounts page logs say out of the account, then removes
 it: Matrix logs out the session say made with your password (an access
@@ -420,7 +428,7 @@ placeholder page instead of the app.
 
 | Path | What |
 |---|---|
-| `cmd/say` | The binary: `serve`, `tui`, `principal add` |
+| `cmd/say` | The binary: `serve`, `tui`, `principal add`, `exe`, `update`, `version` |
 | `say/` | The embeddable node (`say.Open`), its in-memory endpoint and a Go client |
 | `mobile/` | gomobile bindings of the node for iOS and Android |
 | `cmd/libsay` | The node as a C shared library |
@@ -432,6 +440,7 @@ placeholder page instead of the app.
 | `internal/agents` | Runs built-in agents, one node per agent through a lease |
 | `internal/llm` | Model providers for built-in agents: Anthropic and OpenAI-compatible |
 | `internal/bridge` | Bridges to other networks: accounts, relay bots, delivery from the log; one package per network |
+| `internal/update` | `say update`: installs a newer signed release on a node, with rollback |
 | `internal/connector` | Connector protocol, capabilities, loopback for first-party connectors |
 | `web/` | TanStack Start (React) app in SPA mode, embedded into the binary; includes `/embed` routes |
 | `widget/` | Tiny vanilla-TS loader that defines `<say-chat>` |
