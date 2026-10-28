@@ -2258,6 +2258,9 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/BridgeMode"
+        advanced:
+          description: Few people need the field, so forms fold it away.
+          type: boolean
     Network:
       type: object
       required: [name, title, modes, fields, capabilities]

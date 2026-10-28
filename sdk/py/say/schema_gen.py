@@ -433,6 +433,10 @@ class NetworkField(TypedDict):
     """
     The modes the field applies in; absent is all.
     """
+    advanced: NotRequired[bool]
+    """
+    Few people need the field, so forms fold it away.
+    """
 
 
 class Network(TypedDict):

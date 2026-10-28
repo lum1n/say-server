@@ -147,6 +147,43 @@ func TestOpenChecksConfig(t *testing.T) {
 	}
 }
 
+func TestDefaultApp(t *testing.T) {
+	h := &fakeHost{}
+	phone := `{"phone": "+4712345678"}`
+	if _, err := open(bridge.Info{Config: json.RawMessage(phone)}, h); err == nil {
+		t.Error("no app and no default: no error")
+	}
+	if fields(false)[0].Advanced || !fields(true)[0].Advanced || fields(true)[1].Required {
+		t.Error("the app's fields are not advanced and optional with a default")
+	}
+
+	appID, appHash = "5", "built-in"
+	t.Cleanup(func() { appID, appHash = "", "" })
+	c, err := open(bridge.Info{Config: json.RawMessage(phone)}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg := c.(*conn).cfg; cfg.APIID != 5 || cfg.APIHash != "built-in" {
+		t.Errorf("built in: app = %d %q", cfg.APIID, cfg.APIHash)
+	}
+
+	t.Setenv("SAY_TELEGRAM_API_ID", "6")
+	t.Setenv("SAY_TELEGRAM_API_HASH", "operator")
+	c, _ = open(bridge.Info{Config: json.RawMessage(phone)}, h)
+	if cfg := c.(*conn).cfg; cfg.APIID != 6 || cfg.APIHash != "operator" {
+		t.Errorf("from the environment: app = %d %q", cfg.APIID, cfg.APIHash)
+	}
+
+	c, _ = open(bridge.Info{Config: json.RawMessage(`{"api_id": 7, "api_hash": "mine", "phone": "+4712345678"}`)}, h)
+	if cfg := c.(*conn).cfg; cfg.APIID != 7 || cfg.APIHash != "mine" {
+		t.Errorf("own app: app = %d %q", cfg.APIID, cfg.APIHash)
+	}
+	// Half an app of one's own is not mixed with the default.
+	if _, err := open(bridge.Info{Config: json.RawMessage(`{"api_id": 7, "phone": "+4712345678"}`)}, h); err == nil {
+		t.Error("an id without a hash: no error")
+	}
+}
+
 // fakeAuth plays Telegram's login.
 type fakeAuth struct {
 	authorized bool

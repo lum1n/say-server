@@ -42,7 +42,10 @@ jobs:
           target: node
           # exe.dev is amd64.
           platforms: linux/amd64
-          build-args: VERSION=${{ steps.v.outputs.version }}
+          build-args: |
+            VERSION=${{ steps.v.outputs.version }}
+            TELEGRAM_API_ID=${{ secrets.TELEGRAM_API_ID }}
+            TELEGRAM_API_HASH=${{ secrets.TELEGRAM_API_HASH }}
           push: true
           tags: ghcr.io/lum1n/say-node:${{ steps.v.outputs.version }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
@@ -63,11 +66,15 @@ jobs:
           go-version-file: go.mod
       - run: make web
       - name: Build say
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
         run: |
           mkdir dist
+          tg=github.com/lum1n/say-server/internal/bridge/telegram
           for arch in amd64 arm64; do
             GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
-              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME#v}" \
+              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME#v} -X $tg.appID=$TELEGRAM_API_ID -X $tg.appHash=$TELEGRAM_API_HASH" \
               -o dist/say-linux-$arch ./cmd/say
           done
       - uses: docker/setup-buildx-action@v3

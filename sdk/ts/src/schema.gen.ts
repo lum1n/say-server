@@ -1439,6 +1439,8 @@ export interface components {
             help?: string;
             /** @description The modes the field applies in; absent is all. */
             modes?: components["schemas"]["BridgeMode"][];
+            /** @description Few people need the field, so forms fold it away. */
+            advanced?: boolean;
         };
         Network: {
             name: string;

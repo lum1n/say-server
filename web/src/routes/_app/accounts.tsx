@@ -369,21 +369,29 @@ function ConfigForm({
     save.mutate();
   };
   const set = (key: string, v: unknown) => setValues((vs) => ({ ...vs, [key]: v }));
+  const advanced = fields.filter((f) => f.advanced);
+  const field = (f: NetworkField) => (
+    <ConfigField
+      key={f.key}
+      field={f}
+      value={values[f.key]}
+      isSet={!!bridge?.secrets_set.includes(f.key)}
+      editing={!!bridge}
+      onChange={(v) => set(f.key, v)}
+    />
+  );
   return (
     <form onSubmit={submit}>
       <Field label="Name" hint="For you, in this list">
         <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={100} autoComplete="off" />
       </Field>
-      {fields.map((f) => (
-        <ConfigField
-          key={f.key}
-          field={f}
-          value={values[f.key]}
-          isSet={!!bridge?.secrets_set.includes(f.key)}
-          editing={!!bridge}
-          onChange={(v) => set(f.key, v)}
-        />
-      ))}
+      {fields.filter((f) => !f.advanced).map(field)}
+      {advanced.length > 0 && (
+        <details>
+          <summary>Advanced</summary>
+          {advanced.map(field)}
+        </details>
+      )}
       <FormError error={save.error} />
       <button type="submit" disabled={save.isPending}>
         {bridge ? "Save" : "Connect"}
