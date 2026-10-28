@@ -8,6 +8,11 @@ PYGEN := uvx --from datamodel-code-generator==0.86.0 datamodel-codegen \
 	--use-schema-description --use-field-description --enum-field-as-literal all \
 	--use-standard-collections --use-union-operator --no-use-closed-typed-dict
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# The Telegram app say connects as, built in when TELEGRAM_API_ID and
+# TELEGRAM_API_HASH are set (from my.telegram.org; keep them out of git).
+TG := github.com/lum1n/say-server/internal/bridge/telegram
+TGFLAGS := -X $(TG).appID=$(TELEGRAM_API_ID) -X $(TG).appHash=$(TELEGRAM_API_HASH)
+TGARGS := --build-arg TELEGRAM_API_ID --build-arg TELEGRAM_API_HASH
 
 .PHONY: build web go generate generate-py test image node-image node-test release cluster-test clean libsay android ios
 
@@ -21,7 +26,7 @@ web:
 	cp widget/dist/widget.js $(STATIC)/
 
 go:
-	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/say ./cmd/say
+	CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$(VERSION) $(TGFLAGS)" -o bin/say ./cmd/say
 
 generate:
 	cd internal/store && go run $(SQLC) generate
@@ -45,7 +50,7 @@ EMBED_TAGS ?= notelegram
 SOEXT := $(if $(filter Darwin,$(shell uname -s)),.dylib,.so)
 libsay:
 	mkdir -p build
-	go build -trimpath -tags "$(EMBED_TAGS)" -ldflags "-s -w" -buildmode=c-shared -o build/libsay$(SOEXT) ./cmd/libsay
+	go build -trimpath -tags "$(EMBED_TAGS)" -ldflags "-s -w $(TGFLAGS)" -buildmode=c-shared -o build/libsay$(SOEXT) ./cmd/libsay
 
 # gomobile needs gobind on PATH; both come from the versions in go.mod.
 # android needs the Android SDK and NDK (ANDROID_HOME, ANDROID_NDK_HOME);
@@ -53,16 +58,16 @@ libsay:
 ANDROID_TARGETS ?= android/arm64,android/amd64
 MOBILE := GOBIN=$(CURDIR)/build/bin go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind && PATH=$(CURDIR)/build/bin:$$PATH build/bin/gomobile bind
 android:
-	$(MOBILE) -target=$(ANDROID_TARGETS) -androidapi 24 -javapkg dev.say -tags "$(EMBED_TAGS)" -ldflags "-s -w" -o build/say.aar ./mobile
+	$(MOBILE) -target=$(ANDROID_TARGETS) -androidapi 24 -javapkg dev.say -tags "$(EMBED_TAGS)" -ldflags "-s -w $(TGFLAGS)" -o build/say.aar ./mobile
 ios:
-	$(MOBILE) -target=ios,iossimulator -tags "$(EMBED_TAGS)" -ldflags "-s -w" -o build/Say.xcframework ./mobile
+	$(MOBILE) -target=ios,iossimulator -tags "$(EMBED_TAGS)" -ldflags "-s -w $(TGFLAGS)" -o build/Say.xcframework ./mobile
 
 image:
-	docker build --build-arg VERSION=$(VERSION) -t say:$(VERSION) -t say:latest .
+	docker build --build-arg VERSION=$(VERSION) $(TGARGS) -t say:$(VERSION) -t say:latest .
 
 # The say-node image for your own node (ADR 0017): systemd, say on port 80.
 node-image:
-	docker build --target node --build-arg VERSION=$(VERSION) -t say-node:$(VERSION) -t say-node:latest .
+	docker build --target node --build-arg VERSION=$(VERSION) $(TGARGS) -t say-node:$(VERSION) -t say-node:latest .
 
 # node-test boots the say-node image under Docker and claims it.
 node-test: node-image

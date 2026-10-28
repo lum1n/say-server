@@ -109,6 +109,15 @@ event (ADR 0003) was never read by anything and only grew.
 | Telegram | MTProto (gotd/td) with the instance's own `api_id`/`api_hash` | Login code and 2FA through prompts; flood-wait respected |
 | Signal | signal-cli as a linked device, out of process (GPL) | QR prompt; no history to backfill; its data moves with the lease |
 
+Telegram's `api_id`/`api_hash` names the client app, not the person, as
+with every third-party Telegram client. Release builds have say's built
+in at build time (`TELEGRAM_API_ID` and `TELEGRAM_API_HASH`, kept out of
+git), and so do embedded builds made with `EMBED_TAGS=`, which keep
+Telegram (ADR 0013); an operator can set another in
+`SAY_TELEGRAM_API_ID` and `SAY_TELEGRAM_API_HASH`. People then give only
+their phone number; an app of their own is an advanced setting. A build
+without one asks for it, as before.
+
 Discord has no sanctioned way to act as a user, so it is a relay bot
 only, as are the Telegram Bot API and webhooks.
 

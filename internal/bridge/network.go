@@ -71,6 +71,8 @@ type Field struct {
 	Help        string `json:"help,omitempty"`
 	// Modes limits the field to some modes; empty is all.
 	Modes []string `json:"modes,omitempty"`
+	// Advanced fields are folded away in forms: few people need them.
+	Advanced bool `json:"advanced,omitempty"`
 }
 
 // Info is what a connection knows of its bridge.

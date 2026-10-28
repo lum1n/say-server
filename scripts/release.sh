@@ -6,6 +6,7 @@
 # - docker logged in to ghcr.io with write:packages;
 # - gh logged in, and jq and minisign;
 # - the minisign secret key in $MINISIGN_KEY_FILE (~/.minisign/minisign.key).
+# - TELEGRAM_API_ID and TELEGRAM_API_HASH, say's Telegram app, built in.
 # With -n it builds and signs everything into dist/ but pushes nothing.
 # cosign signs the image only if it is installed.
 set -eu
@@ -17,6 +18,9 @@ tag=v$version
 echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "release: $version is not a version such as 0.4.1" >&2; exit 1; }
 image=ghcr.io/lum1n/say-node
 key=${MINISIGN_KEY_FILE:-$HOME/.minisign/minisign.key}
+: "${TELEGRAM_API_ID:?release: set TELEGRAM_API_ID and TELEGRAM_API_HASH, say's Telegram app}"
+: "${TELEGRAM_API_HASH:?release: set TELEGRAM_API_HASH}"
+tg=github.com/lum1n/say-server/internal/bridge/telegram
 cd "$(dirname "$0")/.."
 
 fail() { echo "release: $*" >&2; [ -n "$dry" ] || exit 1; }
@@ -39,6 +43,7 @@ fi
 
 echo "release: image"
 docker build --target node --platform linux/amd64 --build-arg VERSION="$version" \
+  --build-arg TELEGRAM_API_ID --build-arg TELEGRAM_API_HASH \
   --label org.opencontainers.image.source=https://github.com/lum1n/say-server \
   -t "$image:$version" .
 if [ -n "$dry" ]; then
@@ -59,7 +64,8 @@ make web
 rm -rf dist && mkdir dist
 for arch in amd64 arm64; do
   GOOS=linux GOARCH=$arch CGO_ENABLED=0 go build -trimpath \
-    -ldflags "-s -w -X main.version=$version" -o dist/say-linux-$arch ./cmd/say
+    -ldflags "-s -w -X main.version=$version -X $tg.appID=$TELEGRAM_API_ID -X $tg.appHash=$TELEGRAM_API_HASH" \
+    -o dist/say-linux-$arch ./cmd/say
   scripts/signal-bundle.sh $arch dist
 done
 

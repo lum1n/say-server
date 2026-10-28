@@ -29,9 +29,15 @@ COPY internal internal
 COPY say say
 COPY --from=web /src/internal/api/static internal/api/static
 ARG VERSION=dev
+# The Telegram app built in (internal/bridge/telegram). It ends up in the
+# binary anyway, so a build arg hides nothing that matters.
+ARG TELEGRAM_API_ID
+ARG TELEGRAM_API_HASH
 ARG TARGETOS TARGETARCH
 RUN export CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
- && go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /say ./cmd/say \
+ && go build -trimpath -ldflags "-s -w -X main.version=${VERSION} \
+    -X github.com/lum1n/say-server/internal/bridge/telegram.appID=${TELEGRAM_API_ID} \
+    -X github.com/lum1n/say-server/internal/bridge/telegram.appHash=${TELEGRAM_API_HASH}" -o /say ./cmd/say \
  && go build -trimpath -ldflags "-s -w" -o /signal-cli-jvm ./cmd/signal-cli-jvm \
  && mkdir /data
 

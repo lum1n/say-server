@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"runtime"
 	"strconv"
 	"strings"
@@ -31,28 +32,61 @@ func init() {
 		Name:         "telegram",
 		Title:        "Telegram",
 		Modes:        []string{store.ModeAccount},
-		Fields:       fields,
+		Fields:       fields(hasDefaultApp()),
 		Capabilities: []connector.Capability{connector.CapEdits},
 		Open:         open,
 		LogOut:       logOut,
 	})
 }
 
-var fields = []bridge.Field{
-	{
-		Key: "api_id", Label: "API ID", Kind: "number", Required: true,
-		Help: "Log in at my.telegram.org with your phone number, open API development tools and create an application. " +
-			"Copy its App api_id here. The id is yours: say connects to Telegram as its own client under it.",
-	},
-	{
-		Key: "api_hash", Label: "API hash", Kind: "secret", Required: true,
-		Help: "The App api_hash from the same page at my.telegram.org.",
-	},
-	{
-		Key: "phone", Label: "Phone number", Kind: "text", Required: true, Placeholder: "+4712345678",
-		Help: "Your Telegram account's phone number in international format. Telegram sends a login code to your other " +
-			"Telegram apps, and say asks you for it (and for your password, if two-step verification is on).",
-	},
+// appID and appHash are the Telegram app say connects as when a bridge
+// names none of its own. Release builds set them with
+// -ldflags "-X github.com/lum1n/say-server/internal/bridge/telegram.appID=…"
+// (and appHash), so they are not in the source.
+var appID, appHash string
+
+// defaultApp returns the app a bridge without its own uses: the one in
+// SAY_TELEGRAM_API_ID and SAY_TELEGRAM_API_HASH, else the one built in.
+// The id is 0 when there is none.
+func defaultApp() (int, string) {
+	id, hash := appID, appHash
+	if v := os.Getenv("SAY_TELEGRAM_API_ID"); v != "" {
+		id, hash = v, os.Getenv("SAY_TELEGRAM_API_HASH")
+	}
+	n, err := strconv.Atoi(id)
+	if err != nil || n <= 0 || hash == "" {
+		return 0, ""
+	}
+	return n, hash
+}
+
+// hasDefaultApp reports whether bridges need no app of their own.
+func hasDefaultApp() bool {
+	id, _ := defaultApp()
+	return id != 0
+}
+
+// fields are the settings. With a default app, only the phone number is
+// asked for, and an app of one's own is advanced.
+func fields(builtIn bool) []bridge.Field {
+	idHelp := "Log in at my.telegram.org with your phone number, open API development tools and create an application. " +
+		"Copy its App api_id here. The id is yours: say connects to Telegram as its own client under it."
+	if builtIn {
+		idHelp = "Leave empty to connect as say. To connect as an app of your own instead, " +
+			"create one under API development tools at my.telegram.org and copy its App api_id here."
+	}
+	return []bridge.Field{
+		{Key: "api_id", Label: "API ID", Kind: "number", Required: !builtIn, Advanced: builtIn, Help: idHelp},
+		{
+			Key: "api_hash", Label: "API hash", Kind: "secret", Required: !builtIn, Advanced: builtIn,
+			Help: "The App api_hash from the same page at my.telegram.org.",
+		},
+		{
+			Key: "phone", Label: "Phone number", Kind: "text", Required: true, Placeholder: "+4712345678",
+			Help: "Your Telegram account's phone number in international format. Telegram sends a login code to your other " +
+				"Telegram apps, and say asks you for it (and for your password, if two-step verification is on).",
+		},
+	}
 }
 
 // config is a bridge's settings.
@@ -94,6 +128,9 @@ func parseConfig(raw json.RawMessage) (config, error) {
 	var cfg config
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return config{}, fmt.Errorf("telegram: bad config: %w", err)
+	}
+	if cfg.APIID == 0 && cfg.APIHash == "" {
+		cfg.APIID, cfg.APIHash = defaultApp()
 	}
 	if cfg.APIID <= 0 || cfg.APIHash == "" {
 		return config{}, errors.New("telegram: the API ID and hash from my.telegram.org are required")
