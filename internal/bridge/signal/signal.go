@@ -54,7 +54,7 @@ func init() {
 			{Key: "device_name", Label: "Device name", Kind: "text", Placeholder: "say",
 				Help: "How say shows in Signal's linked devices."},
 		},
-		Capabilities: []connector.Capability{connector.CapEdits},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies},
 		Open:         open,
 		LogOut:       logOut,
 	})

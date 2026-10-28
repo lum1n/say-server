@@ -90,6 +90,7 @@ type Event struct {
 	Stream    string     `json:"stream,omitempty"`
 	Edits     string     `json:"edits,omitempty"`
 	EditedAt  *time.Time `json:"edited_at,omitempty"`
+	ReplyTo   string     `json:"reply_to,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 }
 

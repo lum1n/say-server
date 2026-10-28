@@ -210,7 +210,7 @@ func (s *Server) mcpSend(ctx context.Context, req *mcp.CallToolRequest, in mcpSe
 		return nil, mcpMessage{}, errors.New("text is empty")
 	}
 	data, _ := json.Marshal(map[string]string{"text": in.Text})
-	msg := sendMessage{Parts: []wirePart{{Kind: core.PartText, Data: data}}, CausedBy: in.ReplyTo}
+	msg := sendMessage{Parts: []wirePart{{Kind: core.PartText, Data: data}}, CausedBy: in.ReplyTo, ReplyTo: in.ReplyTo}
 	e, _, err := s.send(ctx, me, in.RoomID, msg, in.IdempotencyKey)
 	if err != nil {
 		return nil, mcpMessage{}, mcpErr(err)
@@ -328,7 +328,7 @@ func (s *Server) mcpMessages(ctx context.Context, events []core.Event) ([]mcpMes
 			SenderName: p.DisplayName,
 			SenderKind: string(p.Kind),
 			Text:       e.Text(),
-			ReplyTo:    e.Causation.CausedBy,
+			ReplyTo:    e.ReplyTo,
 			HopCount:   e.Causation.HopCount,
 			Streaming:  e.Stream == core.StreamStreaming,
 			Edited:     !e.EditedAt.IsZero(),

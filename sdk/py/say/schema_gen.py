@@ -573,6 +573,12 @@ class RoomBridge(TypedDict):
     mode: BridgeMode
     remote_name: str
     state: BridgeState
+    capabilities: NotRequired[list[str]]
+    """
+    What the network carries, such as `replies`. Clients offer
+    replies only in rooms whose bridges all carry them.
+
+    """
 
 
 DeliveryState: TypeAlias = Literal['sending', 'sent', 'unknown', 'failed', 'expired']
@@ -712,6 +718,19 @@ class Event(TypedDict):
     """
     When a final message was last edited.
     """
+    reply_to: NotRequired[str]
+    """
+    The message in this room this one answers, shown as a quote.
+    Unlike `causation.caused_by` it is only set when the sender
+    chose to reply.
+
+    """
+    client_key: NotRequired[str]
+    """
+    The idempotency key the sender sent the message with, so a
+    client can match its pending send to the event.
+
+    """
     created_at: str
 
 
@@ -728,9 +747,15 @@ class SendMessage(TypedDict):
     """
     caused_by: NotRequired[str]
     """
-    The event in this room this message replies to. Automated
-    senders must set it; a reply that would pass the hop limit is
-    rejected with code hop_limit.
+    The event in this room that prompted this message. Automated
+    senders must set it; a message that would pass the hop limit
+    is rejected with code hop_limit.
+
+    """
+    reply_to: NotRequired[str]
+    """
+    A message in this room this one answers, shown as a quote;
+    422 if it is not one.
 
     """
 
@@ -757,6 +782,7 @@ class WsSend(TypedDict):
     idempotency_key: NotRequired[str]
     parts: list[Part]
     caused_by: NotRequired[str]
+    reply_to: NotRequired[str]
     stream: NotRequired[StreamState]
 
 

@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/lum1n/say-server/internal/core"
@@ -122,7 +123,12 @@ type wireEvent struct {
 	Stream    core.StreamState `json:"stream,omitempty"`
 	Edits     string           `json:"edits,omitempty"`
 	EditedAt  *time.Time       `json:"edited_at,omitempty"`
-	CreatedAt time.Time        `json:"created_at"`
+	// ReplyTo is the message this one answers.
+	ReplyTo string `json:"reply_to,omitempty"`
+	// ClientKey is the idempotency key the sender sent the event with, so
+	// a client can match its own pending send to the event.
+	ClientKey string    `json:"client_key,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func toEvent(e core.Event) wireEvent {
@@ -137,8 +143,19 @@ func toEvent(e core.Event) wireEvent {
 		Stream:    e.Stream,
 		Edits:     e.Edits,
 		EditedAt:  optTime(e.EditedAt),
+		ReplyTo:   e.ReplyTo,
+		ClientKey: clientKey(e.IdempotencyKey),
 		CreatedAt: e.CreatedAt.UTC(),
 	}
+}
+
+// clientKey is the idempotency key a client chose. Bridges key their sends
+// by the remote message ("bridge:…"), which is theirs, not a client's.
+func clientKey(key string) string {
+	if strings.HasPrefix(key, "bridge:") {
+		return ""
+	}
+	return key
 }
 
 func optTime(t time.Time) *time.Time {
@@ -162,6 +179,8 @@ func toEvents(es []core.Event) []wireEvent {
 type sendMessage struct {
 	Parts    []wirePart `json:"parts"`
 	CausedBy string     `json:"caused_by,omitempty"`
+	// ReplyTo is a message in the same room that this one answers.
+	ReplyTo string `json:"reply_to,omitempty"`
 	// Stream "streaming" starts a message that its sender then changes
 	// with edits; it may start without parts. The default is "final".
 	Stream core.StreamState `json:"stream,omitempty"`

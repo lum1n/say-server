@@ -66,8 +66,39 @@ func (i *instance) Receive(ctx context.Context, in Incoming) error {
 	if at.IsZero() || at.After(time.Now()) {
 		at = time.Now()
 	}
-	_, err = i.c.Chat.SendAs(ctx, as, l.RoomID, eventID, in.content(), "bridge:"+l.ID+":"+in.ID, at)
+	replyTo, err := i.replyTarget(ctx, l, in.ReplyTo)
+	if err != nil {
+		return err
+	}
+	if replyTo == "" && in.Quote != "" && len(in.Parts) == 0 {
+		in.Text = "> " + in.Quote + "\n" + in.Text
+	}
+	_, err = i.c.Chat.SendAs(ctx, as, l.RoomID, eventID, in.content(), replyTo, "bridge:"+l.ID+":"+in.ID, at)
 	return err
+}
+
+// replyTarget returns the message in l's room that has the remote id
+// remoteID, or "" if say has not seen it: a reply to a message from before
+// the bridge came is taken in as a plain message.
+func (i *instance) replyTarget(ctx context.Context, l store.BridgeLink, remoteID string) (string, error) {
+	if remoteID == "" {
+		return "", nil
+	}
+	row, err := i.c.Store.BridgeMessageByRemote(ctx, l.ID, remoteID)
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	e, err := i.c.Store.GetEvent(ctx, row.EventID)
+	if errors.Is(err, store.ErrNotFound) || err == nil && (e.RoomID != l.RoomID || e.Type != core.EventMessage) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return e.ID, nil
 }
 
 // checkPending returns ErrPending if the own message remoteID is new to

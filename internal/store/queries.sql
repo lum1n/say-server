@@ -56,8 +56,8 @@ WHERE room_id = $1 AND sender_id = $2 AND idempotency_key = $3;
 
 -- name: InsertEvent :exec
 INSERT INTO events (id, room_id, seq, type, sender_id, caused_by, hop_count,
-                    parts, stream, idempotency_key, automated, edits, created_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13);
+                    parts, stream, idempotency_key, automated, edits, reply_to, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14);
 
 -- Only a message that is still streaming changes in place; the stream
 -- condition makes a late update after the final edit a no-op.

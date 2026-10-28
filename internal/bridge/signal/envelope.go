@@ -165,18 +165,22 @@ func (c *conn) incoming(ctx context.Context, env *envelope) (bridge.Incoming, bo
 		if a := c.authorKey(ctx, q.AuthorUUID, first(q.AuthorNumber, q.Author)); a != "" {
 			in.ReplyTo = a + ":" + strconv.FormatInt(q.ID, 10)
 		}
+		in.Quote, _, _ = strings.Cut(q.Text, "\n")
 	}
 	return in, true
 }
 
 // render makes plain text of a message: mentions become @names, and
-// attachments and stickers short placeholders. A quote leads as a "> "
-// line, since the core does not show replies yet.
+// attachments and stickers short placeholders. A quote of a message
+// Signal does not name leads as a "> " line; one it names is a reply,
+// which the core shows as a quote.
 func (c *conn) render(ctx context.Context, dm *dataMessage) string {
 	var lines []string
-	if q := dm.Quote; q != nil && q.Text != "" {
+	quoted := false
+	if q := dm.Quote; q != nil && q.ID == 0 && q.Text != "" {
 		line, _, _ := strings.Cut(q.Text, "\n")
 		lines = append(lines, "> "+line)
+		quoted = true
 	}
 	if text := c.mentions(ctx, dm.Message, dm.Mentions); strings.TrimSpace(text) != "" {
 		lines = append(lines, text)
@@ -187,7 +191,7 @@ func (c *conn) render(ctx context.Context, dm *dataMessage) string {
 	if dm.Sticker != nil {
 		lines = append(lines, "[sticker]")
 	}
-	if len(lines) == 1 && dm.Quote != nil && dm.Quote.Text != "" {
+	if len(lines) == 1 && quoted {
 		return "" // a quote of nothing
 	}
 	return strings.Join(lines, "\n")

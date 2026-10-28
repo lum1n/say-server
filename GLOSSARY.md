@@ -63,6 +63,11 @@
 : `caused_by` (the event that triggered this one) and `hop_count` (how many
   automated hops separate it from a human). Used to stop agent loops.
 
+**Reply**
+: A message that answers an earlier one in the same room, named in its
+  `reply_to` and shown as a quote. Separate from the causation chain: an
+  agent's answer has a cause, but is a reply only when its sender says so.
+
 **Connector**
 : A participant that is not a person at a keyboard: a bridge, a bot or an
   agent. It has **capabilities** (what it can do: edits, reactions,

@@ -24,7 +24,7 @@ func init() {
 		Title:        "Telegram bot",
 		Modes:        []string{store.ModeBot},
 		Fields:       fields,
-		Capabilities: []connector.Capability{connector.CapEdits},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies},
 		Open:         open,
 	})
 }

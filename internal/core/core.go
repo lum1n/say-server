@@ -112,10 +112,16 @@ type Event struct {
 	// Edits is the message an EventEdit changes.
 	Edits string
 	// EditedAt is when a final message was last edited; zero if never.
-	EditedAt  time.Time
-	Settings  *AgentSettingsChange // for EventAgentSettings
-	Handoff   *Handoff             // for EventHandoff
-	CreatedAt time.Time
+	EditedAt time.Time
+	// ReplyTo is the message in the same room that a message answers,
+	// shown as a quote. It is not its cause: Causation tracks automated
+	// chains, and an agent's answer is a reply only when it says so.
+	ReplyTo string
+	// IdempotencyKey is the key the sender sent the event with, if any.
+	IdempotencyKey string
+	Settings       *AgentSettingsChange // for EventAgentSettings
+	Handoff        *Handoff             // for EventHandoff
+	CreatedAt      time.Time
 }
 
 // StreamState says whether a message is complete. A streaming message's

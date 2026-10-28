@@ -124,16 +124,20 @@ export class Bot {
     this.ws?.close(1000);
   }
 
-  /** send posts parts to a room. */
+  /**
+   * send posts parts to a room. causedBy is the message that prompted it;
+   * replyTo, a message in the room, also shows it as a quote.
+   */
   send(
     roomId: string,
     parts: Part[],
-    opts: { causedBy?: string; idempotencyKey?: string; stream?: "streaming" | "final" } = {},
+    opts: { causedBy?: string; replyTo?: string; idempotencyKey?: string; stream?: "streaming" | "final" } = {},
   ): Promise<Event> {
     return this.request("send", {
       room_id: roomId,
       parts,
       caused_by: opts.causedBy,
+      reply_to: opts.replyTo,
       idempotency_key: opts.idempotencyKey,
       stream: opts.stream,
     }) as Promise<Event>;

@@ -414,6 +414,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rooms/{id}/events/{event_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * One event of a room
+         * @description For a message a reply quotes that the client has not loaded.
+         */
+        get: operations["getEvent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/rooms/{id}/messages": {
         parameters: {
             query?: never;
@@ -1544,6 +1567,11 @@ export interface components {
             mode: components["schemas"]["BridgeMode"];
             remote_name: string;
             state: components["schemas"]["BridgeState"];
+            /**
+             * @description What the network carries, such as `replies`. Clients offer
+             *     replies only in rooms whose bridges all carry them.
+             */
+            capabilities?: string[];
         };
         /**
          * @description `unknown` is a send under way when its node stopped; it is never
@@ -1658,6 +1686,17 @@ export interface components {
              * @description When a final message was last edited.
              */
             edited_at?: string;
+            /**
+             * @description The message in this room this one answers, shown as a quote.
+             *     Unlike `causation.caused_by` it is only set when the sender
+             *     chose to reply.
+             */
+            reply_to?: string;
+            /**
+             * @description The idempotency key the sender sent the message with, so a
+             *     client can match its pending send to the event.
+             */
+            client_key?: string;
             /** Format: date-time */
             created_at: string;
         };
@@ -1670,11 +1709,16 @@ export interface components {
              */
             stream?: components["schemas"]["StreamState"];
             /**
-             * @description The event in this room this message replies to. Automated
-             *     senders must set it; a reply that would pass the hop limit is
-             *     rejected with code hop_limit.
+             * @description The event in this room that prompted this message. Automated
+             *     senders must set it; a message that would pass the hop limit
+             *     is rejected with code hop_limit.
              */
             caused_by?: string;
+            /**
+             * @description A message in this room this one answers, shown as a quote;
+             *     422 if it is not one.
+             */
+            reply_to?: string;
         };
         EditMessage: {
             /** @description The whole new parts; leave out to end a stream as it is. */
@@ -1697,6 +1741,7 @@ export interface components {
             idempotency_key?: string;
             parts: components["schemas"]["Part"][];
             caused_by?: string;
+            reply_to?: string;
             stream?: components["schemas"]["StreamState"];
         };
         /** @description The same as PATCH /rooms/{id}/messages/{event_id}. */
@@ -2353,6 +2398,31 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": string;
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    getEvent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The event */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Event"];
                 };
             };
             401: components["responses"]["Error"];

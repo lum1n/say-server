@@ -115,6 +115,7 @@ type Event struct {
 	Automated      int32
 	Edits          string
 	EditedAt       int64
+	ReplyTo        string
 }
 
 type Instance struct {

@@ -26,7 +26,7 @@ func init() {
 		Title:        "Slack",
 		Modes:        []string{store.ModeAccount},
 		Fields:       fields,
-		Capabilities: []connector.Capability{connector.CapEdits},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies},
 		Open:         open,
 	})
 }
@@ -237,6 +237,10 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 		Ts string `json:"ts"`
 	}
 	p := url.Values{"channel": {m.Chat}, "text": {escape(m.Text)}}
+	if m.ReplyTo != "" {
+		// Slack has no quotes: a reply goes in the message's thread.
+		p.Set("thread_ts", m.ReplyTo)
+	}
 	err := c.call(ctx, "chat.postMessage", c.cfg.UserToken, p, &r)
 	if _, ok := errors.AsType[*apiError](err); ok {
 		return "", bridge.Rejected(err)

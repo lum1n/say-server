@@ -18,6 +18,9 @@ const (
 	CapReceipts    Capability = "receipts"
 	CapAttachments Capability = "attachments"
 	CapStreaming   Capability = "streaming"
+	// CapReplies is a network that shows a message as an answer to an
+	// earlier one: a quote, a reference or a thread.
+	CapReplies Capability = "replies"
 )
 
 // Scope is a permission on a connector credential.
