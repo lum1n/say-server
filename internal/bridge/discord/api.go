@@ -2,16 +2,21 @@ package discord
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lum1n/say-server/internal/bridge"
 )
 
 // apiError is a 4xx answer: Discord refused the call, so it surely did
@@ -53,13 +58,68 @@ const (
 // it gives up, or ctx ends while it waits, the error is an apiError with
 // status 429.
 func (c *conn) do(ctx context.Context, method, path string, body, out any) error {
-	var data []byte
-	if body != nil {
-		var err error
-		if data, err = json.Marshal(body); err != nil {
+	if body == nil {
+		return c.call(ctx, method, path, "", nil, out)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	return c.call(ctx, method, path, "application/json", data, out)
+}
+
+// upload is do with files: the body goes beside them as payload_json,
+// naming each in its attachments.
+func (c *conn) upload(ctx context.Context, method, path string, body map[string]any, files []bridge.Media, out any) error {
+	atts := make([]map[string]any, len(files))
+	for i, f := range files {
+		atts[i] = map[string]any{"id": i, "filename": cmp.Or(f.Name, "file")}
+	}
+	body["attachments"] = atts
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Disposition", `form-data; name="payload_json"`)
+	h.Set("Content-Type", "application/json")
+	pw, err := w.CreatePart(h)
+	if err != nil {
+		return err
+	}
+	pw.Write(payload)
+	for i, f := range files {
+		h := textproto.MIMEHeader{}
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="files[%d]"; filename="%s"`, i, quoteName.Replace(cmp.Or(f.Name, "file"))))
+		h.Set("Content-Type", cmp.Or(f.Mime, "application/octet-stream"))
+		pw, err := w.CreatePart(h)
+		if err != nil {
+			return err
+		}
+		r, err := f.Open(ctx)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(pw, r)
+		r.Close()
+		if err != nil {
 			return err
 		}
 	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.call(ctx, method, path, w.FormDataContentType(), buf.Bytes(), out)
+}
+
+// quoteName keeps a file name inside its quotes in a part's header; the
+// name Discord shows is the one in payload_json.
+var quoteName = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\r", " ", "\n", " ")
+
+// call is do with a body of any type.
+func (c *conn) call(ctx context.Context, method, path, ctype string, data []byte, out any) error {
 	route := redact(path)
 	key := method + " " + bucket(route)
 	limited := &apiError{Method: method, Route: route, Status: http.StatusTooManyRequests, Message: "rate limited"}
@@ -72,14 +132,20 @@ func (c *conn) do(ctx context.Context, method, path string, body, out any) error
 			return err
 		}
 		req.Header.Set("User-Agent", userAgent)
-		if data != nil {
-			req.Header.Set("Content-Type", "application/json")
+		if ctype != "" {
+			req.Header.Set("Content-Type", ctype)
 		}
 		// Webhook calls carry their token in the path.
 		if !strings.HasPrefix(path, "/webhooks/") {
 			req.Header.Set("Authorization", "Bot "+c.cfg.BotToken)
 		}
-		resp, err := c.http.Do(req)
+		cl := c.http
+		if strings.HasPrefix(ctype, "multipart/") {
+			// Files can take longer than the API client's timeout; ctx
+			// bounds them.
+			cl = c.long()
+		}
+		resp, err := cl.Do(req)
 		if err != nil {
 			// The URL may hold a webhook token; keep it out of errors.
 			if ue, ok := errors.AsType[*url.Error](err); ok {
@@ -130,6 +196,13 @@ func (c *conn) do(ctx context.Context, method, path string, body, out any) error
 		}
 		return nil
 	}
+}
+
+// long is the API client without its timeout, for files.
+func (c *conn) long() *http.Client {
+	cl := *c.http
+	cl.Timeout = 0
+	return &cl
 }
 
 // retryAfter reads how long a 429 asks to wait, from the body or header.

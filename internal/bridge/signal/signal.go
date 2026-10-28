@@ -23,11 +23,15 @@
 package signal
 
 import (
+	"cmp"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,7 +58,7 @@ func init() {
 			{Key: "device_name", Label: "Device name", Kind: "text", Placeholder: "say",
 				Help: "How say shows in Signal's linked devices."},
 		},
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions, connector.CapAttachments},
 		Open:         open,
 		LogOut:       logOut,
 	})
@@ -584,7 +588,36 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 		params["quoteTimestamp"] = ts
 		params["quoteAuthor"] = author
 	}
+	if len(m.Media) > 0 {
+		files := make([]string, len(m.Media))
+		for i, f := range m.Media {
+			if files[i], err = dataURI(ctx, f); err != nil {
+				return "", err
+			}
+		}
+		params["attachments"] = files
+	}
 	return c.send(ctx, params)
+}
+
+// dataURI reads a file into the form signal-cli takes attachments in
+// without a path both sides can see.
+func dataURI(ctx context.Context, f bridge.Media) (string, error) {
+	r, err := f.Open(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return "", err
+	}
+	// signal-cli URL-decodes the parameter.
+	uri := "data:" + cmp.Or(f.Mime, "application/octet-stream")
+	if f.Name != "" {
+		uri += ";filename=" + url.QueryEscape(f.Name)
+	}
+	return uri + ";base64," + base64.StdEncoding.EncodeToString(data), nil
 }
 
 // React puts the owner's emoji on a message, or takes it off. Signal

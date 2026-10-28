@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
 	"sort"
@@ -160,6 +161,22 @@ type Outgoing struct {
 	Sender string
 	// ReplyTo is the remote id of the message this one answers, if known.
 	ReplyTo string
+	// Media are the message's files, on a network with
+	// connector.CapAttachments; elsewhere Text names them instead. A
+	// message may have media and no text.
+	Media []Media
+}
+
+// Media is a file of a message, going out to a network or coming in.
+type Media struct {
+	Mime string
+	Name string
+	// Size, Width and Height are 0 when not known; Width and Height are
+	// an image's size in pixels.
+	Size          int64
+	Width, Height int
+	// Open reads the file. Each call reads it from the start.
+	Open func(ctx context.Context) (io.ReadCloser, error)
 }
 
 // Incoming is a message that arrived from a network.
@@ -170,6 +187,10 @@ type Incoming struct {
 	Text   string
 	// Parts, if set, are the message's content instead of Text.
 	Parts []core.Part
+	// Media are files sent with the message. Each is downloaded and kept
+	// by say as it takes the message in; one it can't keep is named in
+	// the text instead.
+	Media []Media
 	// Time is when it was sent; zero is now.
 	Time time.Time
 	// Edit says that the message ID now reads Text, or Parts.

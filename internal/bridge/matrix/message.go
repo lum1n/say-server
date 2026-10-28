@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/lum1n/say-server/internal/bridge"
@@ -23,6 +24,7 @@ type content struct {
 	Body       string    `json:"body"`
 	FileName   string    `json:"filename"`
 	URL        string    `json:"url"`
+	Info       *fileInfo `json:"info"`
 	GeoURI     string    `json:"geo_uri"`
 	NewContent *content  `json:"m.new_content"`
 	RelatesTo  *relation `json:"m.relates_to"`
@@ -41,6 +43,10 @@ type relation struct {
 // is not one.
 func (c *conn) incoming(ctx context.Context, roomID string, e event) (bridge.Incoming, bool, error) {
 	if e.ID == "" || e.Sender == "" {
+		return bridge.Incoming{}, false, nil
+	}
+	if strings.Contains(e.Unsigned.TransactionID, partTxn) && e.Sender == c.self() {
+		// A file say sent after the first event of a message.
 		return bridge.Incoming{}, false, nil
 	}
 	var cn content
@@ -95,7 +101,10 @@ func (c *conn) incoming(ctx context.Context, roomID string, e event) (bridge.Inc
 		cn.Body = stripReply(cn.Body)
 	}
 	in.Text = render(e.Type, cn, name)
-	return in, in.Text != "", nil
+	if e.Type == "m.room.message" {
+		in.Media = c.files(cn)
+	}
+	return in, in.Text != "" || len(in.Media) > 0, nil
 }
 
 // reaction turns an m.reaction annotation into a reaction for say, keyed
@@ -140,8 +149,9 @@ func (c *conn) reaction(ctx context.Context, roomID string, e event) (bridge.Inc
 	}, true, nil
 }
 
-// render makes plain text of a message: text as it is, and anything else
-// as a bracketed note with its link.
+// render makes plain text of a message: text as it is, a file handed
+// over as media by its caption, and anything else as a bracketed note
+// with its link.
 func render(typ string, cn content, sender string) string {
 	body := strings.TrimSpace(cn.Body)
 	if typ == "m.sticker" {
@@ -154,7 +164,14 @@ func render(typ string, cn content, sender string) string {
 		return "* " + sender + " " + body
 	case "m.image", "m.video", "m.audio", "m.file":
 		label := strings.TrimPrefix(cn.MsgType, "m.")
-		if cn.FileName != "" && cn.FileName != body {
+		captioned := cn.FileName != "" && cn.FileName != body
+		if _, _, ok := parseMXC(cn.URL); ok && typ == "m.room.message" {
+			if captioned {
+				return body
+			}
+			return ""
+		}
+		if captioned {
 			// The body is a caption.
 			return strings.TrimSpace(note(label, cn.FileName, cn.URL) + "\n" + body)
 		}
@@ -197,15 +214,41 @@ func stripReply(body string) string {
 	return strings.Join(lines[i:], "\n")
 }
 
-// Send posts a text message. The transaction id is say's event id, so a
-// send the homeserver already took is not taken twice; the event id it
-// answers is the one the sync later brings back.
+// Send posts a message: its text, then an event per file, all uploaded
+// first. The transaction id is say's event id, so a send the homeserver
+// already took is not taken twice; the event id it answers for the first
+// event is the one the sync later brings back. The others' transaction
+// ids mark them as parts, whose echoes are dropped.
 func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
-	cn := map[string]any{"msgtype": "m.text", "body": m.Text}
-	if m.ReplyTo != "" {
-		cn["m.relates_to"] = map[string]any{"m.in_reply_to": map[string]string{"event_id": m.ReplyTo}}
+	var events []map[string]any
+	if m.Text != "" || len(m.Media) == 0 {
+		events = append(events, map[string]any{"msgtype": "m.text", "body": m.Text})
 	}
-	return c.send(ctx, m.Chat, m.EventID, cn)
+	for _, f := range m.Media {
+		cn, err := c.upload(ctx, f)
+		if err != nil {
+			return "", err
+		}
+		events = append(events, cn)
+	}
+	if m.ReplyTo != "" {
+		events[0]["m.relates_to"] = map[string]any{"m.in_reply_to": map[string]string{"event_id": m.ReplyTo}}
+	}
+	var first string
+	for k, cn := range events {
+		txn := m.EventID
+		if k > 0 {
+			txn += partTxn + strconv.Itoa(k)
+		}
+		id, err := c.send(ctx, m.Chat, txn, cn)
+		if err != nil {
+			return "", err
+		}
+		if k == 0 {
+			first = id
+		}
+	}
+	return first, nil
 }
 
 // Edit changes a message the account sent.

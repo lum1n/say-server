@@ -522,6 +522,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/rooms/{id}/media": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload a file to send to a room
+         * @description The body is the file itself, and `Content-Type` its type. say
+         *     sniffs the type: an image must be the image type it says, and an
+         *     empty `Content-Type` takes the sniffed one. HTML, SVG, XML and
+         *     JavaScript are refused. A file is at most 25 MiB unless the server
+         *     sets another limit (`say serve --media-max`).
+         *
+         *     Send the file by naming the returned `media` in an `attachment`
+         *     part of a message to the same room. Only you can send it, and only
+         *     there.
+         */
+        post: operations["uploadMedia"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/rooms/{id}/media/{media_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A file sent to a room
+         * @description For the room's members, with their token. Takes `Range`. JPEG,
+         *     PNG, GIF and WebP images are served `inline`, other files as an
+         *     `attachment` to download, under the file's name. Every file is
+         *     served with `X-Content-Type-Options: nosniff` and a sandboxing
+         *     `Content-Security-Policy`, and never changes, so clients may cache
+         *     it for good.
+         */
+        get: operations["getRoomMedia"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/media/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The media id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * A file, by its signed URL
+         * @description Serves a file without a token to whoever has its signed URL, such
+         *     as an `<img>`. Take the URL from an attachment part's `url`; don't
+         *     build it. It is served as GET /rooms/{id}/media/{media_id} serves
+         *     it.
+         */
+        get: operations["getSignedMedia"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/ws": {
         parameters: {
             query?: never;
@@ -1111,7 +1195,7 @@ export interface components {
                 /**
                  * @description Stable machine-readable code: unauthorized, forbidden,
                  *     not_found, conflict, bad_request, unsupported_media_type,
-                 *     invalid, hop_limit, agents_paused, agent_budget,
+                 *     too_large, invalid, hop_limit, agents_paused, agent_budget,
                  *     rate_limited, too_many, invalid_credentials,
                  *     bad_setup_code, setup_done, setup_closed, username_taken
                  *     or internal.
@@ -1531,10 +1615,25 @@ export interface components {
             /** @description A stable id of the writer; the username if absent. */
             user_id?: string;
             reply_to?: string;
-            /** @description The message `id` now reads `text`. */
+            /** @description The message `id` now reads `text`; attachments are ignored. */
             edit?: boolean;
             /** Format: date-time */
             time?: string;
+            /**
+             * @description Files sent with the message, at most 10; a message may be files
+             *     only. Each is the file itself, base64-encoded: say never fetches
+             *     a URL a hook names. Outgoing requests in the `say` format carry
+             *     the same shape.
+             */
+            attachments?: {
+                name?: string;
+                mime?: string;
+                /**
+                 * Format: byte
+                 * @description The file's bytes, base64.
+                 */
+                data: string;
+            }[];
         };
         BridgeSettings: {
             /** @description Required to create; can't change. */
@@ -1606,10 +1705,11 @@ export interface components {
             remote_name: string;
             state: components["schemas"]["BridgeState"];
             /**
-             * @description What the network carries, such as `replies` and `reactions`.
-             *     Clients offer each only in rooms whose bridges all carry it. A
-             *     relay bot (bot mode) leaves out `reactions`: it doesn't react
-             *     for each person.
+             * @description What the network carries, such as `replies`, `reactions` and
+             *     `attachments`. Clients offer each only in rooms whose bridges
+             *     all carry it. A relay bot (bot mode) leaves out `reactions`: it
+             *     doesn't react for each person. Files still reach a network
+             *     without `attachments`, as a line of text that names them.
              */
             capabilities?: string[];
         };
@@ -1672,8 +1772,8 @@ export interface components {
         PartKind: "text" | "attachment" | "tool-call" | "tool-result" | "card";
         /**
          * @description One typed piece of a message. `data` is a JSON object of at most
-         *     64 KiB; for `text` it is a `TextPartData`, and for `tool-call` a
-         *     `ToolCallPartData`.
+         *     64 KiB; for `text` it is a `TextPartData`, for `attachment` an
+         *     `Attachment`, and for `tool-call` a `ToolCallPartData`.
          */
         Part: {
             kind: components["schemas"]["PartKind"];
@@ -1683,6 +1783,37 @@ export interface components {
         };
         TextPartData: {
             text: string;
+        };
+        /**
+         * @description The data of an attachment part: a file uploaded with
+         *     POST /rooms/{id}/media. On a send or an edit only `media` counts:
+         *     it must be your own upload to the same room, else 422, and say
+         *     fills in the rest from the upload, whatever the client wrote. A
+         *     message has at most 10 attachments, and may have nothing else.
+         */
+        Attachment: {
+            /** @description The media id the upload returned. */
+            media: string;
+            /** @description The file's type, as say found it. */
+            mime: string;
+            name: string;
+            /**
+             * Format: int64
+             * @description In bytes.
+             */
+            size: number;
+            /** @description An image's width in pixels. */
+            width?: number;
+            /** @description An image's height in pixels. */
+            height?: number;
+            /**
+             * @description On reads, a signed URL that serves the file without a token:
+             *     a path on the node, `/api/v1/media/{id}?exp=…&sig=…`. It works
+             *     for at least 24 hours and stays the same for hours at a time,
+             *     so clients can cache what it serves. Read the message again for
+             *     a fresh one.
+             */
+            url?: string;
         };
         /**
          * @description A tool the sender used while writing the message, such as a built-in
@@ -1766,7 +1897,10 @@ export interface components {
             key: string;
         };
         SendMessage: {
-            /** @description At least one part, unless the message starts streaming. */
+            /**
+             * @description At least one part, unless the message starts streaming. At
+             *     most 10 may be `attachment` parts.
+             */
             parts: components["schemas"]["Part"][];
             /**
              * @description `streaming` starts a message that you then change with
@@ -1786,7 +1920,10 @@ export interface components {
             reply_to?: string;
         };
         EditMessage: {
-            /** @description The whole new parts; leave out to end a stream as it is. */
+            /**
+             * @description The whole new parts; leave out to end a stream as it is.
+             *     Attachment parts are checked as on a send.
+             */
             parts?: components["schemas"]["Part"][];
             stream?: components["schemas"]["StreamState"];
         };
@@ -2680,6 +2817,179 @@ export interface operations {
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
             422: components["responses"]["Error"];
+        };
+    };
+    uploadMedia: {
+        parameters: {
+            query?: {
+                /**
+                 * @description The file's name, shown and downloaded as. Directories and
+                 *     control characters are dropped; without one, say makes one from
+                 *     the type.
+                 */
+                name?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "*/*": string;
+            };
+        };
+        responses: {
+            /** @description The file, as an attachment part's data, with a signed `url` */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Attachment"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description Observers can't send (code forbidden) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description No such room, or you aren't a member (code not_found) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The file is over the limit (code too_large) */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /**
+             * @description A type say doesn't keep, or a file that isn't the image type it
+             *     says (code unsupported_media_type)
+             */
+            415: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description The file is empty (code invalid) */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getRoomMedia: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["RoomID"];
+                media_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description The part of the file `Range` asked for */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            401: components["responses"]["Error"];
+            /**
+             * @description No such file in this room, or you aren't a member (code
+             *     not_found)
+             */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    getSignedMedia: {
+        parameters: {
+            query: {
+                /** @description When the URL stops working, in Unix seconds. */
+                exp: string;
+                sig: string;
+            };
+            header?: never;
+            path: {
+                /** @description The media id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The file */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description The part of the file `Range` asked for */
+            206: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description The signature is wrong or the URL has expired (code forbidden) */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            404: components["responses"]["Error"];
         };
     };
     openWebSocket: {

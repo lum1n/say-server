@@ -61,6 +61,10 @@ Behind a reverse proxy that every request comes through, `--trust-proxy`
 (`SAY_TRUST_PROXY=true`) takes the host from `X-Forwarded-Host`, so
 browsers' WebSockets pass say's origin check.
 
+Files people send live in `--media-dir` (`SAY_MEDIA_DIR`), by default
+`media` beside the SQLite file. `--media-max` (`SAY_MEDIA_MAX`) is the
+largest file in MiB, 25 by default ([ADR 0019](./docs/adr/0019-media.md)).
+
 Cluster mode is the same binary:
 
 ```sh
@@ -74,6 +78,7 @@ other about the rest, and a node that finds itself in the list ignores
 that entry, so all nodes can share one list. All nodes must use the same
 `--cluster-secret`. Each flag also reads `SAY_PEERS`, `SAY_CLUSTER_ADDR`
 and `SAY_CLUSTER_SECRET`.
+All nodes need the same `--media-dir`, on shared storage.
 
 ## Building from source
 
@@ -416,7 +421,7 @@ as members of the room.
 |---|---|
 | Discord | A bot from discord.com/developers with the Message Content intent, invited with View Channels, Send Messages, Read Message History and Manage Webhooks; link rooms by channel id |
 | Telegram bot | A bot token from @BotFather with privacy mode off, added to the group; send `/chatid` there for the id to link |
-| Webhooks | A secret of your choosing. Programs post `{"chat": "alerts", "text": "…", "username": "Grafana"}` to the hook URL shown on the page, with `Authorization: Bearer <secret>`. Optionally a URL that say posts the room's messages to, as JSON or in the Slack or Discord webhook format |
+| Webhooks | A secret of your choosing. Programs post `{"chat": "alerts", "text": "…", "username": "Grafana"}` to the hook URL shown on the page, with `Authorization: Bearer <secret>`; files go in `attachments: [{"name", "mime", "data": "<base64>"}]`. Optionally a URL that say posts the room's messages to, as JSON or in the Slack or Discord webhook format |
 
 After editing `internal/store/queries.sql` or a migration, run
 `make generate`.

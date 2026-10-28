@@ -203,12 +203,19 @@ func optTime(t time.Time) *time.Time {
 	return &t
 }
 
-func toEvents(es []core.Event) []wireEvent {
+func (s *Server) toEvents(es []core.Event) []wireEvent {
 	out := make([]wireEvent, len(es))
 	for i, e := range es {
-		out[i] = toEvent(e)
+		out[i] = s.toEvent(e)
 	}
 	return out
+}
+
+// toEvent is the event for clients, its attachments with signed URLs.
+func (s *Server) toEvent(e core.Event) wireEvent {
+	w := toEvent(e)
+	w.Parts = s.withURLs(w.Parts)
+	return w
 }
 
 // sendMessage is the body of POST /rooms/{id}/messages and the payload of a

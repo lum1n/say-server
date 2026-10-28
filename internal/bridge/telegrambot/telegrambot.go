@@ -1,13 +1,17 @@
 package telegrambot
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,7 +28,7 @@ func init() {
 		Title:        "Telegram bot",
 		Modes:        []string{store.ModeBot},
 		Fields:       fields,
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions, connector.CapAttachments},
 		Open:         open,
 	})
 }
@@ -239,7 +243,7 @@ func (c *conn) handle(ctx context.Context, u update, linked map[string]bool) err
 		}
 		return nil
 	}
-	in, ok := incoming(m, edit, c.botID)
+	in, ok := incoming(m, edit, c.botID, c.download)
 	if !ok {
 		return nil
 	}
@@ -268,19 +272,36 @@ func (c *conn) answerChatID(ctx context.Context, m *message) {
 }
 
 // Send posts a message as the bot, with the sender's name. A text too
-// long for one message goes out in several; the id is the first one's.
+// long for one message goes out in several, and each file in one of its
+// own with the text as the first one's caption; a text too long for a
+// caption goes before the files. The id is the first message's, which
+// carries the reply.
 func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 	reply, _ := strconv.ParseInt(m.ReplyTo, 10, 64)
-	ps := parts(m.Sender, m.Text)
+	var steps []func(reply int64) (int64, error)
+	text := m.Text
+	if len(m.Media) == 0 || text != "" && !fits(m.Sender, text) {
+		for _, p := range parts(m.Sender, text) {
+			steps = append(steps, func(reply int64) (int64, error) { return c.sendMessage(ctx, m.Chat, p, reply) })
+		}
+		text = ""
+	}
+	for k, f := range m.Media {
+		capt := caption(m.Sender, "")
+		if k == 0 {
+			capt = caption(m.Sender, text)
+		}
+		steps = append(steps, func(reply int64) (int64, error) { return c.sendFile(ctx, m.Chat, f, capt, reply) })
+	}
 	first := ""
-	for n, p := range ps {
-		id, err := c.sendMessage(ctx, m.Chat, p, reply)
+	for n, step := range steps {
+		id, err := step(reply)
 		if err != nil && n == 0 {
 			return "", classify(err)
 		}
 		if err != nil {
 			// Part of it arrived, so it is not refused.
-			return first, fmt.Errorf("telegram bot: only %d of %d parts sent: %s", n, len(ps), err.Error())
+			return first, fmt.Errorf("telegram bot: only %d of %d parts sent: %s", n, len(steps), err.Error())
 		}
 		if n == 0 {
 			first = strconv.FormatInt(id, 10)
@@ -291,7 +312,8 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 }
 
 // Edit changes a message the bot sent. A message that was sent in parts
-// has its first part changed, cut short to fit.
+// has its first part changed, cut short to fit; one that is a file has its
+// caption changed.
 func (c *conn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string) error {
 	id, err := strconv.ParseInt(remoteID, 10, 64)
 	if err != nil {
@@ -301,10 +323,18 @@ func (c *conn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string) err
 	err = c.call(ctx, "editMessageText", map[string]any{
 		"chat_id":              chat,
 		"message_id":           id,
-		"text":                 single(m.Sender, m.Text),
+		"text":                 single(m.Sender, m.Text, maxText),
 		"parse_mode":           "HTML",
 		"link_preview_options": map[string]any{"is_disabled": true},
 	}, nil)
+	if e, ok := errors.AsType[*apiError](err); ok && strings.Contains(e.Description, "no text in the message") {
+		err = c.call(ctx, "editMessageCaption", map[string]any{
+			"chat_id":    chat,
+			"message_id": id,
+			"caption":    caption(m.Sender, m.Text),
+			"parse_mode": "HTML",
+		}, nil)
+	}
 	if e, ok := errors.AsType[*apiError](err); ok && strings.Contains(e.Description, "message is not modified") {
 		return nil
 	}
@@ -352,6 +382,72 @@ func (c *conn) sendMessage(ctx context.Context, chat, text string, reply int64) 
 	}
 	return r.MessageID, nil
 }
+
+// maxUpload is the largest file a bot may send, and maxPhoto the largest
+// it may send as a photo.
+const (
+	maxUpload = 50 << 20
+	maxPhoto  = 10 << 20
+)
+
+var quoteEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+
+// sendFile posts a file to a chat or topic with an HTML caption, answering
+// reply if it is not 0, and returns the message's id. An image goes as a
+// photo, which Telegram shows inline; anything else as a document.
+func (c *conn) sendFile(ctx context.Context, chat string, f bridge.Media, caption string, reply int64) (int64, error) {
+	r, err := f.Open(ctx)
+	if err != nil {
+		return 0, err
+	}
+	data, err := io.ReadAll(io.LimitReader(r, maxUpload+1))
+	r.Close()
+	if err != nil {
+		return 0, err
+	}
+	if len(data) > maxUpload {
+		return 0, bridge.Rejected(fmt.Errorf("telegram bot: %s is larger than the 50 MB a bot may send", f.Name))
+	}
+	method, field := "sendDocument", "document"
+	if photos[f.Mime] && len(data) <= maxPhoto {
+		method, field = "sendPhoto", "photo"
+	}
+	chat, topic := splitChat(chat)
+	var body bytes.Buffer
+	w := multipart.NewWriter(&body)
+	w.WriteField("chat_id", chat)
+	if topic != 0 {
+		w.WriteField("message_thread_id", strconv.FormatInt(topic, 10))
+	}
+	if caption != "" {
+		w.WriteField("caption", caption)
+		w.WriteField("parse_mode", "HTML")
+	}
+	if reply != 0 {
+		w.WriteField("reply_parameters", fmt.Sprintf(`{"message_id":%d,"allow_sending_without_reply":true}`, reply))
+	}
+	h := textproto.MIMEHeader{}
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, field, quoteEscaper.Replace(cmp.Or(f.Name, "file"))))
+	h.Set("Content-Type", cmp.Or(f.Mime, "application/octet-stream"))
+	pw, err := w.CreatePart(h)
+	if err != nil {
+		return 0, err
+	}
+	pw.Write(data)
+	if err := w.Close(); err != nil {
+		return 0, err
+	}
+	var m struct {
+		MessageID int64 `json:"message_id"`
+	}
+	if err := c.do(ctx, method, body.Bytes(), w.FormDataContentType(), uploadTimeout, &m); err != nil {
+		return 0, err
+	}
+	return m.MessageID, nil
+}
+
+// photos are the image types Telegram takes as photos.
+var photos = map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true}
 
 // classify marks errors Telegram gave for certain as refusals.
 func classify(err error) error {

@@ -16,8 +16,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -42,7 +44,7 @@ func init() {
 			{Key: "device", Label: "Device name", Kind: "text", Placeholder: "this computer's name",
 				Help: "How this device's token is named on home."},
 		},
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReactions},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReactions, connector.CapAttachments},
 		Idempotent:   true,
 		Open:         open,
 		LogOut:       logOut,
@@ -261,14 +263,14 @@ func (c *conn) connected() (*client.Client, error) {
 	return c.cl, nil
 }
 
-// Send posts the owner's message to home. A repeat of the same message
-// returns the one home already has.
+// Send posts the owner's message to home, its files uploaded first. A
+// repeat of the same message returns the one home already has.
 func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 	cl, err := c.connected()
 	if err != nil {
 		return "", err
 	}
-	parts, err := toHome(m.Parts)
+	parts, err := upload(ctx, cl, m)
 	if err != nil {
 		return "", err
 	}
@@ -277,6 +279,50 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 		return "", classify(err)
 	}
 	return e.ID, nil
+}
+
+// upload converts a message's parts for home: each attachment becomes
+// the file uploaded to home, in its place. A file home won't take, or a
+// home too old to take files, leaves its placeholder instead.
+func upload(ctx context.Context, cl *client.Client, m bridge.Outgoing) ([]client.Part, error) {
+	var out []client.Part
+	files := m.Media
+	for _, p := range m.Parts {
+		if p.Kind != core.PartAttachment {
+			out = append(out, client.Part{Kind: string(p.Kind), Data: p.Data})
+			continue
+		}
+		var a core.Attachment
+		if json.Unmarshal(p.Data, &a) != nil || a.Media == "" || len(files) == 0 {
+			continue
+		}
+		// Media are the attachment parts' files, in order.
+		f := files[0]
+		files = files[1:]
+		got, err := uploadFile(ctx, cl, m.Chat, f)
+		switch s := status(err); {
+		case err == nil:
+			out = append(out, client.Part{Kind: string(core.PartAttachment), Data: got.Part().Data})
+		case s == http.StatusNotFound && client.Code(err) == "", s == http.StatusRequestEntityTooLarge, s == http.StatusUnsupportedMediaType,
+			errors.Is(err, store.ErrNotFound):
+			// A 404 without a code is a route home doesn't have: it
+			// predates files. Retrying, or a file gone from here, would
+			// never get further.
+			out = append(out, client.TextPart(core.Attachment{Mime: f.Mime, Name: f.Name}.Placeholder()))
+		default:
+			return nil, classify(err)
+		}
+	}
+	return out, nil
+}
+
+func uploadFile(ctx context.Context, cl *client.Client, roomID string, f bridge.Media) (core.Attachment, error) {
+	r, err := f.Open(ctx)
+	if err != nil {
+		return core.Attachment{}, err
+	}
+	defer r.Close()
+	return cl.Upload(ctx, roomID, r, f.Mime, f.Name)
 }
 
 // React adds or takes back the owner's reaction on home, where the
@@ -290,44 +336,71 @@ func (c *conn) React(ctx context.Context, r bridge.Reaction) (string, error) {
 	return "", classify(err)
 }
 
-// Edit changes the owner's message on home.
+// Edit changes the owner's message on home. Its files stay as home has
+// them: an edit changes text, and can only drop files.
 func (c *conn) Edit(ctx context.Context, m bridge.Outgoing, remoteID string) error {
 	cl, err := c.connected()
 	if err != nil {
 		return err
 	}
-	parts, err := toHome(m.Parts)
-	if err != nil {
-		return err
+	var theirs []client.Part
+	if slices.ContainsFunc(m.Parts, func(p core.Part) bool { return p.Kind == core.PartAttachment }) {
+		e, err := cl.Event(ctx, m.Chat, remoteID)
+		if err != nil {
+			return classify(err)
+		}
+		theirs = e.Parts
 	}
-	_, err = cl.Edit(ctx, m.Chat, remoteID, parts)
+	_, err = cl.Edit(ctx, m.Chat, remoteID, toHome(m.Parts, theirs))
 	return classify(err)
 }
 
-// toHome converts parts for home. Attachments are not synced yet: their
-// files stay on the device.
-func toHome(in []core.Part) ([]client.Part, error) {
+// toHome converts an edit's parts for home, its attachments matched to
+// those of the message on home by name and size: the ids differ.
+func toHome(in []core.Part, theirs []client.Part) []client.Part {
 	var out []client.Part
+	used := map[int]bool{}
 	for _, p := range in {
 		if p.Kind != core.PartAttachment {
 			out = append(out, client.Part{Kind: string(p.Kind), Data: p.Data})
+			continue
 		}
-	}
-	if len(out) == 0 {
-		return nil, bridge.Rejected(errors.New("attachments are not synced yet"))
-	}
-	return out, nil
-}
-
-// fromHome converts parts from home, leaving out attachments.
-func fromHome(in []client.Part) []core.Part {
-	var out []core.Part
-	for _, p := range in {
-		if p.Kind != string(core.PartAttachment) {
-			out = append(out, core.Part{Kind: core.PartKind(p.Kind), Data: p.Data})
+		var a core.Attachment
+		json.Unmarshal(p.Data, &a)
+		for k, t := range theirs {
+			var h core.Attachment
+			if t.Kind == string(core.PartAttachment) && !used[k] && json.Unmarshal(t.Data, &h) == nil && h.Name == a.Name && h.Size == a.Size {
+				used[k] = true
+				h.URL = ""
+				out = append(out, client.Part{Kind: t.Kind, Data: h.Part().Data})
+				break
+			}
 		}
 	}
 	return out
+}
+
+// fromHome converts parts from home: its files are read from home as
+// the message is taken in.
+func (s *session) fromHome(roomID string, in []client.Part) ([]core.Part, []bridge.Media) {
+	var out []core.Part
+	var files []bridge.Media
+	for _, p := range in {
+		if p.Kind != string(core.PartAttachment) {
+			out = append(out, core.Part{Kind: core.PartKind(p.Kind), Data: p.Data})
+			continue
+		}
+		var a core.Attachment
+		if json.Unmarshal(p.Data, &a) != nil || a.Media == "" {
+			continue
+		}
+		cl := s.cl
+		files = append(files, bridge.Media{
+			Mime: a.Mime, Name: a.Name, Size: a.Size, Width: a.Width, Height: a.Height,
+			Open: func(ctx context.Context) (io.ReadCloser, error) { return cl.OpenMedia(ctx, roomID, a.Media) },
+		})
+	}
+	return out, files
 }
 
 // classify marks the errors home gave for certain as rejections. Others,
@@ -512,8 +585,8 @@ func (s *session) incoming(ctx context.Context, e client.Event) (bridge.Incoming
 			Reaction: &bridge.IncomingReaction{Target: e.Reacts, Key: e.Reaction.Key, Removed: e.Reaction.Removed},
 		}, true
 	}
-	parts := fromHome(e.Parts)
-	if len(parts) == 0 {
+	parts, files := s.fromHome(e.RoomID, e.Parts)
+	if len(parts) == 0 && len(files) == 0 {
 		return bridge.Incoming{}, false
 	}
 	in := bridge.Incoming{
@@ -521,6 +594,7 @@ func (s *session) incoming(ctx context.Context, e client.Event) (bridge.Incoming
 		ID:     e.ID,
 		Author: author(),
 		Parts:  parts,
+		Media:  files,
 		Time:   e.CreatedAt,
 		// Home's ids are the remote ids, so a reply's target is found.
 		ReplyTo: e.ReplyTo,
@@ -531,7 +605,11 @@ func (s *session) incoming(ctx context.Context, e client.Event) (bridge.Incoming
 		// The message is complete now, and new to the device.
 		in.ID = e.Edits
 	case e.Type == string(core.EventEdit):
-		in.ID, in.Edit = e.Edits, true
+		// An edit changes the text; the files came with the message.
+		in.ID, in.Edit, in.Media = e.Edits, true, nil
+		if len(parts) == 0 {
+			return bridge.Incoming{}, false
+		}
 	default:
 		return bridge.Incoming{}, false
 	}

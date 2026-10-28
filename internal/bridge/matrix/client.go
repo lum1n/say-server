@@ -81,12 +81,19 @@ func (c *conn) do(ctx context.Context, method, p string, query url.Values, body,
 		defer cancel()
 	}
 	var payload []byte
+	ctype := ""
 	if body != nil {
 		var err error
 		if payload, err = json.Marshal(body); err != nil {
 			return err
 		}
+		ctype = "application/json"
 	}
+	return c.doRaw(ctx, method, p, query, ctype, payload, out)
+}
+
+// doRaw is do with a body of any type.
+func (c *conn) doRaw(ctx context.Context, method, p string, query url.Values, ctype string, payload []byte, out any) error {
 	u := c.cfg.Homeserver + p
 	if len(query) > 0 {
 		u += "?" + query.Encode()
@@ -95,7 +102,7 @@ func (c *conn) do(ctx context.Context, method, p string, query url.Values, body,
 	var err error
 	for try := 0; try < 4; try++ {
 		var wait time.Duration
-		wait, err = c.try(ctx, method, u, payload, out)
+		wait, err = c.try(ctx, method, u, ctype, payload, out)
 		if err == nil {
 			return nil
 		}
@@ -121,7 +128,7 @@ func (c *conn) do(ctx context.Context, method, p string, query url.Values, body,
 
 // try sends a request once. With a rate limit it also returns how long
 // the homeserver asks to wait.
-func (c *conn) try(ctx context.Context, method, u string, payload []byte, out any) (time.Duration, error) {
+func (c *conn) try(ctx context.Context, method, u, ctype string, payload []byte, out any) (time.Duration, error) {
 	var body io.Reader
 	if payload != nil {
 		body = bytes.NewReader(payload)
@@ -130,13 +137,10 @@ func (c *conn) try(ctx context.Context, method, u string, payload []byte, out an
 	if err != nil {
 		return 0, err
 	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if ctype != "" {
+		req.Header.Set("Content-Type", ctype)
 	}
-	if token := c.token(); token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	resp, err := c.http.Do(req)
+	resp, err := c.roundTrip(req)
 	if err != nil {
 		return 0, err
 	}
@@ -146,12 +150,7 @@ func (c *conn) try(ctx context.Context, method, u string, payload []byte, out an
 		return 0, err
 	}
 	if resp.StatusCode >= 300 {
-		e := &apiError{Status: resp.StatusCode}
-		json.Unmarshal(data, e)
-		wait := time.Duration(e.RetryAfter) * time.Millisecond
-		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
-			wait = time.Duration(s) * time.Second
-		}
+		e, wait := answerError(resp, data)
 		return wait, e
 	}
 	if out == nil {
@@ -161,4 +160,24 @@ func (c *conn) try(ctx context.Context, method, u string, payload []byte, out an
 		return 0, fmt.Errorf("matrix: bad answer to %s: %w", method, err)
 	}
 	return 0, nil
+}
+
+// roundTrip sends a request with the session's token.
+func (c *conn) roundTrip(req *http.Request) (*http.Response, error) {
+	if token := c.token(); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return c.http.Do(req)
+}
+
+// answerError is the error of a failed answer, and how long a rate limit
+// asks to wait.
+func answerError(resp *http.Response, data []byte) (*apiError, time.Duration) {
+	e := &apiError{Status: resp.StatusCode}
+	json.Unmarshal(data, e)
+	wait := time.Duration(e.RetryAfter) * time.Millisecond
+	if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil {
+		wait = time.Duration(s) * time.Second
+	}
+	return e, wait
 }

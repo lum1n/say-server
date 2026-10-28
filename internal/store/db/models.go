@@ -140,6 +140,19 @@ type Login struct {
 	CreatedAt    int64
 }
 
+type Medium struct {
+	ID         string
+	RoomID     string
+	UploaderID string
+	Mime       string
+	Name       string
+	Size       int64
+	Width      int32
+	Height     int32
+	Sha256     string
+	CreatedAt  int64
+}
+
 type Membership struct {
 	RoomID      string
 	PrincipalID string

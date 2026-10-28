@@ -71,6 +71,8 @@ func serve(args []string) error {
 	setupMinutes := fs.Int("setup-minutes", envInt("SAY_SETUP_MINUTES", 0), "close the setup wizard this many minutes after startup if nobody used it; 0 keeps it open")
 	trustProxy := fs.Bool("trust-proxy", envBool("SAY_TRUST_PROXY"), "take the host from X-Forwarded-Host; only behind a proxy that every request comes through")
 	updateDir := fs.String("update-dir", os.Getenv("SAY_UPDATE_DIR"), "directory where say update reports, on a node that updates itself (the say-node image)")
+	mediaDir := fs.String("media-dir", os.Getenv("SAY_MEDIA_DIR"), "directory for the files people send; \"media\" beside a SQLite file by default. Nodes of a cluster need it shared")
+	mediaMax := fs.Int("media-max", envInt("SAY_MEDIA_MAX", 25), "the largest file people can send, in MiB")
 	fs.Parse(args)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -89,6 +91,8 @@ func serve(args []string) error {
 		SetupWindow:   time.Duration(*setupMinutes) * time.Minute,
 		TrustProxy:    *trustProxy,
 		UpdateDir:     *updateDir,
+		MediaDir:      *mediaDir,
+		MediaMax:      int64(*mediaMax) << 20,
 		Peers:         peerList,
 		ClusterAddr:   *clusterAddr,
 		ClusterSecret: *clusterSecret,

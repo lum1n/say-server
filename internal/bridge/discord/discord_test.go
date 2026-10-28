@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -27,6 +29,12 @@ type call struct {
 	Method, Path, Query string
 	Body                map[string]any
 	Raw                 string
+	Files               []file // of a multipart body
+}
+
+// file is a file part of a multipart body.
+type file struct {
+	Field, Name, Mime, Data string
 }
 
 // fakeDiscord is the REST API and a Gateway.
@@ -64,6 +72,16 @@ func newFake(t *testing.T) *fakeDiscord {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/", f.rest)
+	mux.HandleFunc("/cdn/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Error("the bot token went to the CDN")
+		}
+		if r.URL.Path != "/cdn/cat.png" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte("png bytes"))
+	})
 	mux.HandleFunc("/gateway", f.gateway)
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
@@ -89,12 +107,30 @@ func (f *fakeDiscord) rest(w http.ResponseWriter, r *http.Request) {
 		reply(w, 401, map[string]any{"code": 0, "message": "401: Unauthorized"})
 		return
 	}
-	raw, _ := io.ReadAll(r.Body)
+	var raw []byte
+	var files []file
+	if mt, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt == "multipart/form-data" {
+		mr := multipart.NewReader(r.Body, params["boundary"])
+		for {
+			p, err := mr.NextPart()
+			if err != nil {
+				break
+			}
+			data, _ := io.ReadAll(p)
+			if p.FormName() == "payload_json" {
+				raw = data
+				continue
+			}
+			files = append(files, file{Field: p.FormName(), Name: p.FileName(), Mime: p.Header.Get("Content-Type"), Data: string(data)})
+		}
+	} else {
+		raw, _ = io.ReadAll(r.Body)
+	}
 	var body map[string]any
 	json.Unmarshal(raw, &body)
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, call{Method: r.Method, Path: path, Query: r.URL.RawQuery, Body: body, Raw: string(raw)})
+	f.calls = append(f.calls, call{Method: r.Method, Path: path, Query: r.URL.RawQuery, Body: body, Raw: string(raw), Files: files})
 	switch {
 	case r.Method == "GET" && path == "/gateway/bot":
 		reply(w, 200, map[string]any{"url": "ws" + strings.TrimPrefix(f.srv.URL, "http") + "/gateway", "shards": max(f.shards, 1),
@@ -524,6 +560,84 @@ func TestSendFallsBackToBot(t *testing.T) {
 	if p := f.called("PATCH", "/channels/C1/messages/"+rid); len(p) != 1 || p[0].Body["content"] != "**Ada**: hi!" {
 		t.Errorf("edit = %+v", p)
 	}
+}
+
+// Attachments come in as files fetched from the CDN.
+func TestReceiveFiles(t *testing.T) {
+	f := newFake(t)
+	c := newConn(t, f, &fakeHost{}, "")
+	m := msg("C1", id(1), "U2", "")
+	m["attachments"] = []map[string]any{{"filename": "cat.png", "content_type": "image/png", "size": 9, "width": 4, "height": 3, "url": f.srv.URL + "/cdn/cat.png"}}
+	raw, _ := json.Marshal(m)
+	var dm message
+	json.Unmarshal(raw, &dm)
+	in, ok := c.incoming(dm)
+	if !ok || in.Text != "" || len(in.Media) != 1 {
+		t.Fatalf("incoming = %+v, %v", in, ok)
+	}
+	got := in.Media[0]
+	if got.Mime != "image/png" || got.Name != "cat.png" || got.Size != 9 || got.Width != 4 || got.Height != 3 {
+		t.Fatalf("media = %+v", got)
+	}
+	r, err := got.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(r)
+	r.Close()
+	if string(data) != "png bytes" {
+		t.Fatalf("read %q", data)
+	}
+	// An edit keeps the files it was sent with.
+	dm.update, dm.EditedTimestamp = true, "2026-10-24T12:01:00.000000+00:00"
+	text := "a cat"
+	dm.Content = &text
+	if in, ok := c.incoming(dm); !ok || in.Text != "a cat" || len(in.Media) != 0 {
+		t.Fatalf("edit = %+v, %v", in, ok)
+	}
+}
+
+func TestSendFiles(t *testing.T) {
+	reader := func(data string) func(context.Context) (io.ReadCloser, error) {
+		return func(context.Context) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(data)), nil }
+	}
+	files := []bridge.Media{{Mime: "image/png", Name: `my "cat".png`, Open: reader("png bytes")}, {Mime: "application/pdf", Name: "a.pdf", Open: reader("pdf")}}
+	check := func(t *testing.T, c call) {
+		t.Helper()
+		want := []file{{"files[0]", `my "cat".png`, "image/png", "png bytes"}, {"files[1]", "a.pdf", "application/pdf", "pdf"}}
+		if fmt.Sprint(c.Files) != fmt.Sprint(want) {
+			t.Errorf("files = %+v", c.Files)
+		}
+		if fmt.Sprint(c.Body["attachments"]) != `[map[filename:my "cat".png id:0] map[filename:a.pdf id:1]]` {
+			t.Errorf("attachments = %v", c.Body["attachments"])
+		}
+	}
+
+	t.Run("webhook", func(t *testing.T) {
+		f := newFake(t)
+		c := newConn(t, f, &fakeHost{}, "")
+		if _, err := c.Send(context.Background(), bridge.Outgoing{Chat: "C1", Sender: "Ada", Media: files}); err != nil {
+			t.Fatal(err)
+		}
+		exec := f.called("POST", "/webhooks/H1/tok1")
+		if len(exec) != 1 || exec[0].Body["content"] != "" || exec[0].Body["username"] != "Ada" {
+			t.Fatalf("executions = %+v", exec)
+		}
+		check(t, exec[0])
+	})
+	t.Run("bot", func(t *testing.T) {
+		f := newFake(t)
+		f.noHooks["C1"] = true
+		c := newConn(t, f, &fakeHost{}, "")
+		if _, err := c.Send(context.Background(), bridge.Outgoing{Chat: "C1", Text: "look", Sender: "Ada", ReplyTo: "M0", Media: files}); err != nil {
+			t.Fatal(err)
+		}
+		posts := f.called("POST", "/channels/C1/messages")
+		if len(posts) != 1 || posts[0].Body["content"] != "**Ada**: look" || posts[0].Body["message_reference"] == nil {
+			t.Fatalf("posts = %+v", posts)
+		}
+		check(t, posts[0])
+	})
 }
 
 func TestSendRateLimited(t *testing.T) {

@@ -29,8 +29,8 @@ func init() {
 		Name:  "email",
 		Title: "Email",
 		Modes: []string{store.ModeAccount},
-		// A reply is threaded with In-Reply-To.
-		Capabilities: []connector.Capability{connector.CapReplies},
+		// A reply is threaded with In-Reply-To; files go as attachments.
+		Capabilities: []connector.Capability{connector.CapReplies, connector.CapAttachments},
 		Fields: []bridge.Field{
 			{Key: "address", Label: "Email address", Kind: "text", Required: true, Placeholder: "you@example.com"},
 			{Key: "name", Label: "Display name", Kind: "text", Help: "Shown as the sender of the mail you write in say."},
@@ -54,9 +54,13 @@ const (
 	backfillMax = 200
 	// batch is how many new messages one sync of a folder reads.
 	batch = 200
-	// maxBody is how much of a message is read: enough for its text and
-	// the names of its first attachments, not their contents.
+	// maxBody is how much of a message is read with the others: enough
+	// for its text and the names of its first attachments.
 	maxBody = 512 << 10
+	// maxMail is the biggest message read whole, on its own, for its
+	// files: a few at say's limit, base64-encoded. Bigger ones only name
+	// them.
+	maxMail = 48 << 20
 	// maxThreads bounds the threading state kept per chat.
 	maxThreads = 300
 )

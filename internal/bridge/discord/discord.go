@@ -22,7 +22,7 @@ func init() {
 		Title:        "Discord",
 		Modes:        []string{store.ModeBot},
 		Fields:       fields,
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions, connector.CapAttachments},
 		Open:         open,
 	})
 }

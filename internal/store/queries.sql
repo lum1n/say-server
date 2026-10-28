@@ -514,3 +514,17 @@ WHERE state = 'sending' AND link_id IN (SELECT id FROM bridge_links WHERE bridge
 SELECT m.* FROM bridge_messages m
 JOIN events e ON e.id = m.event_id
 WHERE e.room_id = @room_id AND e.seq >= @from_seq AND e.seq <= @to_seq AND m.direction = 'out';
+
+-- name: ClaimInstanceValue :exec
+INSERT INTO instance (key, value) VALUES ($1, $2)
+ON CONFLICT (key) DO NOTHING;
+
+-- name: InstanceValue :one
+SELECT value FROM instance WHERE key = $1;
+
+-- name: CreateMedia :exec
+INSERT INTO media (id, room_id, uploader_id, mime, name, size, width, height, sha256, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);
+
+-- name: GetMedia :one
+SELECT * FROM media WHERE id = $1;

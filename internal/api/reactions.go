@@ -53,7 +53,7 @@ func (s *Server) reactionRequest(w http.ResponseWriter, r *http.Request, me core
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toEvent(msg))
+	writeJSON(w, http.StatusOK, s.toEvent(msg))
 }
 
 // react adds me's reaction key to message eventID, or takes it back, and

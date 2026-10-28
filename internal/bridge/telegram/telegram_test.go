@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -263,7 +265,7 @@ func TestLoginGivesUpAfterWrongCodes(t *testing.T) {
 func handle(t *testing.T, c *conn, u tg.UpdatesClass) []bridge.Incoming {
 	t.Helper()
 	q := newQueue()
-	if err := (&receiver{st: c.st, q: q}).Handle(context.Background(), u); err != nil {
+	if err := (&receiver{st: c.st, q: q, fetch: c.download}).Handle(context.Background(), u); err != nil {
 		t.Fatal(err)
 	}
 	return q.items
@@ -347,6 +349,187 @@ func TestMediaText(t *testing.T) {
 			t.Errorf("%T: got %q, want %q", c.media, got, c.want)
 		}
 	}
+}
+
+func TestReceiveFiles(t *testing.T) {
+	jpeg := []byte("\xff\xd8\xff the photo")
+	api := &fakeAPI{answer: func(req bin.Encoder) (bin.Encoder, error) {
+		r, ok := req.(*tg.UploadGetFileRequest)
+		if !ok {
+			return nil, fmt.Errorf("unexpected %T", req)
+		}
+		loc, ok := r.Location.(*tg.InputPhotoFileLocation)
+		if !ok || loc.ID != 31 || loc.ThumbSize != "y" || r.Offset != 0 {
+			return nil, fmt.Errorf("location %+v at %d", r.Location, r.Offset)
+		}
+		return &tg.UploadFile{Type: &tg.StorageFileJpeg{}, Bytes: jpeg}, nil
+	}}
+	c := newConn(t, &fakeHost{}, api)
+	c.st.remember([]tg.UserClass{alice()}, nil)
+	photo := &tg.Photo{ID: 31, AccessHash: 3, FileReference: []byte{1}, Sizes: []tg.PhotoSizeClass{
+		&tg.PhotoStrippedSize{Type: "i"},
+		&tg.PhotoSize{Type: "m", W: 320, H: 240, Size: 9000},
+		&tg.PhotoSizeProgressive{Type: "y", W: 1280, H: 960, Sizes: []int{100, 5000, int(len(jpeg))}},
+	}}
+	doc := func(id int64, size int64, attrs ...tg.DocumentAttributeClass) *tg.MessageMediaDocument {
+		return &tg.MessageMediaDocument{Document: &tg.Document{ID: id, MimeType: "application/pdf", Size: size, Attributes: attrs}}
+	}
+	at := &tg.PeerUser{UserID: 7}
+	got := handle(t, c, &tg.Updates{Updates: []tg.UpdateClass{
+		&tg.UpdateNewMessage{Message: &tg.Message{ID: 1, PeerID: at, Media: &tg.MessageMediaPhoto{Photo: photo}}},
+		&tg.UpdateNewMessage{Message: &tg.Message{ID: 2, PeerID: at, Message: "the plan",
+			Media: doc(40, 2000, &tg.DocumentAttributeFilename{FileName: "plan.pdf"})}},
+		&tg.UpdateNewMessage{Message: &tg.Message{ID: 3, PeerID: at, Media: doc(41, 10, &tg.DocumentAttributeSticker{Alt: "😀"})}},
+		&tg.UpdateNewMessage{Message: &tg.Message{ID: 4, PeerID: at, Message: "huge",
+			Media: doc(42, 1<<30, &tg.DocumentAttributeFilename{FileName: "film.mkv"})}},
+		&tg.UpdateEditMessage{Message: &tg.Message{ID: 1, PeerID: at, Message: "captioned", Media: &tg.MessageMediaPhoto{Photo: photo}}},
+	}})
+	if len(got) != 5 {
+		t.Fatalf("got %d messages: %+v", len(got), got)
+	}
+	if got[0].Text != "" || len(got[0].Media) != 1 {
+		t.Fatalf("photo = %+v", got[0])
+	}
+	m := got[0].Media[0]
+	if m.Mime != "image/jpeg" || m.Name != "photo.jpg" || m.Width != 1280 || m.Height != 960 || m.Size != int64(len(jpeg)) {
+		t.Errorf("photo's media = %+v", m)
+	}
+	r, err := m.Open(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(r)
+	r.Close()
+	if err != nil || string(data) != string(jpeg) {
+		t.Errorf("photo reads %q, %v", data, err)
+	}
+	if got[1].Text != "the plan" || len(got[1].Media) != 1 || got[1].Media[0].Name != "plan.pdf" || got[1].Media[0].Mime != "application/pdf" {
+		t.Errorf("document = %+v", got[1])
+	}
+	if got[2].Text != "[sticker 😀]" || len(got[2].Media) != 0 {
+		t.Errorf("sticker = %+v", got[2])
+	}
+	if got[3].Text != "[file: film.mkv]\nhuge" || len(got[3].Media) != 0 {
+		t.Errorf("too big = %+v", got[3])
+	}
+	if !got[4].Edit || got[4].Text != "captioned" || len(got[4].Media) != 0 {
+		t.Errorf("caption edit = %+v", got[4])
+	}
+}
+
+func TestSendFiles(t *testing.T) {
+	h := &fakeHost{}
+	q := newQueue()
+	c := newConn(t, h, nil)
+	r := &receiver{st: c.st, q: q}
+	var mu sync.Mutex
+	parts := map[int64][]byte{}
+	next := 40
+	api := &fakeAPI{answer: func(req bin.Encoder) (bin.Encoder, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		var msg string
+		var random int64
+		switch rq := req.(type) {
+		case *tg.UploadSaveFilePartRequest:
+			parts[rq.FileID] = append(parts[rq.FileID], rq.Bytes...)
+			return &tg.BoolTrue{}, nil
+		case *tg.MessagesSendMediaRequest:
+			msg, random = rq.Message, rq.RandomID
+		case *tg.MessagesSendMessageRequest:
+			msg, random = rq.Message, rq.RandomID
+		default:
+			return nil, fmt.Errorf("unexpected %T", req)
+		}
+		next++
+		return &tg.Updates{Updates: []tg.UpdateClass{
+			&tg.UpdateMessageID{ID: next, RandomID: random},
+			&tg.UpdateNewMessage{Message: &tg.Message{ID: next, Out: true, PeerID: &tg.PeerUser{UserID: 7}, Message: msg}},
+		}}, nil
+	}}
+	// As in Run: the result of each call goes to the update handler.
+	c.setAPI(tg.NewClient(hook.UpdateHook(r.Handle).Handle(api)))
+	c.st.remember([]tg.UserClass{alice()}, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go c.receiveLoop(ctx, q)
+
+	file := func(mime, name, data string) bridge.Media {
+		return bridge.Media{Mime: mime, Name: name, Open: func(context.Context) (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(data)), nil
+		}}
+	}
+	id, err := c.Send(ctx, bridge.Outgoing{Chat: "user:7", Text: "look", ReplyTo: "3", Media: []bridge.Media{
+		file("image/png", "cat.png", "png bytes"),
+		file("application/pdf", "plan.pdf", "pdf bytes"),
+	}})
+	if err != nil || id != "41" {
+		t.Fatalf("Send = %q, %v", id, err)
+	}
+	var sends []*tg.MessagesSendMediaRequest
+	for _, c := range api.called() {
+		if r, ok := c.(*tg.MessagesSendMediaRequest); ok {
+			sends = append(sends, r)
+		}
+	}
+	if len(sends) != 2 {
+		t.Fatalf("%d sends", len(sends))
+	}
+	photo, ok := sends[0].Media.(*tg.InputMediaUploadedPhoto)
+	if !ok || sends[0].Message != "look" {
+		t.Fatalf("first send = %+v", sends[0])
+	}
+	if r, ok := sends[0].ReplyTo.(*tg.InputReplyToMessage); !ok || r.ReplyToMsgID != 3 {
+		t.Errorf("reply to = %+v", sends[0].ReplyTo)
+	}
+	f := photo.File.(*tg.InputFile)
+	if f.Name != "cat.png" || string(parts[f.ID]) != "png bytes" {
+		t.Errorf("photo = %+v: %q", f, parts[f.ID])
+	}
+	d, ok := sends[1].Media.(*tg.InputMediaUploadedDocument)
+	if !ok || d.MimeType != "application/pdf" || sends[1].Message != "" || sends[1].ReplyTo != nil {
+		t.Fatalf("second send = %+v", sends[1])
+	}
+	if n := d.Attributes[0].(*tg.DocumentAttributeFilename).FileName; n != "plan.pdf" || string(parts[d.File.(*tg.InputFile).ID]) != "pdf bytes" {
+		t.Errorf("document %q = %q", n, parts[d.File.(*tg.InputFile).ID])
+	}
+	// The echo of the first goes to the core, which knows its id; the
+	// second's is dropped.
+	waitFor(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.got) == 1 && h.got[0].ID == "41"
+	})
+	q.push(bridge.Incoming{Chat: bridge.RemoteChat{ID: "user:7"}, ID: "99", Author: bridge.Author{Self: true}, Text: "later"})
+	waitFor(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.got) == 2 && h.got[1].ID == "99"
+	})
+	// It stays dropped after a restart, as when backfill fetches it again.
+	if !newSaved(mustJSON(t, c.st), "+4712345678", nil).wasSentToo("user:7", "42") {
+		t.Error("the second message is not in the state")
+	}
+
+	// A text too long for a caption goes first, and its id is the one.
+	long := strings.Repeat("word ", 300)
+	if id, err := c.Send(ctx, bridge.Outgoing{Chat: "user:7", Text: long, Media: []bridge.Media{file("image/jpeg", "a.jpg", "jpg")}}); err != nil || id != "43" {
+		t.Fatalf("Send = %q, %v", id, err)
+	}
+	last := api.called()
+	if r, ok := last[len(last)-1].(*tg.MessagesSendMediaRequest); !ok || r.Message != "" {
+		t.Errorf("file after the text = %+v", last[len(last)-1])
+	}
+}
+
+func mustJSON(t *testing.T, st *saved) json.RawMessage {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	data, err := json.Marshal(st.s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 func TestSendReturnsEchoID(t *testing.T) {

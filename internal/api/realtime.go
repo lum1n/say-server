@@ -49,7 +49,7 @@ func (s *Server) notifyInbox(ctx context.Context, roomID string) {
 
 // publishStream announces a streaming message's new parts.
 func (s *Server) publishStream(ctx context.Context, msg core.Event) {
-	data, err := json.Marshal(toEvent(msg))
+	data, err := json.Marshal(s.toEvent(msg))
 	if err != nil {
 		slog.Warn("stream frame failed", "err", err)
 		return
@@ -212,7 +212,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, me core.Principa
 		}
 	}()
 	err = s.follow(ctx, id, cursor, func(e core.Event) error {
-		data, err := json.Marshal(toEvent(e))
+		data, err := json.Marshal(s.toEvent(e))
 		if err != nil {
 			return err
 		}
@@ -519,7 +519,7 @@ func (c *wsConn) handle(ctx context.Context, req envelope) (json.RawMessage, err
 		if err != nil {
 			return nil, err
 		}
-		return json.Marshal(toEvent(e))
+		return json.Marshal(c.s.toEvent(e))
 	case "edit":
 		var p struct {
 			RoomID  string `json:"room_id"`
@@ -533,7 +533,7 @@ func (c *wsConn) handle(ctx context.Context, req envelope) (json.RawMessage, err
 		if err != nil {
 			return nil, err
 		}
-		return json.Marshal(toEvent(e))
+		return json.Marshal(c.s.toEvent(e))
 	case "react", "unreact":
 		var p struct {
 			RoomID  string `json:"room_id"`
@@ -547,7 +547,7 @@ func (c *wsConn) handle(ctx context.Context, req envelope) (json.RawMessage, err
 		if err != nil {
 			return nil, err
 		}
-		return json.Marshal(toEvent(e))
+		return json.Marshal(c.s.toEvent(e))
 	case "hello":
 		return c.hello(ctx, req.Payload)
 	case "ack":
@@ -612,7 +612,7 @@ func (c *wsConn) followRoom(ctx context.Context, roomID string, cursor int64, bo
 		defer unsubscribeDelivery()
 		triggered := map[string]bool{}
 		err := c.s.follow(sctx, roomID, cursor, func(e core.Event) error {
-			data, err := json.Marshal(toEvent(e))
+			data, err := json.Marshal(c.s.toEvent(e))
 			if err != nil {
 				return err
 			}

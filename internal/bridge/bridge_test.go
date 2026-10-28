@@ -1,10 +1,12 @@
 package bridge_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -29,7 +31,7 @@ func TestMain(m *testing.M) {
 		Name:         "fake",
 		Title:        "Fake",
 		Modes:        []string{store.ModeAccount, store.ModeBot},
-		Capabilities: []connector.Capability{connector.CapReplies},
+		Capabilities: []connector.Capability{connector.CapReplies, connector.CapAttachments},
 		Fields: []bridge.Field{
 			{Key: "server", Label: "Server", Kind: "text", Required: true},
 			{Key: "password", Label: "Password", Kind: "secret"},
@@ -525,8 +527,99 @@ func TestReplies(t *testing.T) {
 		Bridges []struct{ Capabilities []string } `json:"bridges"`
 	}
 	e.call("GET", "/api/v1/rooms/"+l.RoomID, nil, &r)
-	if len(r.Bridges) != 1 || !slices.Equal(r.Bridges[0].Capabilities, []string{"replies"}) {
+	if len(r.Bridges) != 1 || !slices.Equal(r.Bridges[0].Capabilities, []string{"replies", "attachments"}) {
 		t.Fatalf("room bridges = %+v", r.Bridges)
+	}
+}
+
+// file is incoming media that reads data.
+func file(name, mime string, data []byte) bridge.Media {
+	return bridge.Media{Name: name, Mime: mime, Open: func(context.Context) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	}}
+}
+
+func TestMedia(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	b := e.addBridge(store.ModeAccount)
+	e.runner("n1")
+	c := fakes.conn(t, b.ID)
+	chat := bridge.RemoteChat{ID: "dm-bob", Name: "Bob", Direct: true}
+	bob := bridge.Author{ID: "bob", Name: "Bob"}
+
+	// Files from the network are kept by say; one it won't keep is named
+	// in the text.
+	gif := []byte("GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
+	c.in <- bridge.Incoming{Chat: chat, ID: "m1", Author: bob, Media: []bridge.Media{file("dot.gif", "image/gif", gif)}}
+	c.in <- bridge.Incoming{Chat: chat, ID: "m2", Author: bob, Text: "look", Media: []bridge.Media{file("page.html", "text/html", []byte("<p>hi"))}}
+	l := e.portal(b.ID, "dm-bob")
+	eventually(t, "Bob's files are in", func() bool { return len(e.log(l.RoomID)) == 2 })
+	log := e.log(l.RoomID)
+	as := log[0].Attachments()
+	if len(as) != 1 || as[0].Name != "dot.gif" || as[0].Width != 1 || log[0].Prose() != "" {
+		t.Fatalf("image message = %+v", log[0])
+	}
+	if len(log[1].Attachments()) != 0 || log[1].Prose() != "look\n\n[file: page.html]" {
+		t.Fatalf("refused file = %q", log[1].Prose())
+	}
+
+	// An edit of the text keeps the files.
+	c.in <- bridge.Incoming{Chat: chat, ID: "m1", Author: bob, Text: "a dot", Edit: true}
+	eventually(t, "the caption is in", func() bool {
+		m, _ := e.store.GetEvent(ctx, log[0].ID)
+		return m.Prose() == "a dot" && len(m.Attachments()) == 1
+	})
+
+	// The owner's file goes out with the message, and the network reads
+	// say's copy.
+	part, err := e.srv.Upload(ctx, e.ada, l.RoomID, bytes.NewReader(gif), "image/gif", "back.gif")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent, err := e.srv.SendAs(ctx, e.ada, l.RoomID, "", []core.Part{part}, "", "", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the file is sent", func() bool { return e.delivery(l.ID, sent.ID) == store.BridgeSent })
+	s := c.sends()
+	if len(s) != 1 || s[0].Text != "" || len(s[0].Media) != 1 || s[0].Media[0].Name != "back.gif" || s[0].Media[0].Mime != "image/gif" {
+		t.Fatalf("sends = %+v", s)
+	}
+	r, err := s[0].Media[0].Open(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(r)
+	r.Close()
+	if !bytes.Equal(got, gif) {
+		t.Fatalf("sent bytes = %q", got)
+	}
+}
+
+func TestMediaWhereTheNetworkTakesNone(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	var b wireBridge
+	body := map[string]any{"network": "fake-idempotent", "mode": store.ModeAccount, "config": map[string]any{"server": "fake.example"}}
+	if code := e.call("POST", "/api/v1/bridges", body, &b); code != http.StatusCreated {
+		t.Fatalf("create bridge: %d", code)
+	}
+	e.runner("n1")
+	c := fakes.conn(t, b.ID)
+	c.in <- bridge.Incoming{Chat: bridge.RemoteChat{ID: "g", Name: "Group"}, ID: "m1", Author: bridge.Author{ID: "bob", Name: "Bob"}, Text: "hi"}
+	l := e.portal(b.ID, "g")
+	part, err := e.srv.Upload(ctx, e.ada, l.RoomID, strings.NewReader("notes"), "text/plain", "notes.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent, err := e.srv.SendAs(ctx, e.ada, l.RoomID, "", []core.Part{core.TextPart("see"), part}, "", "", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "the message is sent", func() bool { return e.delivery(l.ID, sent.ID) == store.BridgeSent })
+	if s := c.sends(); len(s) != 1 || s[0].Text != "see\n[file: notes.txt]" || len(s[0].Media) != 0 {
+		t.Fatalf("sends = %+v", s)
 	}
 }
 

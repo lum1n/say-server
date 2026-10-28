@@ -1,12 +1,14 @@
 package telegram
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"runtime"
@@ -14,11 +16,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/gotd/td/bin"
 	"github.com/gotd/td/telegram"
+	"github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/telegram/updates"
 	"github.com/gotd/td/telegram/updates/hook"
+	"github.com/gotd/td/telegram/uploader"
 	"github.com/gotd/td/tg"
 	"github.com/gotd/td/tgerr"
 
@@ -33,7 +38,7 @@ func init() {
 		Title:        "Telegram",
 		Modes:        []string{store.ModeAccount},
 		Fields:       fields(hasDefaultApp()),
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions, connector.CapAttachments},
 		Open:         open,
 		LogOut:       logOut,
 	})
@@ -198,6 +203,9 @@ type conn struct {
 	mu      sync.Mutex
 	api     *tg.Client // while logged in
 	dialogs time.Time  // when they were last fetched to find a chat
+	// sending has, per chat, the lock a send of several messages holds
+	// for reading until it has noted them all; see receiveLoop.
+	sending map[string]*sync.RWMutex
 }
 
 // Run connects, logs in, and passes on updates until ctx ends.
@@ -211,7 +219,7 @@ func (c *conn) Run(ctx context.Context) error {
 	go func() { cancel(c.receiveLoop(ctx, q)) }()
 
 	mgr := updates.New(updates.Config{
-		Handler:          &receiver{st: c.st, q: q},
+		Handler:          &receiver{st: c.st, q: q, fetch: c.download},
 		Storage:          c.st,
 		AccessHasher:     c.st,
 		UserAccessHasher: c.st,
@@ -263,6 +271,16 @@ func (c *conn) receiveLoop(ctx context.Context, q *queue) error {
 		if err != nil {
 			return err
 		}
+		if in.Author.Self && !in.Edit && in.Reaction == nil {
+			// The echo of a send of several messages may come before
+			// the send has noted them: wait for it.
+			l := c.sendLock(in.Chat.ID)
+			l.Lock()
+			l.Unlock()
+			if c.st.wasSentToo(in.Chat.ID, in.ID) {
+				continue
+			}
+		}
 		if err := c.h.Receive(ctx, in); err != nil {
 			return fmt.Errorf("telegram: receive: %w", err)
 		}
@@ -281,7 +299,14 @@ func (c *conn) client() *tg.Client {
 	return c.api
 }
 
-// Send posts a message as the account owner and returns its id.
+// maxCaption is the longest caption of a file, in UTF-16 units.
+const maxCaption = 1024
+
+// Send posts a message as the account owner and returns its id. Each file
+// goes in a message of its own, the first with the text as its caption; a
+// text too long for a caption goes before them. The id is the first
+// message's, which answers ReplyTo; the others are noted, so that their
+// echoes are not taken in as the owner's.
 func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 	api := c.client()
 	if api == nil {
@@ -291,24 +316,140 @@ func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
 	if err != nil {
 		return "", bridge.Rejected(err)
 	}
+	var reply tg.InputReplyToClass
+	if id, err := strconv.Atoi(m.ReplyTo); err == nil && id > 0 {
+		reply = &tg.InputReplyToMessage{ReplyToMsgID: id}
+	}
+	text := m.Text
+	long := len(utf16.Encode([]rune(text))) > maxCaption
+	var steps []func(reply tg.InputReplyToClass) (int, error)
+	if len(m.Media) == 0 || long {
+		steps = append(steps, func(reply tg.InputReplyToClass) (int, error) {
+			return send(ctx, func(randomID int64) (tg.UpdatesClass, error) {
+				return api.MessagesSendMessage(ctx, &tg.MessagesSendMessageRequest{Peer: peer, Message: m.Text, RandomID: randomID, ReplyTo: reply})
+			})
+		})
+		text = ""
+	}
+	for k, f := range m.Media {
+		caption := ""
+		if k == 0 {
+			caption = text
+		}
+		steps = append(steps, func(reply tg.InputReplyToClass) (int, error) {
+			in, err := uploadMedia(ctx, api, f)
+			if err != nil {
+				return 0, err
+			}
+			return send(ctx, func(randomID int64) (tg.UpdatesClass, error) {
+				return api.MessagesSendMedia(ctx, &tg.MessagesSendMediaRequest{Peer: peer, Media: in, Message: caption, RandomID: randomID, ReplyTo: reply})
+			})
+		})
+	}
+	if len(steps) > 1 {
+		l := c.sendLock(m.Chat)
+		l.RLock()
+		defer l.RUnlock()
+	}
+	var ids []int
+	for n, step := range steps {
+		id, err := step(reply)
+		if err != nil && n == 0 {
+			return "", err
+		}
+		if err != nil {
+			c.st.sentToo(m.Chat, ids[1:])
+			// Part of it arrived, so it is not refused.
+			return strconv.Itoa(ids[0]), fmt.Errorf("telegram: only %d of %d messages sent: %s", n, len(steps), err.Error())
+		}
+		ids = append(ids, id)
+		reply = nil
+	}
+	c.st.sentToo(m.Chat, ids[1:])
+	return strconv.Itoa(ids[0]), nil
+}
+
+// send makes one send call with a new random id and returns the id of the
+// message it made.
+func send(ctx context.Context, call func(randomID int64) (tg.UpdatesClass, error)) (int, error) {
 	var b [8]byte
 	rand.Read(b[:])
 	// Telegram drops a repeat of the same random id, so a retry after a
 	// flood wait cannot post twice.
 	randomID := int64(binary.LittleEndian.Uint64(b[:]))
-	req := &tg.MessagesSendMessageRequest{Peer: peer, Message: m.Text, RandomID: randomID}
-	if id, err := strconv.Atoi(m.ReplyTo); err == nil && id > 0 {
-		req.ReplyTo = &tg.InputReplyToMessage{ReplyToMsgID: id}
-	}
-	res, err := api.MessagesSendMessage(ctx, req)
+	res, err := call(randomID)
 	if err != nil {
-		return "", callErr(err)
+		return 0, callErr(err)
 	}
 	id, ok := sentID(res, randomID)
 	if !ok {
-		return "", errors.New("telegram: the message was sent but its id is unknown")
+		return 0, errors.New("telegram: the message was sent but its id is unknown")
 	}
-	return strconv.Itoa(id), nil
+	return id, nil
+}
+
+// maxPhoto is the largest image Telegram takes as a photo.
+const maxPhoto = 10 << 20
+
+// photos are the image types Telegram takes as photos.
+var photos = map[string]bool{"image/jpeg": true, "image/png": true, "image/webp": true}
+
+// uploadMedia uploads a file: an image as a photo, which Telegram shows
+// inline, anything else as a document.
+func uploadMedia(ctx context.Context, api *tg.Client, f bridge.Media) (tg.InputMediaClass, error) {
+	r, err := f.Open(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Files are small enough to hold, and a known size lets the
+	// uploader pick the right kind of upload.
+	data, err := io.ReadAll(r)
+	r.Close()
+	if err != nil {
+		return nil, err
+	}
+	name := cmp.Or(f.Name, "file")
+	file, err := uploader.NewUploader(api).FromBytes(ctx, name, data)
+	if err != nil {
+		return nil, callErr(err)
+	}
+	if photos[f.Mime] && len(data) <= maxPhoto {
+		return &tg.InputMediaUploadedPhoto{File: file}, nil
+	}
+	return &tg.InputMediaUploadedDocument{
+		File:       file,
+		MimeType:   cmp.Or(f.Mime, "application/octet-stream"),
+		Attributes: []tg.DocumentAttributeClass{&tg.DocumentAttributeFilename{FileName: name}},
+	}, nil
+}
+
+// sendLock returns the lock of chat's sends of several messages.
+func (c *conn) sendLock(chat string) *sync.RWMutex {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sending == nil {
+		c.sending = map[string]*sync.RWMutex{}
+	}
+	l, ok := c.sending[chat]
+	if !ok {
+		l = &sync.RWMutex{}
+		c.sending[chat] = l
+	}
+	return l
+}
+
+// download reads a file from Telegram as it arrives.
+func (c *conn) download(ctx context.Context, loc tg.InputFileLocationClass) (io.ReadCloser, error) {
+	api := c.client()
+	if api == nil {
+		return nil, errors.New("telegram: not connected")
+	}
+	pr, pw := io.Pipe()
+	go func() {
+		_, err := downloader.NewDownloader().Download(api, loc).Stream(ctx, pw)
+		pw.CloseWithError(err)
+	}()
+	return pr, nil
 }
 
 // Edit changes the text of a message the owner sent.
@@ -471,7 +612,7 @@ func (c *conn) fetchBackfill(ctx context.Context, api *tg.Client, q *queue) erro
 			msgs := h.GetMessages()
 			// Newest first from the server.
 			for i := len(msgs) - 1; i >= 0; i-- {
-				if in, ok := incoming(c.st, msgs[i]); ok {
+				if in, ok := incoming(c.st, msgs[i], c.download); ok {
 					q.push(in)
 				}
 			}

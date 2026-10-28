@@ -47,6 +47,18 @@
   tool-call/result, card/form. A message has a streaming state, `streaming`
   then `final`.
 
+**Media**
+: A file someone uploaded to a room: an image or any other file. say
+  keeps its bytes in the media store and records its type, name, size
+  and, for an image, width and height. Only its uploader can send it, and
+  only in that room.
+
+**Attachment**
+: A part of a message that names a media file by its id. say fills in
+  the file's type, name and size, and on reads a signed `url` that serves
+  it without a token. On networks that don't carry files it goes out as
+  text, `[image: name]` or `[file: name]`.
+
 **Streaming message**
 : A message whose parts change in place, unlogged, while its sender writes
   it. An `edit` event ends the stream and makes it final.

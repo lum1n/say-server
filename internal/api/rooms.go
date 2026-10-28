@@ -221,7 +221,7 @@ func (s *Server) listEvents(w http.ResponseWriter, r *http.Request, me core.Prin
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": toEvents(events), "deliveries": deliveries})
+	writeJSON(w, http.StatusOK, map[string]any{"events": s.toEvents(events), "deliveries": deliveries})
 }
 
 // getEvent returns one event of the room, such as a quoted message the
@@ -241,7 +241,7 @@ func (s *Server) getEvent(w http.ResponseWriter, r *http.Request, me core.Princi
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toEvent(e))
+	writeJSON(w, http.StatusOK, s.toEvent(e))
 }
 
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request, me core.Principal) {
@@ -259,7 +259,7 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request, me core.Pri
 	if !created {
 		status = http.StatusOK
 	}
-	writeJSON(w, status, toEvent(e))
+	writeJSON(w, status, s.toEvent(e))
 }
 
 // send appends a message from me to room and announces it on the bus.
@@ -297,6 +297,9 @@ func (s *Server) sendAt(ctx context.Context, me core.Principal, roomID string, m
 	parts, err := toParts(msg.Parts, stream == core.StreamStreaming)
 	if err != nil {
 		return core.Event{}, false, errorf(http.StatusUnprocessableEntity, "invalid", "%v", err)
+	}
+	if parts, err = s.attachments(ctx, me, roomID, parts); err != nil {
+		return core.Event{}, false, err
 	}
 	room, err := s.store.GetRoom(ctx, roomID)
 	if err != nil {
@@ -381,7 +384,7 @@ func (s *Server) patchMessage(w http.ResponseWriter, r *http.Request, me core.Pr
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toEvent(e))
+	writeJSON(w, http.StatusOK, s.toEvent(e))
 }
 
 // edit changes me's message eventID and returns it as it now is. While
@@ -403,6 +406,9 @@ func (s *Server) edit(ctx context.Context, me core.Principal, roomID, eventID st
 	if body.Parts != nil {
 		if parts, err = toParts(*body.Parts, body.Stream == core.StreamStreaming); err != nil {
 			return core.Event{}, errorf(http.StatusUnprocessableEntity, "invalid", "%v", err)
+		}
+		if parts, err = s.attachments(ctx, me, roomID, parts); err != nil {
+			return core.Event{}, err
 		}
 	}
 	msg, err := s.store.GetEvent(ctx, eventID)

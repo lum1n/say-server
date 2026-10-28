@@ -26,7 +26,7 @@ func init() {
 		Title:        "Slack",
 		Modes:        []string{store.ModeAccount},
 		Fields:       fields,
-		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions},
+		Capabilities: []connector.Capability{connector.CapEdits, connector.CapReplies, connector.CapReactions, connector.CapAttachments},
 		Open:         open,
 	})
 }
@@ -36,7 +36,7 @@ var fields = []bridge.Field{
 		Key: "user_token", Label: "User token", Kind: "secret", Required: true, Placeholder: "xoxp-…",
 		Help: "Create a Slack app for your workspace at api.slack.com/apps. Under OAuth & Permissions add these User Token Scopes: " +
 			"channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, im:read, mpim:read, users:read, chat:write, " +
-			"reactions:read, reactions:write. " +
+			"reactions:read, reactions:write, files:read, files:write. " +
 			"Install the app to the workspace and paste the User OAuth Token (xoxp-…). Messages you write in say are posted as you.",
 	},
 	{
@@ -90,12 +90,14 @@ func open(b bridge.Info, h bridge.Host) (bridge.Conn, error) {
 		h:             h,
 		cfg:           cfg,
 		api:           "https://slack.com/api/",
+		files:         "https://files.slack.com/",
 		http:          &http.Client{Timeout: 30 * time.Second},
 		backfillAge:   30 * 24 * time.Hour,
 		backfillCount: 20,
 		maxChats:      50,
 		catchUpMax:    500,
 		saveEvery:     30 * time.Second,
+		sharePoll:     500 * time.Millisecond,
 		users:         map[string]string{},
 		chats:         map[string]bridge.RemoteChat{},
 		last:          st.Last,
@@ -104,16 +106,18 @@ func open(b bridge.Info, h bridge.Host) (bridge.Conn, error) {
 
 // conn is a running Slack account.
 type conn struct {
-	h    bridge.Host
-	cfg  config
-	api  string // base URL of the Web API, ending in /
-	http *http.Client
+	h     bridge.Host
+	cfg   config
+	api   string // base URL of the Web API, ending in /
+	files string // base URL of the file host, which gets the token
+	http  *http.Client
 
 	backfillAge   time.Duration // how far back a new chat is fetched
 	backfillCount int           // messages fetched of a new chat
 	maxChats      int           // new chats fetched on connect
 	catchUpMax    int           // messages fetched of a known chat
 	saveEvery     time.Duration
+	sharePoll     time.Duration // first wait for an upload's message
 
 	mu    sync.Mutex
 	self  string // the account's user id
@@ -126,6 +130,7 @@ type conn struct {
 	// catching up fills, so until it is filled, behind is what is saved.
 	behind map[string]string
 	dirty  bool
+	ours   []string // files say uploaded, oldest first
 }
 
 // message is a Slack message, in an event or in history.
@@ -241,8 +246,11 @@ func (c *conn) Run(ctx context.Context) error {
 }
 
 // Send posts as the account's user and returns the message's ts, which
-// the echo event carries too.
+// the echo event carries too. Files go in one message, see sendFiles.
 func (c *conn) Send(ctx context.Context, m bridge.Outgoing) (string, error) {
+	if len(m.Media) > 0 {
+		return c.sendFiles(ctx, m)
+	}
 	var r struct {
 		response
 		Ts string `json:"ts"`
@@ -306,7 +314,8 @@ func (c *conn) incoming(ctx context.Context, m message) (bridge.Incoming, bool) 
 		if !ok {
 			return bridge.Incoming{}, false
 		}
-		return bridge.Incoming{Chat: c.chat(ctx, m.Channel), ID: n.Ts, Author: a, Text: c.text(ctx, *n), Edit: true}, true
+		_, named := c.media(*n)
+		return bridge.Incoming{Chat: c.chat(ctx, m.Channel), ID: n.Ts, Author: a, Text: c.text(ctx, n.Text, named), Edit: true}, true
 	case "", "file_share", "thread_broadcast", "me_message":
 	case "bot_message":
 		c.mu.Lock()
@@ -323,10 +332,11 @@ func (c *conn) incoming(ctx context.Context, m message) (bridge.Incoming, bool) 
 		return bridge.Incoming{}, false
 	}
 	a, ok := c.author(ctx, m)
-	if !ok {
+	if !ok || a.Self && c.fromSay(m) {
 		return bridge.Incoming{}, false
 	}
-	in := bridge.Incoming{Chat: c.chat(ctx, m.Channel), ID: m.Ts, Author: a, Text: c.text(ctx, m), Time: tsTime(m.Ts)}
+	files, named := c.media(m)
+	in := bridge.Incoming{Chat: c.chat(ctx, m.Channel), ID: m.Ts, Author: a, Text: c.text(ctx, m.Text, named), Media: files, Time: tsTime(m.Ts)}
 	if m.ThreadTs != "" && m.ThreadTs != m.Ts {
 		in.ReplyTo = m.ThreadTs
 	}
@@ -356,9 +366,9 @@ func (c *conn) author(ctx context.Context, m message) (bridge.Author, bool) {
 	return bridge.Author{}, false
 }
 
-// text renders a message's text and files.
-func (c *conn) text(ctx context.Context, m message) string {
-	return plainText(m.Text, m.Files, names{
+// text renders a message's text and the files named in it.
+func (c *conn) text(ctx context.Context, text string, files []file) string {
+	return plainText(text, files, names{
 		user:    func(id string) string { return c.userName(ctx, id) },
 		channel: func(id string) string { return c.chat(ctx, id).Name },
 	})

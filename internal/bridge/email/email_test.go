@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
@@ -231,16 +233,19 @@ wrote:
 			Author: bridge.Author{ID: "bob@example.com", Name: "Bob Builder"}, Text: "Subject: Hello\nHi there!"},
 		{Chat: bridge.RemoteChat{ID: "bob@example.com,carol@example.com", Name: "bob@example.com, Carol"}, ID: "c1@example.com",
 			Author: bridge.Author{ID: "carol@example.com", Name: "Carol"}, ReplyTo: "plans@example.com",
-			Text: "Sounds good, see this (https://example.com/x).\n[attachment: map.png]"},
+			Text: "Sounds good, see this (https://example.com/x)."},
 		{Chat: bridge.RemoteChat{ID: "bob@example.com", Name: "Bob", Direct: true}, ID: "m1@example.com",
 			Author: bridge.Author{ID: "me@example.com", Name: "Me", Self: true}, ReplyTo: "b1@example.com", Text: "Hello Bob."},
 	}
 	for i := range want {
 		g := got[i]
-		g.Time = time.Time{}
+		g.Time, g.Media = time.Time{}, nil
 		if fmt.Sprint(g) != fmt.Sprint(want[i]) {
 			t.Errorf("message %d:\n got %+v\nwant %+v", i, g, want[i])
 		}
+	}
+	if got := files(t, got[1]); got != "map.png image/png xxxx" {
+		t.Errorf("files = %q", got)
 	}
 
 	// New mail arrives while idling.
@@ -321,6 +326,34 @@ func TestSendAndEcho(t *testing.T) {
 	m = s.smtp.messages()[2]
 	if !strings.Contains(m.data, "Subject: Message from say") || strings.Contains(m.data, "In-Reply-To") || len(m.to) != 2 {
 		t.Errorf("new chat mail %v:\n%s", m.to, m.data)
+	}
+
+	// Files go as attachments, and come back with the echo.
+	png := bytes.Repeat([]byte{0x89, 'P', 'N', 'G', 0, 1, 2}, 100)
+	open := func(b []byte) func(context.Context) (io.ReadCloser, error) {
+		return func(context.Context) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(b)), nil }
+	}
+	if _, err := c.Send(context.Background(), bridge.Outgoing{Chat: "bob@example.com", EventID: "ev4", Text: "Look", Media: []bridge.Media{
+		{Mime: "image/png", Name: "dot.png", Size: int64(len(png)), Open: open(png)},
+		{Mime: "text/csv", Name: "data.csv", Size: 4, Open: open([]byte("a,b\n"))},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	m = s.smtp.messages()[3]
+	for _, want := range []string{"Content-Type: multipart/mixed", `filename=dot.png`, base64.StdEncoding.EncodeToString(png)[:60], "Look"} {
+		if !strings.Contains(m.data, want) {
+			t.Errorf("mail with files lacks %q:\n%s", want, m.data)
+		}
+	}
+	// The echoes of ev2 and ev3 are filed too, in any order.
+	var echo bridge.Incoming
+	for _, in := range h.waitFor(t, 5) {
+		if in.ID == "ev4@example.com" {
+			echo = in
+		}
+	}
+	if echo.Text != "Look" || files(t, echo) != "dot.png image/png "+string(png)+", data.csv text/csv a,b\n" {
+		t.Errorf("echo with files: %+v", echo)
 	}
 }
 
@@ -492,13 +525,42 @@ func (s *smtpServer) serve(nc net.Conn) {
 	}
 }
 
+// files lists a message's media as "name mime content", read through
+// Open.
+func files(t *testing.T, in bridge.Incoming) string {
+	t.Helper()
+	var out []string
+	for _, m := range in.Media {
+		r, err := m.Open(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(r)
+		r.Close()
+		if int64(len(b)) != m.Size {
+			t.Errorf("%s: size %d, read %d", m.Name, m.Size, len(b))
+		}
+		out = append(out, m.Name+" "+m.Mime+" "+string(b))
+	}
+	return strings.Join(out, ", ")
+}
+
 func TestBigMessage(t *testing.T) {
 	s := newMailServer(t)
-	big := strings.Repeat(strings.Repeat("A", 76)+"\n", 10000)
-	s.deliver(t, "INBOX", `From: bob@example.com
-To: me@example.com
+	// Over maxBody, so read whole on its own, in both folders.
+	data := bytes.Repeat([]byte("0123456789abcdef"), 40000)
+	enc := base64.StdEncoding.EncodeToString(data)
+	var wrapped strings.Builder
+	for len(enc) > 76 {
+		wrapped.WriteString(enc[:76] + "\n")
+		enc = enc[76:]
+	}
+	wrapped.WriteString(enc + "\n")
+	mail := func(from, to, id string) string {
+		return `From: ` + from + `
+To: ` + to + `
 Subject: Photos
-Message-ID: <big@example.com>
+Message-ID: <` + id + `>
 Content-Type: multipart/mixed; boundary=XX
 
 --XX
@@ -510,12 +572,52 @@ Content-Type: image/jpeg; name="one.jpg"
 Content-Disposition: attachment; filename="one.jpg"
 Content-Transfer-Encoding: base64
 
-`+big+`--XX--
-`, time.Now())
-	_, h, stop := run(t, s.config(""), nil)
+` + wrapped.String() + `--XX--
+`
+	}
+	at := time.Now()
+	s.deliver(t, "Sent", mail("me@example.com", "bob@example.com", "big0@example.com"), at.Add(-time.Minute))
+	s.deliver(t, "INBOX", mail("bob@example.com", "me@example.com", "big@example.com"), at)
+	_, h, stop := run(t, s.config("Sent"), nil)
 	defer stop()
-	if got := h.waitFor(t, 1); got[0].Text != "Subject: Photos\nLook!\n[attachment: one.jpg]" {
-		t.Errorf("text = %q", got[0].Text)
+	got := h.waitFor(t, 2)
+	for _, in := range got {
+		if in.Text != "Subject: Photos\nLook!" || len(in.Media) != 1 || files(t, in) != "one.jpg image/jpeg "+string(data) {
+			t.Errorf("%s: text %q, %d files", in.ID, in.Text, len(in.Media))
+		}
+	}
+	// The inbox is idled on again.
+	s.deliver(t, "INBOX", mailFrom("dave@example.com", "<d1@example.com>", "News", "Fresh."), time.Now())
+	if got := h.waitFor(t, 3); got[2].ID != "d1@example.com" {
+		t.Errorf("new mail: %+v", got[2])
+	}
+}
+
+func TestParseFiles(t *testing.T) {
+	raw := strings.ReplaceAll(`From: bob@example.com
+Subject: Scan
+Message-ID: <s@example.com>
+Content-Type: multipart/mixed; boundary=XX
+
+--XX
+Content-Type: application/pdf
+Content-Disposition: attachment; filename="scan.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0=
+--XX--
+`, "\n", "\r\n")
+	m, err := parse([]byte(raw), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A mail of only a file has no text but its subject.
+	if m.Text != "Subject: Scan" || len(m.Files) != 1 || string(m.Files[0].Data) != "%PDF-" || m.Files[0].Mime != "application/pdf" {
+		t.Errorf("parsed %q %+v", m.Text, m.Files)
+	}
+	// Cut short, it is only named.
+	if m, _ = parse([]byte(raw), false); m.Text != "Subject: Scan\n[file: scan.pdf]" || len(m.Files) != 0 {
+		t.Errorf("cut: %q %+v", m.Text, m.Files)
 	}
 }
 

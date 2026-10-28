@@ -49,7 +49,7 @@ class Error1(TypedDict):
     """
     Stable machine-readable code: unauthorized, forbidden,
     not_found, conflict, bad_request, unsupported_media_type,
-    invalid, hop_limit, agents_paused, agent_budget,
+    too_large, invalid, hop_limit, agents_paused, agent_budget,
     rate_limited, too_many, invalid_credentials,
     bad_setup_code, setup_done, setup_closed, username_taken
     or internal.
@@ -457,6 +457,15 @@ class Network(TypedDict):
     """
 
 
+class Attachment(TypedDict):
+    name: NotRequired[str]
+    mime: NotRequired[str]
+    data: str
+    """
+    The file's bytes, base64.
+    """
+
+
 class HookMessage(TypedDict):
     """
     A message posted to a webhook bridge's hook.
@@ -486,9 +495,17 @@ class HookMessage(TypedDict):
     reply_to: NotRequired[str]
     edit: NotRequired[bool]
     """
-    The message `id` now reads `text`.
+    The message `id` now reads `text`; attachments are ignored.
     """
     time: NotRequired[str]
+    attachments: NotRequired[list[Attachment]]
+    """
+    Files sent with the message, at most 10; a message may be files
+    only. Each is the file itself, base64-encoded: say never fetches
+    a URL a hook names. Outgoing requests in the `say` format carry
+    the same shape.
+
+    """
 
 
 class BridgeSettings(TypedDict):
@@ -575,10 +592,11 @@ class RoomBridge(TypedDict):
     state: BridgeState
     capabilities: NotRequired[list[str]]
     """
-    What the network carries, such as `replies` and `reactions`.
-    Clients offer each only in rooms whose bridges all carry it. A
-    relay bot (bot mode) leaves out `reactions`: it doesn't react
-    for each person.
+    What the network carries, such as `replies`, `reactions` and
+    `attachments`. Clients offer each only in rooms whose bridges
+    all carry it. A relay bot (bot mode) leaves out `reactions`: it
+    doesn't react for each person. Files still reach a network
+    without `attachments`, as a line of text that names them.
 
     """
 
@@ -660,8 +678,8 @@ PartKind: TypeAlias = Literal['text', 'attachment', 'tool-call', 'tool-result', 
 class Part(TypedDict):
     """
     One typed piece of a message. `data` is a JSON object of at most
-    64 KiB; for `text` it is a `TextPartData`, and for `tool-call` a
-    `ToolCallPartData`.
+    64 KiB; for `text` it is a `TextPartData`, for `attachment` an
+    `Attachment`, and for `tool-call` a `ToolCallPartData`.
 
     """
 
@@ -671,6 +689,48 @@ class Part(TypedDict):
 
 class TextPartData(TypedDict):
     text: str
+
+
+class Attachment1(TypedDict):
+    """
+    The data of an attachment part: a file uploaded with
+    POST /rooms/{id}/media. On a send or an edit only `media` counts:
+    it must be your own upload to the same room, else 422, and say
+    fills in the rest from the upload, whatever the client wrote. A
+    message has at most 10 attachments, and may have nothing else.
+
+    """
+
+    media: str
+    """
+    The media id the upload returned.
+    """
+    mime: str
+    """
+    The file's type, as say found it.
+    """
+    name: str
+    size: int
+    """
+    In bytes.
+    """
+    width: NotRequired[int]
+    """
+    An image's width in pixels.
+    """
+    height: NotRequired[int]
+    """
+    An image's height in pixels.
+    """
+    url: NotRequired[str]
+    """
+    On reads, a signed URL that serves the file without a token:
+    a path on the node, `/api/v1/media/{id}?exp=…&sig=…`. It works
+    for at least 24 hours and stays the same for hours at a time,
+    so clients can cache what it serves. Read the message again for
+    a fresh one.
+
+    """
 
 
 class ToolCallPartData(TypedDict):
@@ -726,7 +786,9 @@ class WsReact(TypedDict):
 class SendMessage(TypedDict):
     parts: list[Part]
     """
-    At least one part, unless the message starts streaming.
+    At least one part, unless the message starts streaming. At
+    most 10 may be `attachment` parts.
+
     """
     stream: NotRequired[StreamState]
     """
@@ -753,6 +815,8 @@ class EditMessage(TypedDict):
     parts: NotRequired[list[Part]]
     """
     The whole new parts; leave out to end a stream as it is.
+    Attachment parts are checked as on a send.
+
     """
     stream: NotRequired[StreamState]
 

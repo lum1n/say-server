@@ -8,10 +8,12 @@ import (
 	"io/fs"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lum1n/say-server/internal/bus"
 	"github.com/lum1n/say-server/internal/core"
+	"github.com/lum1n/say-server/internal/media"
 	"github.com/lum1n/say-server/internal/store"
 )
 
@@ -46,6 +48,10 @@ type Config struct {
 	// file and say's requests to update (internal/update). Empty
 	// elsewhere.
 	UpdateDir string
+	// Media keeps uploaded files; nil keeps them in memory, for tests.
+	// MediaMax is the largest file taken; zero is media.DefaultMax.
+	Media    media.Store
+	MediaMax int64
 }
 
 type Server struct {
@@ -58,6 +64,11 @@ type Server struct {
 	setupUntil time.Time
 	updateDir  string
 	hooks      *hookLimiter
+	media      media.Store
+	mediaMax   int64
+	// signKey signs media URLs; keyMu guards loading it.
+	keyMu   sync.Mutex
+	signKey []byte
 	// resync is how often a realtime follower rereads the store without a
 	// bus notification; heartbeat is how often idle streams are pinged.
 	resync    time.Duration
@@ -68,6 +79,12 @@ func New(c Config) *Server {
 	assets, _ := fs.Sub(static, "static")
 	c.Agents.Paused = false
 	c.Agents = withDefaults(c.Agents, builtinAgentPolicy)
+	if c.Media == nil {
+		c.Media = media.NewMemory()
+	}
+	if c.MediaMax <= 0 {
+		c.MediaMax = media.DefaultMax
+	}
 	return &Server{
 		version:    c.Version,
 		assets:     assets,
@@ -78,6 +95,8 @@ func New(c Config) *Server {
 		setupUntil: c.SetupUntil,
 		updateDir:  c.UpdateDir,
 		hooks:      newHookLimiter(c.HookLimit),
+		media:      c.Media,
+		mediaMax:   c.MediaMax,
 		resync:     30 * time.Second,
 		heartbeat:  25 * time.Second,
 	}
@@ -113,6 +132,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/rooms/{id}/messages/{event_id}", s.authed(s.patchMessage))
 	mux.HandleFunc("PUT /api/v1/rooms/{id}/messages/{event_id}/reactions/{key}", s.authed(s.putReaction))
 	mux.HandleFunc("DELETE /api/v1/rooms/{id}/messages/{event_id}/reactions/{key}", s.authed(s.deleteReaction))
+	mux.HandleFunc("POST /api/v1/rooms/{id}/media", s.authed(s.uploadMedia))
+	mux.HandleFunc("GET /api/v1/rooms/{id}/media/{media_id}", s.authed(s.roomMedia))
+	mux.HandleFunc("GET /api/v1/media/{id}", s.signedMedia)
 	mux.HandleFunc("GET /api/v1/ws", s.authed(s.ws))
 	mux.HandleFunc("GET /api/v1/builtin-agents", s.authed(s.listBuiltinAgents))
 	mux.HandleFunc("POST /api/v1/builtin-agents", s.authed(s.createBuiltinAgent))

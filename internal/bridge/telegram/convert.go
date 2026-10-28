@@ -1,8 +1,10 @@
 package telegram
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/gotd/td/tg"
 
 	"github.com/lum1n/say-server/internal/bridge"
+	"github.com/lum1n/say-server/internal/media"
 )
 
 // receiver turns updates into incoming messages. It is the handler of
@@ -20,8 +23,9 @@ import (
 // inside API calls (the result of a send is an update too), so it only
 // queues: Host.Receive may wait for a send in progress.
 type receiver struct {
-	st *saved
-	q  *queue
+	st    *saved
+	q     *queue
+	fetch fetcher
 
 	mu   sync.Mutex
 	seen map[string]reactionState // chat/message → its reactions, see reactions.go
@@ -65,17 +69,24 @@ func (r *receiver) Handle(_ context.Context, u tg.UpdatesClass) error {
 				r.reactions(m.PeerID, m.ID, list)
 			}
 		}
-		if in, ok := incoming(r.st, msg); ok {
+		if in, ok := incoming(r.st, msg, r.fetch); ok {
 			in.Edit = edit
+			if edit {
+				in.Media = nil
+			}
 			r.q.push(in)
 		}
 	}
 	return nil
 }
 
+// fetcher reads a file from Telegram.
+type fetcher func(ctx context.Context, loc tg.InputFileLocationClass) (io.ReadCloser, error)
+
 // incoming converts a message. Service messages (joins, pins, calls…) and
-// empty ones are skipped.
-func incoming(st *saved, mc tg.MessageClass) (bridge.Incoming, bool) {
+// empty ones are skipped. Its photo or file, if say takes it, is read
+// with fetch.
+func incoming(st *saved, mc tg.MessageClass, fetch fetcher) (bridge.Incoming, bool) {
 	m, ok := mc.(*tg.Message)
 	if !ok || m.PeerID == nil {
 		return bridge.Incoming{}, false
@@ -91,14 +102,88 @@ func incoming(st *saved, mc tg.MessageClass) (bridge.Incoming, bool) {
 		Text:   messageText(m),
 		Time:   time.Unix(int64(m.Date), 0),
 	}
+	if f, ok := attachment(m.Media, fetch); ok {
+		in.Text = plainText(m.Message, m.Entities)
+		in.Media = []bridge.Media{f}
+	}
 	if h, ok := m.ReplyTo.(*tg.MessageReplyHeader); ok && h.ReplyToMsgID != 0 && h.ReplyToPeerID == nil {
 		// A reply to a message of another chat has no id here.
 		in.ReplyTo = strconv.Itoa(h.ReplyToMsgID)
 	}
-	if in.Text == "" {
+	if in.Text == "" && len(in.Media) == 0 {
 		return bridge.Incoming{}, false
 	}
 	return in, true
+}
+
+// attachment is the photo or file of a message that say takes in; false
+// for other media, stickers, and a file larger than say keeps, which stay
+// placeholders.
+func attachment(mm tg.MessageMediaClass, fetch fetcher) (bridge.Media, bool) {
+	var f bridge.Media
+	var loc tg.InputFileLocationClass
+	switch m := mm.(type) {
+	case *tg.MessageMediaPhoto:
+		p, ok := m.Photo.(*tg.Photo)
+		if !ok {
+			return bridge.Media{}, false
+		}
+		typ := ""
+		for _, sc := range p.Sizes {
+			var w, h, size int
+			switch s := sc.(type) {
+			case *tg.PhotoSize:
+				w, h, size = s.W, s.H, s.Size
+			case *tg.PhotoSizeProgressive:
+				w, h = s.W, s.H
+				if len(s.Sizes) > 0 {
+					size = s.Sizes[len(s.Sizes)-1]
+				}
+			default:
+				continue
+			}
+			if w*h >= f.Width*f.Height {
+				typ = sc.GetType()
+				f = bridge.Media{Mime: "image/jpeg", Name: "photo.jpg", Size: int64(size), Width: w, Height: h}
+			}
+		}
+		if typ == "" {
+			return bridge.Media{}, false
+		}
+		loc = &tg.InputPhotoFileLocation{ID: p.ID, AccessHash: p.AccessHash, FileReference: p.FileReference, ThumbSize: typ}
+	case *tg.MessageMediaDocument:
+		d, ok := m.Document.(*tg.Document)
+		if !ok {
+			return bridge.Media{}, false
+		}
+		f = bridge.Media{Mime: d.MimeType, Name: "file", Size: d.Size}
+		switch {
+		case m.Voice:
+			f.Name = "voice.ogg"
+		case m.Round || m.Video:
+			f.Name = "video.mp4"
+		}
+		for _, a := range d.Attributes {
+			switch a := a.(type) {
+			case *tg.DocumentAttributeSticker, *tg.DocumentAttributeCustomEmoji:
+				return bridge.Media{}, false
+			case *tg.DocumentAttributeFilename:
+				f.Name = cmp.Or(a.FileName, f.Name)
+			case *tg.DocumentAttributeVideo:
+				f.Width, f.Height = a.W, a.H
+			case *tg.DocumentAttributeImageSize:
+				f.Width, f.Height = a.W, a.H
+			}
+		}
+		loc = &tg.InputDocumentFileLocation{ID: d.ID, AccessHash: d.AccessHash, FileReference: d.FileReference}
+	default:
+		return bridge.Media{}, false
+	}
+	if f.Size > media.DefaultMax {
+		return bridge.Media{}, false
+	}
+	f.Open = func(ctx context.Context) (io.ReadCloser, error) { return fetch(ctx, loc) }
+	return f, true
 }
 
 // peerID returns the chat id of a peer.

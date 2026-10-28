@@ -67,7 +67,7 @@ func (c *conn) send(ctx context.Context, m bridge.Outgoing) (string, error) {
 			ID string `json:"id"`
 		}
 		body := map[string]any{"content": clip(m.Text), "username": username(m.Sender), "allowed_mentions": noMentions}
-		err = c.do(ctx, http.MethodPost, "/webhooks/"+h.ID+"/"+h.Token+query, body, &r)
+		err = c.post(ctx, "/webhooks/"+h.ID+"/"+h.Token+query, body, m.Media, &r)
 		if status(err) == http.StatusNotFound {
 			// Someone deleted the webhook; find or make another.
 			c.forgetHook(ch)
@@ -86,11 +86,19 @@ func (c *conn) send(ctx context.Context, m bridge.Outgoing) (string, error) {
 	if m.ReplyTo != "" {
 		body["message_reference"] = map[string]any{"message_id": m.ReplyTo, "fail_if_not_exists": false}
 	}
-	if err := c.do(ctx, http.MethodPost, "/channels/"+m.Chat+"/messages", body, &r); err != nil {
+	if err := c.post(ctx, "/channels/"+m.Chat+"/messages", body, m.Media, &r); err != nil {
 		return "", err
 	}
 	c.sent(r.ID, "bot")
 	return r.ID, nil
+}
+
+// post creates a message, with its files if it has any.
+func (c *conn) post(ctx context.Context, path string, body map[string]any, files []bridge.Media, out any) error {
+	if len(files) == 0 {
+		return c.do(ctx, http.MethodPost, path, body, out)
+	}
+	return c.upload(ctx, http.MethodPost, path, body, files, out)
 }
 
 // React adds the bot's reaction to a message, or takes it back. A
@@ -261,6 +269,9 @@ func (c *conn) sent(id, via string) {
 // botText is a message as the bot posts it: the sender's name in bold.
 func botText(m bridge.Outgoing) string {
 	r := strings.NewReplacer(`\`, `\\`, `*`, `\*`, `_`, `\_`, `~`, `\~`, "`", "\\`", `|`, `\|`)
+	if m.Text == "" {
+		return clip("**" + r.Replace(m.Sender) + "**") // files alone
+	}
 	return clip("**" + r.Replace(m.Sender) + "**: " + m.Text)
 }
 

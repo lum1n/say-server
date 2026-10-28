@@ -2,10 +2,13 @@ package bridge
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
+	"log/slog"
 	"math"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/lum1n/say-server/internal/core"
@@ -76,8 +79,50 @@ func (i *instance) Receive(ctx context.Context, in Incoming) error {
 	if replyTo == "" && in.Quote != "" && len(in.Parts) == 0 {
 		in.Text = "> " + in.Quote + "\n" + in.Text
 	}
-	_, err = i.c.Chat.SendAs(ctx, as, l.RoomID, eventID, in.content(), replyTo, "bridge:"+l.ID+":"+in.ID, at)
+	parts := i.media(ctx, l, as, in)
+	if len(parts) == 0 {
+		return nil
+	}
+	_, err = i.c.Chat.SendAs(ctx, as, l.RoomID, eventID, parts, replyTo, "bridge:"+l.ID+":"+in.ID, at)
 	return err
+}
+
+// media keeps an incoming message's files and returns its parts with them.
+// A file say can't fetch or keep is named in the text instead.
+func (i *instance) media(ctx context.Context, l store.BridgeLink, as core.Principal, in Incoming) []core.Part {
+	if len(in.Media) == 0 {
+		return in.content()
+	}
+	var files []core.Part
+	var missing []string
+	for _, m := range in.Media {
+		p, err := i.upload(ctx, l, as, m)
+		if err != nil {
+			slog.Info("bridged file left out", "bridge", i.b.ID, "name", m.Name, "err", err)
+			missing = append(missing, core.Attachment{Mime: m.Mime, Name: cmp.Or(m.Name, "file")}.Placeholder())
+			continue
+		}
+		files = append(files, p)
+	}
+	parts := in.Parts
+	if len(parts) == 0 && in.Text != "" {
+		parts = []core.Part{core.TextPart(in.Text)}
+	}
+	if len(missing) > 0 {
+		parts = append(parts, core.TextPart(strings.Join(missing, "\n")))
+	}
+	return append(parts, files...)
+}
+
+func (i *instance) upload(ctx context.Context, l store.BridgeLink, as core.Principal, m Media) (core.Part, error) {
+	ctx, cancel := context.WithTimeout(ctx, mediaTimeout)
+	defer cancel()
+	r, err := m.Open(ctx)
+	if err != nil {
+		return core.Part{}, err
+	}
+	defer r.Close()
+	return i.c.Chat.Upload(ctx, as, l.RoomID, r, m.Mime, m.Name)
 }
 
 // replyTarget returns the message in l's room that has the remote id
@@ -210,7 +255,18 @@ func (i *instance) receiveEdit(ctx context.Context, l store.BridgeLink, in Incom
 		return err
 	}
 	parts := in.content()
-	if len(in.Parts) == 0 && msg.Prose() == in.Text || samePart(msg.Parts, parts) {
+	if len(in.Parts) == 0 && in.Text == "" {
+		parts = nil
+	}
+	if !slices.ContainsFunc(parts, func(p core.Part) bool { return p.Kind == core.PartAttachment }) {
+		// Networks edit a message's text; its files stay.
+		for _, p := range msg.Parts {
+			if p.Kind == core.PartAttachment {
+				parts = append(parts, p)
+			}
+		}
+	}
+	if len(parts) == 0 || len(in.Parts) == 0 && msg.Prose() == in.Text || samePart(msg.Parts, parts) {
 		return nil
 	}
 	as, err := i.c.Store.GetPrincipal(ctx, msg.SenderID)

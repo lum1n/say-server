@@ -330,6 +330,21 @@ func (q *Queries) BumpSeq(ctx context.Context, id string) (int64, error) {
 	return last_seq, err
 }
 
+const claimInstanceValue = `-- name: ClaimInstanceValue :exec
+INSERT INTO instance (key, value) VALUES ($1, $2)
+ON CONFLICT (key) DO NOTHING
+`
+
+type ClaimInstanceValueParams struct {
+	Key   string
+	Value string
+}
+
+func (q *Queries) ClaimInstanceValue(ctx context.Context, arg ClaimInstanceValueParams) error {
+	_, err := q.db.ExecContext(ctx, claimInstanceValue, arg.Key, arg.Value)
+	return err
+}
+
 const claimSetup = `-- name: ClaimSetup :execrows
 INSERT INTO instance (key, value) VALUES ('setup', $1)
 ON CONFLICT (key) DO NOTHING
@@ -562,6 +577,40 @@ func (q *Queries) CreateLogin(ctx context.Context, arg CreateLoginParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected()
+}
+
+const createMedia = `-- name: CreateMedia :exec
+INSERT INTO media (id, room_id, uploader_id, mime, name, size, width, height, sha256, created_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+`
+
+type CreateMediaParams struct {
+	ID         string
+	RoomID     string
+	UploaderID string
+	Mime       string
+	Name       string
+	Size       int64
+	Width      int32
+	Height     int32
+	Sha256     string
+	CreatedAt  int64
+}
+
+func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) error {
+	_, err := q.db.ExecContext(ctx, createMedia,
+		arg.ID,
+		arg.RoomID,
+		arg.UploaderID,
+		arg.Mime,
+		arg.Name,
+		arg.Size,
+		arg.Width,
+		arg.Height,
+		arg.Sha256,
+		arg.CreatedAt,
+	)
+	return err
 }
 
 const createPairing = `-- name: CreatePairing :exec
@@ -1369,6 +1418,28 @@ func (q *Queries) GetEvent(ctx context.Context, id string) (Event, error) {
 	return i, err
 }
 
+const getMedia = `-- name: GetMedia :one
+SELECT id, room_id, uploader_id, mime, name, size, width, height, sha256, created_at FROM media WHERE id = $1
+`
+
+func (q *Queries) GetMedia(ctx context.Context, id string) (Medium, error) {
+	row := q.db.QueryRowContext(ctx, getMedia, id)
+	var i Medium
+	err := row.Scan(
+		&i.ID,
+		&i.RoomID,
+		&i.UploaderID,
+		&i.Mime,
+		&i.Name,
+		&i.Size,
+		&i.Width,
+		&i.Height,
+		&i.Sha256,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getMember = `-- name: GetMember :one
 SELECT room_id, principal_id, role, scopes FROM memberships WHERE room_id = $1 AND principal_id = $2
 `
@@ -1516,6 +1587,17 @@ func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error 
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const instanceValue = `-- name: InstanceValue :one
+SELECT value FROM instance WHERE key = $1
+`
+
+func (q *Queries) InstanceValue(ctx context.Context, key string) (string, error) {
+	row := q.db.QueryRowContext(ctx, instanceValue, key)
+	var value string
+	err := row.Scan(&value)
+	return value, err
 }
 
 const lastReactionAdd = `-- name: LastReactionAdd :one
