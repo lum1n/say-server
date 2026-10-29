@@ -385,6 +385,16 @@ devices there too. The rooms stay, with their messages, no longer
 bridged. If the network can't be reached, say keeps trying for ten
 minutes, then removes the account anyway.
 
+**Upgrading an existing Slack account.** Reactions need more than the
+first Slack setup asked for. In the Slack app's settings add the user
+token scopes `reactions:read` and `reactions:write`, and under Event
+Subscriptions subscribe on behalf of users to `reaction_added` and
+`reaction_removed`. Then reinstall the app to the workspace; Slack only
+grants new scopes on reinstall, and it issues a fresh User OAuth Token
+(`xoxp-…`), so paste that into the account on the Accounts page. Until
+then reactions don't cross to or from Slack; messages keep working.
+(Files need `files:read` and `files:write` the same way.)
+
 Only official routes are used: no personal WhatsApp, no Discord user
 accounts, no Slack web-session tokens ([ADR
 0004](./docs/adr/0004-bridge-risk-policy.md)). The server holds your
