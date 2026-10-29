@@ -358,7 +358,7 @@ you send from your phone or other apps show up as yours.
 | Slack | A Slack app with user scopes and Socket Mode: its user token (`xoxp-…`) and app token (`xapp-…`) |
 | IRC | Server, nick, channels; SASL or server password if needed |
 | Email | IMAP and SMTP servers, address and password |
-| Telegram | `api_id` and `api_hash` from my.telegram.org, and your phone number; the code Telegram sends is asked on the page |
+| Telegram | `api_id` and `api_hash` from my.telegram.org, and your phone number; a QR code to scan with Telegram on your phone is shown on the page, and if it goes unscanned the code Telegram sends is asked instead |
 | Signal | A current `signal-cli` (the Docker image has one, for amd64 and arm64; otherwise install its JVM build on the server, as Signal turns old versions away and the native build fails to link); scan the QR code on the page with Signal on your phone (Settings → Linked devices). In a cluster its keys move with the bridge, so every node needs `signal-cli` |
 
 Chats active in the last 30 days are brought in with their latest

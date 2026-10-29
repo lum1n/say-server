@@ -106,7 +106,7 @@ event (ADR 0003) was never read by anything and only grew.
 | Slack | A Slack app with user scopes: user token + Socket Mode app token | Posts as the user; no web-session tokens |
 | IRC | The user's own nick, SASL | Channels from settings; private messages become DMs |
 | Email | The user's mailbox over IMAP and SMTP | One room per correspondent set; threading headers |
-| Telegram | MTProto (gotd/td) with the instance's own `api_id`/`api_hash` | Login code and 2FA through prompts; flood-wait respected |
+| Telegram | MTProto (gotd/td) with the instance's own `api_id`/`api_hash` | QR login (`auth.exportLoginToken`) with the login code as fallback, and 2FA, through prompts; flood-wait respected |
 | Signal | signal-cli as a linked device, out of process (GPL) | QR prompt; no history to backfill; its data moves with the lease |
 
 Telegram's `api_id`/`api_hash` names the client app, not the person, as
