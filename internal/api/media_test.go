@@ -2,7 +2,9 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/lum1n/say-server/internal/core"
 	"github.com/lum1n/say-server/internal/media"
+	"github.com/lum1n/say-server/internal/store"
 )
 
 func pngBytes(t *testing.T, w, h int) []byte {
@@ -210,5 +213,59 @@ func TestMediaTooLarge(t *testing.T) {
 	}
 	if code, _ := e.upload(tok, room.ID, "ok.txt", "text/plain", bytes.Repeat([]byte("a"), 100)); code != 201 {
 		t.Errorf("100 bytes = %d, want 201", code)
+	}
+}
+
+func TestSweepMedia(t *testing.T) {
+	e := newEnv(t)
+	ada, tok := e.user("Ada", core.PrincipalHuman)
+	room := e.room(tok, "pics")
+	ctx := context.Background()
+	img := pngBytes(t, 4, 4)
+
+	_, fresh := e.upload(tok, room.ID, "fresh.png", "image/png", img)
+	if fresh.Media == "" {
+		t.Fatal("upload failed")
+	}
+	// Records older than the grace period, with their bytes.
+	aged := func(id string) core.Attachment {
+		t.Helper()
+		if err := e.srv.media.Put(ctx, id, bytes.NewReader(img)); err != nil {
+			t.Fatal(err)
+		}
+		rec := store.Media{ID: id, RoomID: room.ID, UploaderID: ada.ID, Mime: "image/png", Name: id + ".png", Size: int64(len(img)), SHA256: "x", CreatedAt: time.Now().Add(-48 * time.Hour)}
+		if err := e.store.CreateMedia(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+		return core.Attachment{Media: id}
+	}
+	used, old := aged("usedmedia"), aged("oldmedia")
+	if code := e.do("POST", "/rooms/"+room.ID+"/messages", tok, attachmentMsg("", used), nil); code != 201 {
+		t.Fatalf("send = %d", code)
+	}
+
+	n, err := e.srv.SweepMedia(ctx)
+	if err != nil || n != 1 {
+		t.Fatalf("SweepMedia = %d, %v; want 1 (only the old unused upload)", n, err)
+	}
+	if _, err := e.srv.OpenMedia(ctx, old.Media); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("old bytes still there: %v", err)
+	}
+	if _, err := e.store.GetMedia(ctx, old.Media); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("old record still there: %v", err)
+	}
+	for _, id := range []string{fresh.Media, used.Media} {
+		f, err := e.srv.OpenMedia(ctx, id)
+		if err != nil {
+			t.Errorf("%s bytes gone: %v", id, err)
+			continue
+		}
+		f.Close()
+		if _, err := e.store.GetMedia(ctx, id); err != nil {
+			t.Errorf("%s record gone: %v", id, err)
+		}
+	}
+	if n, err := e.srv.SweepMedia(ctx); err != nil || n != 0 {
+		t.Errorf("second sweep = %d, %v; want 0", n, err)
 	}
 }
